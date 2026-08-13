@@ -1,0 +1,78 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: lawrag-db
+    environment:
+      POSTGRES_DB: lawrag
+      POSTGRES_USER: lawrag
+      POSTGRES_PASSWORD: lawrag123
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lawrag -d lawrag"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: lawrag-redis
+    ports:
+      # 6381 避开本机 VMware NAT / WSL 对 6379 的抢占；容器内网仍用 6379
+      - "6381:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    container_name: lawrag-app
+    ports:
+      - "8000:8000"
+    environment:
+      - PG_ENABLED=true  # 关键：Dockerfile 不 COPY .env，必须显式开启 pgvector（v0.6 纯 PG，无 FAISS 回退）
+      - PG_CONN=postgresql://lawrag:lawrag123@db:5432/lawrag
+      - PG_HOST=db
+      - PG_PORT=5432
+      - PG_DATABASE=lawrag
+      - PG_USER=lawrag
+      - PG_PASSWORD=lawrag123
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - EMBED_MODEL=${EMBED_MODEL:-bge-m3}
+      - LLM_MODEL=${LLM_MODEL:-qwen2.5:7b}
+      - RERANK_ENABLED=true
+      - ADJACENT_ENABLED=true
+      - RETRIEVAL_SIM_THRESHOLD=${RETRIEVAL_SIM_THRESHOLD:-0.4}
+      - AGENT_ENABLED=false
+      # ---- M1 后端切换与工具调用（F5 / F2）----
+      - LLM_BACKEND=${LLM_BACKEND:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-deepseek-v4-flash}
+      - LLM_FALLBACK_BACKEND=${LLM_FALLBACK_BACKEND:-ollama}
+      - LLM_FALLBACK_MODEL=${LLM_FALLBACK_MODEL:-qwen2.5:3b}
+      - LLM_FALLBACK_BASE_URL=${LLM_FALLBACK_BASE_URL:-http://host.docker.internal:11434}
+      - AGENT_REACT_ENABLED=${AGENT_REACT_ENABLED:-true}
+      - AGENT_MAX_TOOL_TURNS=${AGENT_MAX_TOOL_TURNS:-5}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - TAVILY_MAX_RESULTS=${TAVILY_MAX_RESULTS:-5}
+      - TAVILY_TIMEOUT=${TAVILY_TIMEOUT:-15.0}
+      - FAQ_CACHE_BACKEND=${FAQ_CACHE_BACKEND:-redis}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  pgdata:
+  redisdata:

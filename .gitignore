@@ -1,0 +1,125 @@
+# =============================================================================
+# Law-RAG-Agent .gitignore
+# 技术栈：FastAPI + Vue 3 / Vite + Langchain / LangGraph + FAISS + Ollama
+#          + SQLite + Docker
+# 说明：本文件在代码落地前先就位，覆盖未来目录结构。
+#       "可重建的生成物"默认忽略，"源码/配置/小样本数据"默认保留。
+# =============================================================================
+
+# ------------------------- Python（FastAPI 后端） -------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+build/
+dist/
+# 本项目虚拟环境（uv 管理：保留 pyproject.toml + uv.lock 即可）
+.venv/
+venv/
+env/
+ENV/
+
+# ------------------------- 前端（Vue 3 + Vite） ---------------------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------- 环境变量 / 密钥（NF-2 S-3） --------------------
+# 任何含密钥、Token、内部地址的文件都严禁入库
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ------------------------- Ollama 本地模型 --------------------------------
+# 模型文件体积极大且可通过 `ollama pull` 重建，绝不入库。
+# 仅保留 Modelfile / 导入脚本（如 models/ 下的 .modelfile）。
+models/*.gguf
+models/*.bin
+models/*.safetensors
+ollama/
+# 若把 Modelfile 放在 models/ 下，保留之：
+!models/*.modelfile
+
+# ------------------------- 向量索引（FAISS, F-04） ------------------------
+# 索引可由"清洗文本 + embedding"重建，默认忽略以避免大文件入库。
+# 若交付评审要求附带索引，可用 `git add -f data/index/*.faiss` 强制纳入。
+data/index/
+*.faiss
+*.index
+# FAISS 的 pkl 映射表（含原文片段）通常随索引一起忽略
+vector_store/
+embeddings_cache/
+
+# ------------------------- 爬取与处理数据（F-01/F-02） --------------------
+# 原始爬取文本（体积大、受版权/时效约束）忽略；清洗脚本保留。
+data/raw/
+# 处理后的分段文本如体量可控可保留，过大则忽略：
+data/processed/*.txt
+# 保留清洗/分段脚本本身（data/ 下的 .py）
+
+# ------------------------- 元数据库（SQLite, F-10） ----------------------
+# 数据库文件可重建，忽略；保留建表 schema 与样本数据集。
+*.db
+*.sqlite
+*.sqlite3
+# 保留：datasets/ 下的样本集（question/expected_answer 等，交付物）
+# 忽略：模型跑出的生成产物（体积大、属运行结果）
+datasets/*/model_output/
+datasets/*/evaluation_runs/
+
+# ------------------------- 日志与运行产物 ---------------------------------
+logs/
+*.log
+runs/
+outputs/tmp/
+.tmp_scratch/
+
+# ------------------------- Docker -----------------------------------------
+# 保留 docker-compose.yml / Dockerfile，忽略构建缓存与挂载卷内容
+.dockerignore
+# 容器挂载卷的本地数据（指向上面已忽略的 data/、*.db 等，这里兜底）
+volumes/
+
+# ------------------------- 编辑器 / OS / 工具 ----------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+# 本助手内部记忆与工具目录，不入库
+.workbuddy/
+.codebuddy/
+temp_skill_extract/
+# ------------------------- 文档编译产物（如有） --------------------------
+*.docx
+~$*.docx
+
+docs/docs/
+LawData/
+
+# ------------------------- 前端构建产物 -------------------------------------
+# Vite 构建输出到 ../static/，由 npm run build 生成，可重建
+static/
+
+# 前端 node_modules 由 .gitignore 上半部分处理
+# frontend/dist/ 由 dist/ 规则覆盖
+# 用户私人文档（不纳入版本库）
+面试问答-法律RAG智能问答系统.md

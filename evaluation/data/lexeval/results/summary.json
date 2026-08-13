@@ -1,0 +1,18 @@
+{
+  "base_url": "http://127.0.0.1:8001",
+  "seed": 42,
+  "top_k": 5,
+  "generated_at": "2026-08-02 23:05:26",
+  "total_elapsed_sec": 459.2,
+  "tasks": [
+    {
+      "task": "4_1",
+      "capability": "辨别/案例检索",
+      "n": 2,
+      "correct": 0,
+      "accuracy": 0.0,
+      "hit_rate": 1.0,
+      "avg_elapsed": 229.6
+    }
+  ]
+}

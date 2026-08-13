@@ -1,0 +1,122 @@
+classDiagram
+    direction LR
+
+    class ToolSpec {
+        +str name
+        +str description
+        +dict parameters
+        +list[str] required
+        +str category
+        +Callable executor
+        +to_openai_format() dict
+    }
+
+    class ToolRegistry {
+        -dict _tools
+        +register(spec: ToolSpec) None
+        +get(name: str) ToolSpec
+        +list_tools() list[ToolSpec]
+        +to_openai_schemas() list[dict]
+        +execute(name: str, arguments: dict) ToolResult
+        +has(name: str) bool
+    }
+
+    class ToolResult {
+        +str tool
+        +str call_id
+        +bool ok
+        +str summary
+        +dict data
+        +str source
+        +to_tool_message() dict
+    }
+
+    class RetrieveKnowledgeTool {
+        -BaseRetriever retriever
+        -int default_top_k
+        +build_spec() ToolSpec
+        +_exec(query: str, doc_type: str|None, top_k: int|None) ToolResult
+    }
+
+    class WebSearchTool {
+        -TavilySearchClient client
+        -int default_max_results
+        +build_spec() ToolSpec
+        +_exec(query: str, max_results: int|None) ToolResult
+    }
+
+    class TavilySearchClient {
+        -str api_key
+        -float timeout
+        +search(query: str, max_results: int) list[dict]
+        +is_available() bool
+    }
+
+    class LLMBackend {
+        <<abstract>>
+        +chat() str
+        +chat_stream() Iterator[str]
+        +chat_with_tools(messages, tools, tool_choice) ToolCallResponse
+        +get_context_window() int
+    }
+
+    class FailoverLLMBackend {
+        -LLMBackend primary
+        -LLMBackend fallback
+        +active_backend str
+        +degraded bool
+        +chat() str
+        +chat_stream() Iterator[str]
+        +chat_with_tools() ToolCallResponse
+    }
+
+    class ToolCall {
+        +str id
+        +str name
+        +dict arguments
+        +to_message() dict
+    }
+
+    class ToolCallResponse {
+        +str content
+        +list[ToolCall] tool_calls
+        +dict raw
+    }
+
+    class AgentState {
+        +str query
+        +list messages
+        +list retrieved_docs
+        +str answer
+        +bool validation_passed
+        +str validation_feedback
+        +int retry_count
+        +bool is_legal_query
+        +str query_type
+        +str memory_context
+        +str user_id
+        +list tool_calls
+        +list tool_results
+        +int agent_turns
+        +list tool_log
+        +dict sub_agent
+    }
+
+    class LawAgentGraph {
+        +__init__(retriever, llm, registry, ...)
+        +_build_graph() StateGraph
+        +ask(query, history, user_id) dict
+        +stream(query, history, user_id) Iterator[dict]
+    }
+
+    ToolRegistry "1" o-- "many" ToolSpec
+    RetrieveKnowledgeTool ..> ToolSpec : builds
+    WebSearchTool ..> ToolSpec : builds
+    WebSearchTool --> TavilySearchClient
+    RetrieveKnowledgeTool --> BaseRetriever : uses
+    FailoverLLMBackend --> LLMBackend : primary
+    FailoverLLMBackend --> LLMBackend : fallback
+    LLMBackend --> ToolCallResponse
+    ToolCallResponse "1" *-- "many" ToolCall
+    LawAgentGraph --> ToolRegistry
+    LawAgentGraph --> AgentState : reads/writes

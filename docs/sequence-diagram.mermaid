@@ -1,0 +1,61 @@
+sequenceDiagram
+    autonumber
+    participant U as 用户/前端
+    participant R as routes.py chat_stream
+    participant G as LawAgentGraph.stream()
+    participant AG as agent 节点
+    participant LLM as LLMBackend(DeepSeek 主 / Ollama 备)
+    participant TO as tools 节点
+    participant REG as ToolRegistry
+    participant TK as retrieve_knowledge
+    participant WS as web_search (Tavily)
+    participant V as validate 节点
+
+    U->>R: POST /chat/stream {query, history}
+    R->>R: sanitize_input / _sanitize_history
+    R->>G: agent.stream(query, history)
+    G->>G: classify_query_type 意图识别
+    G-->>U: SSE thinking(意图)
+    alt 闲聊
+        G-->>U: SSE token(闲聊回答)
+        G-->>U: SSE [DONE]
+    else 法律问题
+        G->>AG: 进入 agent 节点 (agent_turns=0)
+        loop while 有 tool_calls 且 agent_turns < N
+            AG->>AG: 组装 messages = system(REACT_SYSTEM_PROMPT)+history+memory+tool_log
+            AG->>LLM: chat_with_tools(messages, REG.to_openai_schemas())
+            alt LLM 返回 tool_calls
+                LLM-->>AG: ToolCallResponse(tool_calls=[...])
+                AG-->>G: state.tool_calls 写入 + agent_turns++
+                G-->>U: SSE tool_call(tool, arguments, turn)
+                G->>TO: 执行全部 tool_calls
+                loop 每个 tool_call
+                    TO->>REG: execute(name, arguments)
+                    alt name == retrieve_knowledge
+                        REG->>TK: retriever.search(query, top_k, doc_type)
+                        TK-->>REG: ToolResult(ok=true, source=internal_kb, data=docs)
+                    else name == web_search
+                        REG->>WS: TavilySearchClient.search(query)
+                        WS-->>REG: ToolResult(ok=true/false, source=web)
+                    end
+                    REG-->>TO: ToolResult
+                    TO-->>G: state.tool_results / tool_log
+                    G-->>U: SSE tool_result(tool, ok, summary, turn)
+                end
+                TO->>AG: tool 消息回灌 messages
+            else LLM 返回最终答案
+                LLM-->>AG: ToolCallResponse(content=答案, tool_calls=[])
+                AG-->>G: state.answer
+                exit loop
+            end
+        end
+        G->>V: validate 节点（校验答案质量）
+        alt 校验失败且未超重试
+            V-->>G: validation_passed=false
+            G->>G: 固定生成节点重试（兜底）
+        else 校验通过
+            G-->>U: SSE token(答案分块推送)
+            G-->>U: SSE meta(sources=retrieved_docs)
+            G-->>U: SSE [DONE]
+        end
+    end

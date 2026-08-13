@@ -138,6 +138,22 @@ class TestAskReact:
         assert result["tool_log"][0]["ok"] is False
         assert "未知工具" in result["tool_log"][0]["summary"]
 
+    def test_empty_name_tool_call_routes_to_final_answer(self, monkeypatch):
+        """空 name 的 tool_call（DeepSeek V4 空占位）→ 不路由 tools，直接最终答案。"""
+        llm = FakeToolLLM([
+            ToolCallResponse(
+                content="直接回答",
+                tool_calls=[ToolCall(id="c1", name="", arguments={})],
+                raw={},
+            ),
+        ])
+        agent = _build_agent(llm, monkeypatch=monkeypatch)
+        result = agent.ask("行政拘留最长多久")
+        assert result["answer"] == "直接回答"
+        # 空 name 占位被过滤，不会进入 tools 节点产生"未知工具"日志
+        assert result["tool_log"] == []
+        assert result["agent_turns"] == 1
+
 
 # ---------------------------------------------------------------------------
 # stream() 流式路径（SSE 事件序列）

@@ -7,7 +7,7 @@
         <span>已思考</span>
       </button>
       <div v-if="!thinkingCollapsed" class="thinking-traces">
-        <div v-for="(t, i) in message.thinking" :key="i" class="trace-item">{{ t }}</div>
+        <div v-for="(t, i) in message.thinking" :key="i" class="trace-item" :class="`trace-${t?.kind || 'thinking'}`">{{ t?.text ?? t }}</div>
       </div>
     </div>
 
@@ -238,4 +238,7 @@ const renderedContent = computed(() => {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.trace-item.trace-tool_call { color: var(--color-primary); font-weight: 500; }
+.trace-item.trace-tool_result { color: var(--color-text-secondary); }
+.trace-item.trace-tool_result_error { color: #dc2626; font-weight: 500; }
 </style>

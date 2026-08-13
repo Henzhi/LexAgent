@@ -51,7 +51,8 @@ class ToolCall:
 
     Attributes:
         id: 工具调用 ID（回填 tool 消息时对应 tool_call_id）
-        name: 工具名
+        name: 工具名；空 name 一律视为无效占位（如 DeepSeek V4 想直接回答时
+              返回的函数名为空的 tool_call），解析层与 agent 节点均应跳过。
         arguments: 已解析的 JSON 参数
         parse_error: arguments JSON 解析失败时的错误信息（空 = 解析成功）。
                      解析失败时 tools 节点不回灌错误消息前不执行工具（R1 容错）。

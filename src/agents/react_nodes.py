@@ -161,7 +161,11 @@ def make_react_nodes(
             update["messages"] = [{"role": "assistant", "content": update["answer"]}]
             return update
 
-        calls: list[ToolCall] = list(resp.tool_calls or [])
+        # 防御性兜底：过滤 name 为空的 ToolCall（DeepSeek V4 想直接回答时
+        # 可能返回函数名为空的占位 tool_call，不应路由到 tools）。
+        calls: list[ToolCall] = [
+            tc for tc in (resp.tool_calls or []) if getattr(tc, "name", "")
+        ]
         if calls and schemas:
             update["tool_calls"] = calls
             update["messages"] = [{

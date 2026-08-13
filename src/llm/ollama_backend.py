@@ -256,6 +256,9 @@ class OllamaBackend(LLMBackend):
                 tc_id = getattr(tc, "id", "") or ""
                 name = fn.get("name", "") if isinstance(fn, dict) else ""
                 args = fn.get("arguments", {}) if isinstance(fn, dict) else {}
+            if not name:
+                # 空 name 的 tool_call 为无效占位（模型想直接回答却返回空 tool_call），跳过
+                continue
             if isinstance(args, str):
                 arguments, error = parse_tool_arguments(args)
             elif isinstance(args, dict):

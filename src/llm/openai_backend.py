@@ -233,6 +233,10 @@ class OpenAICompatibleBackend(LLMBackend):
         for tc in raw_calls:
             fn = getattr(tc, "function", None)
             name = getattr(fn, "name", "") or ""
+            if not name:
+                # DeepSeek V4 parallel_tool_calls 恒启用，模型想直接回答时会返回
+                # 函数名为空的 tool_call 占位；空 name 是无效占位，跳过。
+                continue
             args_raw = getattr(fn, "arguments", "") or ""
             arguments, error = parse_tool_arguments(args_raw)
             result.append(

@@ -65,7 +65,7 @@
               <span v-if="!answered && chat.sending" class="spinner"></span>
             </button>
             <div v-if="thinkingOpen" class="thinking-traces">
-              <div v-for="(t, i) in thinkingTraces" :key="i" class="trace-item" style="white-space:pre-wrap">{{ t }}</div>
+              <div v-for="(t, i) in thinkingTraces" :key="i" class="trace-item" :class="`trace-${t?.kind || 'thinking'}`" style="white-space:pre-wrap">{{ t?.text ?? t }}</div>
             </div>
           </div>
         </template>
@@ -194,7 +194,10 @@ async function loadCurrentSession() {
       // 从最后一条 assistant 消息中恢复 thinkingTraces
       const lastMsg = chat.messages[chat.messages.length - 1]
       if (lastMsg?.role === 'assistant' && lastMsg.thinking?.length) {
-        thinkingTraces.value = [...lastMsg.thinking]
+        // 兼容旧版字符串格式，归一化为 { text, kind } 结构
+        thinkingTraces.value = lastMsg.thinking.map(t =>
+          typeof t === 'string' ? { text: t, kind: 'thinking' } : t
+        )
         thinkingOpen.value = true  // 加载历史时保持思考过程可见
       }
       answered.value = true
@@ -277,7 +280,16 @@ async function runStream(query, recent) {
     let sources = []
     for await (const msg of streamChat(query, recent, chat.sessionId, { signal: ctrl?.signal, requestId: currentRequestId.value })) {
       if (msg.type === 'thinking') {
-        thinkingTraces.value.push(msg.content)
+        thinkingTraces.value.push({ text: msg.content, kind: 'thinking' })
+      } else if (msg.type === 'tool_call') {
+        // F4 过程透明化：记录工具调用
+        thinkingTraces.value.push({ text: `正在调用 ${msg.tool}`, kind: 'tool_call' })
+      } else if (msg.type === 'tool_result') {
+        // F4 过程透明化：记录工具结果摘要；ok=false 用告警样式区分
+        thinkingTraces.value.push({
+          text: msg.summary || '',
+          kind: msg.ok === false ? 'tool_result_error' : 'tool_result',
+        })
       } else if (msg.type === 'clear') {
         // 校验未通过，清掉最后一条 assistant 消息重新生成
         while (chat.messages.length > 0 && chat.messages[chat.messages.length - 1].role === 'assistant') {
@@ -483,6 +495,9 @@ function doLogout() {
   line-height: 1.6;
 }
 .trace-item { padding: 2px 0; white-space: pre-wrap; word-break: break-word; }
+.trace-item.trace-tool_call { color: var(--color-primary); font-weight: 500; }
+.trace-item.trace-tool_result { color: var(--color-text-secondary); }
+.trace-item.trace-tool_result_error { color: #dc2626; font-weight: 500; }
 .spinner {
   width: 12px; height: 12px;
   border: 2px solid var(--color-border);

@@ -22,7 +22,7 @@ from typing import Any, Callable
 
 from src.agents.prompts import REACT_SYSTEM_PROMPT
 from src.agents.state import AgentState
-from src.agents.tools.base import SOURCE_INTERNAL_KB, ToolResult
+from src.agents.tools.base import SOURCE_INTERNAL_KB, SOURCE_LEGAL, SOURCE_WEB, ToolResult
 from src.agents.tools.registry import ToolRegistry
 from src.llm.base import ToolCall
 
@@ -117,6 +117,19 @@ def _merge_docs(existing: list[dict], new_docs: list[dict]) -> list[dict]:
     return result
 
 
+def _merge_by_url(existing: list[dict], new_items: list[dict]) -> list[dict]:
+    """合并网络/官方源证据并按 URL 去重（M2 / F7）。"""
+    seen = {(r.get("url") or r.get("title") or "") for r in existing}
+    result = list(existing)
+    for r in new_items:
+        key = (r.get("url") or r.get("title") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(r)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # ReAct 节点工厂
 # ---------------------------------------------------------------------------
@@ -182,12 +195,18 @@ def make_react_nodes(
         return update
 
     def tools_node(state: AgentState) -> dict:
-        """执行本轮全部 tool_calls（串行，数量有限），结果回灌 messages。"""
+        """执行本轮全部 tool_calls（串行，数量有限），结果回灌 messages。
+
+        三路证据累计（M2 / F6）：internal_kb → retrieved_docs；
+        web → web_results；legal_source → legal_results（供最终融合 F7/F8）。
+        """
         calls: list[ToolCall] = list(state.get("tool_calls", []) or [])
         tool_results: list[ToolResult] = []
         tool_messages: list[dict] = []
         log_entries: list[dict] = []
         docs = list(state.get("retrieved_docs", []) or [])
+        web_items = list(state.get("web_results", []) or [])
+        legal_items = list(state.get("legal_results", []) or [])
 
         for tc in calls:
             t0 = time.time()
@@ -214,8 +233,14 @@ def make_react_nodes(
                 "elapsed_ms": int((time.time() - t0) * 1000),
                 "turn": state.get("agent_turns", 0) or 0,
             })
-            if result.ok and result.source == SOURCE_INTERNAL_KB and result.data.get("docs"):
+            if not result.ok:
+                continue
+            if result.source == SOURCE_INTERNAL_KB and result.data.get("docs"):
                 docs = _merge_docs(docs, result.data["docs"])
+            elif result.source == SOURCE_WEB and result.data.get("results"):
+                web_items = _merge_by_url(web_items, result.data["results"])
+            elif result.source == SOURCE_LEGAL and result.data.get("results"):
+                legal_items = _merge_by_url(legal_items, result.data["results"])
 
         return {
             "tool_calls": [],                 # 消费后清空
@@ -223,6 +248,8 @@ def make_react_nodes(
             "tool_log": list(state.get("tool_log", []) or []) + log_entries,
             "messages": tool_messages,
             "retrieved_docs": docs,
+            "web_results": web_items,
+            "legal_results": legal_items,
         }
 
     def route_after_agent(state: AgentState) -> str:

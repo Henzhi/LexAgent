@@ -25,11 +25,12 @@ logger = logging.getLogger(__name__)
 # 工具结果来源标记（D7 / M2 预留）
 SOURCE_INTERNAL_KB = "internal_kb"  # 内部法律知识库
 SOURCE_WEB = "web"                  # 网络搜索（Tavily）
-SOURCE_LEGAL = "legal_source"       # 官方法律源（M2 预留，本期不使用）
+SOURCE_LEGAL = "legal_source"       # 官方法律源（M2 / F9）
 
 # 工具分类
 CATEGORY_KNOWLEDGE = "knowledge"    # 内部知识检索
 CATEGORY_WEB = "web"                # 网络搜索
+CATEGORY_LEGAL = "legal"            # 官方法律源检索（M2）
 
 
 def truncate_summary(text: str, max_chars: int = TOOL_RESULT_SUMMARY_MAX_CHARS) -> str:

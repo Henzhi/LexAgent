@@ -30,6 +30,7 @@ from src.rag.retriever import BaseRetriever
 from src.rag.engine import RAG_PROMPT_TEMPLATE
 from src.rag.intent import classify_query_type, is_capability_query, get_capability_reply
 from src.memory.hallucination_guard import HallucinationGuard
+from src.search.fusion import fuse_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -237,11 +238,23 @@ class LawAgentGraph:
                 "agent_turns": 0,
                 "tool_log": [],
                 "sub_agent": None,
+                "web_results": [],
+                "legal_results": [],
+                "fused_sources": [],
             }
             t2 = time.time()
             result = self._graph.invoke(initial)
             if trace is not None:
                 trace.stage("agent", int((time.time() - t2) * 1000))
+
+            # M2（F6-F8）：三路证据融合 → fused_sources（含 verification 验证状态）
+            fused = fuse_evidence(
+                result.get("retrieved_docs", []),
+                result.get("web_results", []) or [],
+                result.get("legal_results", []) or [],
+            )
+            result["fused_sources"] = fused["sources"]
+            result["conflict_laws"] = fused["conflict_laws"]
 
             # 幻觉防御（ask() 路径与 stream() 行为对齐）
             # ReAct 模式下未触发内部检索属正常决策（LLM 可直接作答/仅用网络线索），
@@ -334,6 +347,7 @@ class LawAgentGraph:
                 "query_type": query_type, "memory_context": "", "user_id": user_id,
                 "tool_calls": [], "tool_results": [], "agent_turns": 0,
                 "tool_log": [], "sub_agent": None,
+                "web_results": [], "legal_results": [], "fused_sources": [],
             }
 
             # 3. 记忆检索
@@ -564,19 +578,17 @@ class LawAgentGraph:
                 state["answer"] = guard_result["fallback"]
                 yield {"type": "thinking", "content": f"⚠️ 回答已拦截: {guard_result['reason']}"}
 
-        # ---- sources（内部库检索结果，来源标注）----
-        sources = [
-            {
-                "law_name": d.get("law_name", ""),
-                "chapter": d.get("chapter", ""),
-                "section": d.get("section", ""),
-                "article_range": d.get("article_range", ""),
-                "citation": d.get("citation", ""),
-                "score": float(d.get("score", 0.0) or 0.0),
-                "content": d.get("content", ""),
+        # ---- sources（M2 / F6-F10：三路证据融合，含来源与验证状态）----
+        fused = fuse_evidence(docs, state.get("web_results", []) or [], state.get("legal_results", []) or [])
+        sources = fused["sources"]
+        state["fused_sources"] = sources
+        if fused["web_conflicts"]:
+            # 冲突裁决（REQ-UW3）：告知用户网络信息与内部库冲突、以内部库为准
+            laws = "、".join(fused["conflict_laws"][:3])
+            yield {
+                "type": "thinking",
+                "content": f"⚖️ 检测到网络信息与内部库就《{laws}》存在出入，已按内部库优先裁决",
             }
-            for d in docs
-        ]
         yield {"type": "meta", "sources": sources, "is_casual": False}
 
         # ---- 最终答案分块推送（D2：非流式决策 + SSE 分块模拟流式）----

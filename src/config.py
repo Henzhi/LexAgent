@@ -202,6 +202,32 @@ TAVILY_MAX_RESULTS = _safe_int("TAVILY_MAX_RESULTS", 5)
 TAVILY_TIMEOUT = _safe_float("TAVILY_TIMEOUT", 15.0)
 
 # ---------------------------------------------------------------------------
+# 官方法律源（M2 / F9）
+# ---------------------------------------------------------------------------
+
+# 官方法律源检索总开关：false 时不注册 legal_source_search 工具
+LEGAL_SOURCE_ENABLED = os.getenv("LEGAL_SOURCE_ENABLED", "true").lower() == "true"
+# 官方源 HTTP 超时（秒）——官方接口响应偏慢，独立于 Tavily 配置
+LEGAL_SOURCE_TIMEOUT = _safe_float("LEGAL_SOURCE_TIMEOUT", 10.0)
+# 单次官方源检索返回条数上限
+LEGAL_SOURCE_MAX_RESULTS = _safe_int("LEGAL_SOURCE_MAX_RESULTS", 5)
+
+# 小包公（第三方案例 API，可选）：Key 与接口地址都配置时才启用
+XBG_API_KEY = os.getenv("XBG_API_KEY", "")
+XBG_API_URL = os.getenv("XBG_API_URL", "")
+
+# ---------------------------------------------------------------------------
+# 双路融合（M2 / F6-F8）
+# ---------------------------------------------------------------------------
+
+# 融合后 sources 输出条数上限（SSE meta 与 FAQ 缓存引用）
+FUSION_TOP_K = _safe_int("FUSION_TOP_K", 8)
+# 来源权重（冲突裁决与排序）：内部库 1.0 > 官方源 0.85 > 网络 0.5×tavily_score
+FUSION_WEIGHT_INTERNAL = _safe_float("FUSION_WEIGHT_INTERNAL", 1.0)
+FUSION_WEIGHT_LEGAL = _safe_float("FUSION_WEIGHT_LEGAL", 0.85)
+FUSION_WEIGHT_WEB = _safe_float("FUSION_WEIGHT_WEB", 0.5)
+
+# ---------------------------------------------------------------------------
 # pgvector
 # ---------------------------------------------------------------------------
 

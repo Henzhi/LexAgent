@@ -1,0 +1,33 @@
+# CHANGELOG.md — 变更日志
+
+> 记录有意义的变更，帮助 AI 快速了解最新动态、避免回归。格式参考 Keep a Changelog，新条目放最上面。
+
+## [Unreleased] — M2 双路融合（进行中）
+
+- 新增 `src/search/legal_sources.py`：官方法律源客户端（国家法律法规数据库 API + 人民法院案例库域内搜索 + 小包公可选），封装为 `legal_source_search` 工具（PRD F9）
+- 新增 `src/search/fusion.py`：双路结果融合去重、按来源加权排序、冲突裁决（内部库优先，网络结果标注验证状态）（PRD F6/F7/F8）
+- `AgentState` 新增 `web_results` / `legal_results` / `fused_sources` 字段，`tools_node` 累计三路证据
+- SSE `meta.sources` 携带 `source` 与 `verification` 状态（内部库 / 官方源已验证 / 网络未验证）（PRD F10）
+- 更新 `REACT_SYSTEM_PROMPT`：三工具决策规则 + 引用必须标注来源与验证状态
+
+## 2026-08-13 — M1 工具调用型 Agent（已完成）
+
+- **fix（2939ab3）**：修复 DeepSeek V4 空 tool_call 空转 Bug——parallel_tool_calls 恒启用，模型想直接回答时返回 name="" 占位 tool_call，导致空转 4 轮到上限。`openai_backend`/`ollama_backend` 的 `_parse_tool_calls` + `react_nodes.agent_node` 三处过滤空 name；新增 `tests/test_empty_tool_call.py`
+- **fix（2939ab3）**：前端 `ChatView.vue` runStream 增加 tool_call/tool_result 分支，thinkingTraces 升级 `{text,kind}` 结构，`ChatMessage.vue` 历史渲染兼容
+- **feat（393170f）**：LexAgent 初始提交（173 files，+39120 行），完整项目骨架 + M1 代码；README 重写反映 M1 新能力
+- M1 核心能力：`LLMBackend.chat_with_tools()` + LangGraph 手动 StateGraph ReAct（N=5）；`FailoverLLMBackend` 降级；`ToolRegistry` + `retrieve_knowledge` / `web_search`（Tavily）工具；SSE tool_call/tool_result 过程透传；454+ 测试通过，QA 独立复核 488 passed / 0 failed
+- 项目迁移：M1 代码从 Law-RAG-Agent 迁入 LexAgent，上游仓库恢复干净（M1 新增代码已回退）
+
+## 2026-08-12 — 重构 PRD 与任务拆解
+
+- 产出 `docs/自主Agent重构PRD.md` v0.1：固定管线 RAG → 工具调用型自主 Agent，确认 9 个关键决策（双后端、Tavily、官方法律源、内部库优先、Docker Compose、预算熔断、SSE 透明化等）
+- M1 任务拆解为 8 个子事项（配置就绪/后端切换/工具框架/ReAct/Tavily/SSE 透传/提示词/测试回归）
+
+## 2026-08-03 — 检索质量与流式稳定性（继承自上游）
+
+- 检索评测与优化：条件 BM25 混合（RRF，w=3.0），法条级 Hit@5 75.8%→86.1%；相邻扩展窗口 ±3→±1；章级摘要 chunk 过滤（`docs/检索评测与优化报告-2026-08-03.md`）
+- 流式响应稳定性修复（`docs/流式响应稳定性修复报告-2026-08-03.md`）
+
+## 2026-07-30 — 审计与测试基线（继承自上游）
+
+- 代码审计与首轮测试报告；ADR-001 检索配置对齐、ADR-002 移除章级摘要

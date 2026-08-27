@@ -106,6 +106,31 @@ class TestAskReact:
         # agent_turns 不超过 上限+1（强制作答轮）
         assert result["agent_turns"] <= 4
 
+    def test_max_turns_strips_dsml_from_answer(self, monkeypatch):
+        """达到轮数上限后 LLM 在纯文本输出 DSML 工具调用语法 → 兜底清除（自然语言答案）。"""
+        from src.agents.react_nodes import _strip_dsml_tool_calls
+
+        # 单元：纯 DSML 块被清除
+        assert _strip_dsml_tool_calls("<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"x\"></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>") == ""
+        # 单元：DSML 块外的自然语言保留
+        mixed = "前面文字<｜｜DSML｜｜tool_calls>xxx</｜｜DSML｜｜tool_calls>后面文字"
+        assert _strip_dsml_tool_calls(mixed) == "前面文字后面文字"
+        # 无 DSML 不动
+        assert _strip_dsml_tool_calls("普通答案") == "普通答案"
+
+        # 集成：上限轮返回 DSML 文本 → answer 不含 DSML
+        monkeypatch.setattr("src.agents.graph.AGENT_MAX_TOOL_TURNS", 2)
+        dsml_resp = ToolCallResponse(
+            content="我来检索<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"retrieve_knowledge\"></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>",
+            tool_calls=[],
+            raw={},
+        )
+        llm = FakeToolLLM([_tool_call_response(), _tool_call_response(), dsml_resp])
+        agent = _build_agent(llm, max_tool_turns=2, monkeypatch=monkeypatch)
+        result = agent.ask("行政拘留最长多久")
+        assert "DSML" not in result["answer"]
+        assert result["answer"], "清除后仍应有可用答案（兜底文案）"
+
     def test_invalid_tool_arguments_fed_back(self, monkeypatch):
         """arguments JSON 非法 → 不执行工具，回灌错误消息（R1 容错）。"""
         llm = FakeToolLLM([

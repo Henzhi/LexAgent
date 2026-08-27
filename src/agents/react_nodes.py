@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any, Callable
 
@@ -27,6 +28,20 @@ from src.agents.tools.registry import ToolRegistry
 from src.llm.base import ToolCall
 
 logger = logging.getLogger(__name__)
+
+
+# DeepSeek 在无 tools 参数时仍可能以纯文本输出 DSML 工具调用语法
+# （达到轮数上限被强制作答时），兜底清除保证最终答案是自然语言。
+_DSML_TOOL_CALLS_RE = re.compile(
+    r"<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>", re.DOTALL
+)
+
+
+def _strip_dsml_tool_calls(text: str) -> str:
+    """清除文本中的 DSML 工具调用块（轮数上限强制作答的兜底清洗）。"""
+    if not text or "DSML" not in text:
+        return text
+    return _DSML_TOOL_CALLS_RE.sub("", text).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +176,16 @@ def make_react_nodes(
         messages = _build_react_messages(state, sp)
         # 达到轮数上限 → 移除工具，强制模型产出最终答案（REQ-UW4）
         schemas = registry.to_openai_schemas() if turns < max_turns else []
+        if not schemas:
+            # 明确告知模型不能再调工具，否则 DeepSeek 会在纯文本里
+            # 输出 DSML 工具调用语法而非自然语言答案
+            messages.append({
+                "role": "system",
+                "content": (
+                    "你已达到工具调用轮数上限。请立即基于已获取的工具结果直接回答用户问题，"
+                    "禁止再输出任何工具调用语法。"
+                ),
+            })
         update: dict[str, Any] = {
             "agent_turns": turns + 1,
             "tool_results": [],
@@ -188,7 +213,7 @@ def make_react_nodes(
             }]
         else:
             # 无工具可用 / 模型未返回工具调用 → content 即最终答案
-            answer = (resp.content or "").strip() or "抱歉，暂时无法回答该问题。"
+            answer = _strip_dsml_tool_calls((resp.content or "").strip()) or "抱歉，暂时无法回答该问题。"
             update["tool_calls"] = []
             update["answer"] = answer
             update["messages"] = [{"role": "assistant", "content": answer}]

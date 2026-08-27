@@ -131,3 +131,51 @@ class TestDualRouteEvidence:
         # 两轮同 URL 列表 → 去重后仅 2 条 web 证据
         web_sources = [s for s in result.get("fused_sources", []) if s["source"] == "web"]
         assert len(web_sources) == 2
+
+
+class TestStreamMessageHistoryIntegrity:
+    """回归：流式路径 ReAct 第 2 轮消息序列完整性（DeepSeek 400 修复）。
+
+    Bug：_stream_react 用 state.update() 整体替换 messages，第 2 轮
+    chat_with_tools 的消息里 tool 消息前没有 assistant(tool_calls)，
+    DeepSeek 返回 400 并降级 Ollama。
+    """
+
+    def test_second_turn_messages_keep_assistant_tool_calls(self, monkeypatch):
+        llm = FakeToolLLM([_parallel_tools_response(), _final_response("流式最终答案")])
+        agent = _build_agent(llm, tavily=_fake_tavily(), monkeypatch=monkeypatch)
+        events = list(agent.stream("测试法怎么规定"))
+        assert any(e["type"] == "tool_call" for e in events)
+
+        # 第 2 次 chat_with_tools 的消息序列必须满足 OpenAI 约定：
+        # 每个 tool 消息块的前面是带 tool_calls 的 assistant 消息，
+        # 且 tool_call_id 能对应上（并行 tool 调用时 tool 消息可连续排列）
+        assert len(llm.calls) >= 2
+        msgs = llm.calls[1]["messages"]
+        roles = [m.get("role") for m in msgs]
+        assert "tool" in roles, f"第 2 轮应包含 tool 消息: {roles}"
+        # 找到带 tool_calls 的 assistant 消息，收集其全部 id
+        assistant_call_ids: set[str] = set()
+        for m in msgs:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                assistant_call_ids.update(tc.get("id") for tc in m["tool_calls"])
+        assert assistant_call_ids, f"第 2 轮应包含带 tool_calls 的 assistant 消息: {roles}"
+        # tool 消息必须出现在 assistant(tool_calls) 之后，且 id 匹配
+        first_assistant_idx = next(
+            i for i, m in enumerate(msgs)
+            if m.get("role") == "assistant" and m.get("tool_calls")
+        )
+        for i, m in enumerate(msgs):
+            if m.get("role") == "tool":
+                assert i > first_assistant_idx, "tool 消息必须在 assistant(tool_calls) 之后"
+                assert m.get("tool_call_id") in assistant_call_ids, (
+                    f"tool_call_id 不匹配: {m.get('tool_call_id')} 不在 {assistant_call_ids}"
+                )
+
+    def test_second_turn_keeps_user_query(self, monkeypatch):
+        """第 2 轮消息序列仍包含原始 user 问题（不被覆盖丢失）。"""
+        llm = FakeToolLLM([_parallel_tools_response(), _final_response("答案")])
+        agent = _build_agent(llm, tavily=_fake_tavily(), monkeypatch=monkeypatch)
+        list(agent.stream("测试法怎么规定"))
+        msgs = llm.calls[1]["messages"]
+        assert any(m.get("role") == "user" and "测试法" in str(m.get("content", "")) for m in msgs)

@@ -47,6 +47,22 @@ def _backend_degraded(llm) -> bool:
     return bool(getattr(backend, "degraded", False))
 
 
+def _merge_stream_update(state: dict, upd: dict) -> None:
+    """流式路径状态合并：messages 追加，其余键整体替换。
+
+    对齐 LangGraph invoke 路径 add_messages reducer 的追加语义。
+    此前直接 state.update() 会用节点返回的增量 messages 整体覆盖历史，
+    导致 ReAct 第 2 轮 tool 消息前丢失 assistant(tool_calls) 消息，
+    DeepSeek 返回 400 "Messages with role 'tool' must be a response to
+    a preceding message with 'tool_calls'" 并触发降级 Ollama。
+    """
+    msgs = upd.get("messages")
+    rest = {k: v for k, v in upd.items() if k != "messages"}
+    state.update(rest)
+    if msgs:
+        state["messages"] = list(state.get("messages", []) or []) + list(msgs)
+
+
 def _supports_tools(llm) -> bool:
     """LLM 是否具备工具调用能力（实现 chat_with_tools）。
 
@@ -523,7 +539,7 @@ class LawAgentGraph:
                 logger.warning("ReAct 循环超出安全上限，强制终止")
                 break
             upd = react["agent"](state)
-            state.update(upd)
+            _merge_stream_update(state, upd)
             tool_calls = state.get("tool_calls", []) or []
             if not tool_calls:
                 break
@@ -538,7 +554,7 @@ class LawAgentGraph:
                 }
             # 执行全部 tool_calls（DeepSeek V4 parallel_tool_calls 恒启用，R5）
             toup = react["tools"](state)
-            state.update(toup)
+            _merge_stream_update(state, toup)
             # SSE: 工具执行结果（F4，summary 已截断 ≤300 字符）
             for res in state.get("tool_results", []) or []:
                 yield {

@@ -38,3 +38,6 @@
 | D-M2-3 | 人民法院案例库无公开 API → 用 Tavily 域限定搜索（include_domains）发现案例线索，标注"官方域线索" | 爬虫采集 | PRD 风险清单 Q4 待定；域限定搜索零维护成本，合规 |
 | D-M2-4 | 国家法律法规数据库走其公开 JSON 接口（flk.npc.gov.cn/api/search），失败时工具返回 ok=False 不阻断 | 失败自动回退 Tavily | 官方源不可用时应让 LLM 知道"验证不可用"，而非静默降级为未验证线索（REQ-UW1 语义） |
 | D-M2-5 | 冲突裁决规则：web 结果提及内部库已有法名 → 标注 `web_unverified` 且内部条目排前；官方源命中 → `verified_official` | 复杂语义比对 | 法条级语义冲突检测需要 LLM 参与，M2 用来源级裁决满足 F8，语义级留给 validate 节点 |
+| D-M2-6 | SSE 流式路径 `_stream_react` 状态合并用 `_merge_stream_update`（messages 追加，其余键替换），对齐 LangGraph `add_messages` 语义 | 直接 `state.update()` | 旧实现整体替换 messages，导致 ReAct 第 2 轮 `tool` 消息前丢失 `assistant(tool_calls)`，DeepSeek 400 并降级 Ollama（联调实测） |
+| D-M2-7 | 轮数上限强制作答时注入 system 引导消息 + 兜底清除 DSML 工具调用语法 | 仅移除 tools 参数 | DeepSeek 在无 tools 参数时仍会以纯文本输出 DSML 工具调用语法，不引导/不清除则答案是一堆标记 |
+| D-M2-8 | flk.npc.gov.cn 接口改版后走 `/law-search/search/list`（POST JSON），不回退旧 `/api/search` | 兼容旧端点 | 旧端点返回 405（Method Not Allowed），官方已废弃；新端点参数名/响应结构全变（`searchContent`/`rows`/`sxx` 等） |

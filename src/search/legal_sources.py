@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import requests
@@ -34,14 +35,13 @@ SOURCE_NATIONAL_LAW_DB = "national_law_db"      # 国家法律法规数据库
 SOURCE_COURT_CASE_LIB = "court_case_lib"        # 人民法院案例库（官方域线索）
 SOURCE_XBG = "xiaobaogong"                      # 小包公（第三方）
 
-# 法规状态码（flk.npc.gov.cn 返回的 status 字段）→ 中文说明
+# 法规状态码（flk.npc.gov.cn 返回的 sxx 字段）→ 中文说明
+# 来源：前端 JS L4e=[{label:"尚未生效",key:4},{label:"有效",key:3},{label:"已修改",key:2},{label:"已废止",key:1}]
 _LAW_STATUS_MAP = {
-    "1": "现行有效",
-    "2": "尚未生效",
-    "3": "已修改",
-    "4": "已废止",
-    "5": "已失效",
-    "9": "全部",
+    1: "已废止",
+    2: "已修改",
+    3: "现行有效",
+    4: "尚未生效",
 }
 
 
@@ -70,9 +70,9 @@ class NationalLawClient:
         results = client.search_law("民事诉讼法")
     """
 
-    SEARCH_URL = "https://flk.npc.gov.cn/api/search"
-    # 详情页前缀：接口返回的 url 是相对路径（/detail2.html?...）
-    DETAIL_BASE = "https://flk.npc.gov.cn"
+    SEARCH_URL = "https://flk.npc.gov.cn/law-search/search/list"
+    # 详情页前缀：接口不返回 url，用 bbbs 构造详情链接
+    DETAIL_BASE = "https://flk.npc.gov.cn/detail2.html"
 
     def __init__(self, timeout: float = LEGAL_SOURCE_TIMEOUT):
         self.timeout = max(1.0, float(timeout))
@@ -88,28 +88,30 @@ class NationalLawClient:
             RuntimeError: 接口不可达 / 返回非 JSON / 结构异常（由工具层归一化）
         """
         k = max(1, min(int(max_results or 5), 10))
-        data = {
-            "type": "flfg",
-            "searchType": "title;vague",
-            "sortTr": "f_bbrq_s;desc",
-            "sort": "true",
-            "page": "1",
-            "size": str(k),
-            "keyword": keyword or "",
+        # 新版 API（2025 改版）使用 JSON body，字段名与旧版不同
+        payload_body = {
+            "searchContent": keyword or "",
+            "searchType": 2,        # 2=模糊匹配
+            "searchRange": 1,       # 1=法规
+            "page": 1,
+            "size": k,
         }
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) LexAgent/0.7",
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
         }
         try:
-            resp = requests.post(self.SEARCH_URL, data=data, headers=headers, timeout=self.timeout)
+            resp = requests.post(
+                self.SEARCH_URL, json=payload_body, headers=headers, timeout=self.timeout,
+            )
             resp.raise_for_status()
             payload = resp.json()
         except Exception as e:
             raise RuntimeError(f"国家法律法规数据库接口请求失败: {e}") from e
 
         try:
-            records = (((payload or {}).get("result") or {}).get("data") or {}).get("records") or []
+            records = (payload or {}).get("rows") or []
         except Exception as e:
             raise RuntimeError(f"国家法律法规数据库返回结构异常: {e}") from e
 
@@ -117,18 +119,22 @@ class NationalLawClient:
         for r in records:
             if not isinstance(r, dict):
                 continue
-            url = (r.get("url") or "").strip()
-            if url and not url.startswith("http"):
-                url = self.DETAIL_BASE + url
-            status_code = str(r.get("status") or "")
+            bbbs = (r.get("bbbs") or "").strip()
+            url = f"{self.DETAIL_BASE}?bbbs={bbbs}" if bbbs else ""
+            # title 含 <em> 高亮标签，清掉
+            raw_title = r.get("title") or ""
+            title = re.sub(r"<[^>]+>", "", raw_title).strip()
+            sxx = r.get("sxx")
             results.append(_norm_item(
-                title=r.get("title") or "",
+                title=title,
                 url=url,
-                content=r.get("summary") or "",
+                content="",           # 列表接口不返回正文摘要
                 source=SOURCE_NATIONAL_LAW_DB,
-                office=r.get("office") or "",                     # 发布机关
-                publish_date=r.get("publish") or "",               # 公布日期
-                law_status=_LAW_STATUS_MAP.get(status_code, status_code or "未知"),
+                office=r.get("zdjgName") or "",               # 发布机关
+                publish_date=r.get("gbrq") or "",              # 公布日期
+                effective_date=r.get("sxrq") or "",            # 生效日期
+                law_status=_LAW_STATUS_MAP.get(sxx, str(sxx) if sxx is not None else "未知"),
+                law_type=r.get("flxz") or "",                  # 法律性质（法律/行政法规等）
             ))
         return results
 

@@ -30,22 +30,21 @@ from tests.fakes import FakeRetriever
 
 class TestNationalLawClient:
     def test_search_law_parses_records(self):
-        """flk 接口返回 records → 统一条目（title/url/状态/发布机关）。"""
+        """flk 接口返回 rows → 统一条目（title/url/状态/发布机关）。"""
         payload = {
-            "result": {
-                "data": {
-                    "records": [
-                        {
-                            "title": "中华人民共和国民事诉讼法",
-                            "url": "/detail2.html?MmM5MDlmZGQ2NzhiZjE3OTAxNTc4NjFlZTEzNzA1MjA",
-                            "office": "全国人民代表大会",
-                            "publish": "2023-09-01",
-                            "status": "1",
-                            "summary": "民事诉讼程序的基本法律",
-                        },
-                    ]
-                }
-            }
+            "total": 1,
+            "rows": [
+                {
+                    "bbbs": "ff8081818a21dc13018b425303b7086d",
+                    "title": "中华人民共和国<em class='highlight'>民事诉讼法</em>",
+                    "gbrq": "2023-09-01",
+                    "sxrq": "2024-01-01",
+                    "sxx": 3,
+                    "zdjgName": "全国人民代表大会",
+                    "flxz": "法律",
+                    "score": 14.93,
+                },
+            ],
         }
         with patch("src.search.legal_sources.requests.post") as mock_post:
             mock_post.return_value.status_code = 200
@@ -55,10 +54,12 @@ class TestNationalLawClient:
         assert len(results) == 1
         r = results[0]
         assert r["source"] == SOURCE_NATIONAL_LAW_DB
-        assert r["title"] == "中华人民共和国民事诉讼法"
-        assert r["url"].startswith("https://flk.npc.gov.cn/")
+        assert r["title"] == "中华人民共和国民事诉讼法"  # <em> 标签已清除
+        assert r["url"].startswith("https://flk.npc.gov.cn/detail2.html?bbbs=")
         assert r["law_status"] == "现行有效"
         assert r["office"] == "全国人民代表大会"
+        assert r["publish_date"] == "2023-09-01"
+        assert r["effective_date"] == "2024-01-01"
 
     def test_search_law_http_error_raises_runtime(self):
         """接口不可达 → RuntimeError（由工具层归一化为 ok=False）。"""
@@ -68,8 +69,8 @@ class TestNationalLawClient:
                 NationalLawClient().search_law("测试")
 
     def test_search_law_empty_keyword_no_crash(self):
-        """空关键词接口返回空 records → 空列表。"""
-        payload = {"result": {"data": {"records": []}}}
+        """空关键词接口返回空 rows → 空列表。"""
+        payload = {"total": 0, "rows": []}
         with patch("src.search.legal_sources.requests.post") as mock_post:
             mock_post.return_value.status_code = 200
             mock_post.return_value.json.return_value = payload

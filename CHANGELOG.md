@@ -4,6 +4,7 @@
 
 ## [Unreleased] — M2 双路融合（进行中）
 
+- **fix**：flk.npc.gov.cn API 改版适配——端点 `/api/search` → `/law-search/search/list`（POST JSON），参数 `keyword` → `searchContent`、`searchType` 改为整型（2=模糊），响应 `result.data.records` → `rows`，状态码映射更新（3=现行有效、2=已修改、1=已废止、4=尚未生效），title 含 `<em>` 高亮标签需清除，详情 URL 由 `bbbs` 构造
 - 新增 `src/search/legal_sources.py`：官方法律源客户端（国家法律法规数据库 API + 人民法院案例库域内搜索 + 小包公可选），封装为 `legal_source_search` 工具（PRD F9）
 - 新增 `src/search/fusion.py`：双路结果融合去重、按来源加权排序、冲突裁决（内部库优先，网络结果标注验证状态）（PRD F6/F7/F8）
 - `AgentState` 新增 `web_results` / `legal_results` / `fused_sources` 字段，`tools_node` 累计三路证据

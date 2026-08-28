@@ -51,7 +51,9 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 
 ## 关键架构约定（改代码前必读）
 
-1. **ReAct 循环**：`agent_node` 调 `chat_with_tools` 决策 → `tools_node` 执行全部 tool_calls（并行）→ 回灌 → 循环；轮数上限 `AGENT_MAX_TOOL_TURNS=5`，达上限移除 tools 强制作答（REQ-UW4）。
+1. **ReAct 循环走 LangGraph 图执行（D-M3-1）**：`agent_node` 调 `chat_with_tools` 决策 → `tools_node` 执行全部 tool_calls（并行）→ 回灌 → 循环；轮数上限 `AGENT_MAX_TOOL_TURNS=5`，达上限移除 tools 强制作答（REQ-UW4）。
+   - **两条路径都走编译图**，禁止手写 `while` 循环步进节点：`ask()` 用 `_graph`（完整管线，入口 intent），`stream()` 用 `_react_loop_graph`（纯循环子图，入口 agent，D-M3-2）。
+   - 消息累积由 `AgentState.messages` 的 `Annotated[list, add_messages]` reducer 保证，循环终止由条件边 `route_after_agent` 保证。**手工合并状态（如 `dict.update()` 覆盖 messages）会破坏 tool 消息与 `assistant(tool_calls)` 的配对关系，导致 DeepSeek 400 并降级 Ollama**（历史 Bug，勿重蹈）。
 2. **回退路径**：`AGENT_REACT_ENABLED=false` 或主后端降级（Ollama）或 LLM 不支持工具 → 回退固定管线图（AC-7 向后兼容），**不许破坏**。
 3. **工具失败不抛异常**：统一返回 `ToolResult(ok=False)`，summary 首词为错误标签（如"搜索不可用"），ReAct 循环继续。
 4. **来源优先级**：内部库 `internal_kb` > 官方源 `legal_source` > 网络 `web`。网络结果仅作线索，作为法律依据必须回源官方库二次验证。

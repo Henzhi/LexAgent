@@ -47,22 +47,6 @@ def _backend_degraded(llm) -> bool:
     return bool(getattr(backend, "degraded", False))
 
 
-def _merge_stream_update(state: dict, upd: dict) -> None:
-    """流式路径状态合并：messages 追加，其余键整体替换。
-
-    对齐 LangGraph invoke 路径 add_messages reducer 的追加语义。
-    此前直接 state.update() 会用节点返回的增量 messages 整体覆盖历史，
-    导致 ReAct 第 2 轮 tool 消息前丢失 assistant(tool_calls) 消息，
-    DeepSeek 返回 400 "Messages with role 'tool' must be a response to
-    a preceding message with 'tool_calls'" 并触发降级 Ollama。
-    """
-    msgs = upd.get("messages")
-    rest = {k: v for k, v in upd.items() if k != "messages"}
-    state.update(rest)
-    if msgs:
-        state["messages"] = list(state.get("messages", []) or []) + list(msgs)
-
-
 def _supports_tools(llm) -> bool:
     """LLM 是否具备工具调用能力（实现 chat_with_tools）。
 
@@ -123,10 +107,14 @@ class LawAgentGraph:
                 llm, self.registry,
                 max_tool_turns=AGENT_MAX_TOOL_TURNS,
             )
+            # 完整管线图（ask() 用，含 intent/memory/validate）
             self._graph = self._build_react_graph(nodes, self._react)
+            # 纯 ReAct 循环子图（stream() 用，入口直接是 agent）
+            self._react_loop_graph = self._build_react_loop_graph(self._react)
             logger.info("Agent 图构建: ReAct 工具调用模式 (max_tool_turns=%d)", AGENT_MAX_TOOL_TURNS)
         else:
             self._react = None
+            self._react_loop_graph = None
             self._graph = self._build_graph(nodes)
             if not AGENT_REACT_ENABLED:
                 reason = "AGENT_REACT_ENABLED=false"
@@ -201,6 +189,38 @@ class LawAgentGraph:
             {"retry": "generate", "end": END},
         )
         builder.add_edge("generate", "validate")
+
+        return builder.compile()
+
+    def _build_react_loop_graph(self, react: dict) -> StateGraph:
+        """纯 ReAct 循环子图：agent ⇄ tools，入口 agent。
+
+        与 `_build_react_graph`（完整管线，ask() 用）的区别：本图只保留工具调用循环，
+        入口直接是 agent —— 流式路径在调用前已完成意图识别、FAQ 缓存检查与记忆检索，
+        不需要重复执行这些节点。
+
+        为什么流式路径不复用完整图而要单独建子图：
+        1. stream() 需要按节点产出 SSE 事件（tool_call/tool_result），且前置的
+           intent/memory 阶段已有独立 SSE 事件与提前 return 分支（FAQ 命中）；
+        2. 关键是——走编译后的图，消息累积由 LangGraph 的 `add_messages` reducer
+           保证。此前手写 while 循环步进节点，状态合并靠 `dict.update()` 整体替换
+           messages，导致第 2 轮 tool 消息前丢失 assistant(tool_calls)，DeepSeek
+           返回 400 并降级 Ollama（见 DECISIONS D-M3-1）。
+
+        循环终止由条件边 `route_after_agent` 保证：无 tool_calls 时走 final → END；
+        agent_node 达轮数上限会移除 tools 强制作答，因此必然收敛。
+        """
+        builder = StateGraph(AgentState)
+
+        builder.add_node("agent", react["agent"])
+        builder.add_node("tools", react["tools"])
+
+        builder.set_entry_point("agent")
+        builder.add_conditional_edges(
+            "agent", react["route_after_agent"],
+            {"tools": "tools", "final": END},
+        )
+        builder.add_edge("tools", "agent")
 
         return builder.compile()
 
@@ -522,49 +542,49 @@ class LawAgentGraph:
         query_type: str,
         memory_count: int,
     ) -> Iterator[dict]:
-        """手动步进 ReAct 循环并产出 SSE 事件（tool_call/tool_result/token/meta）。
+        """ReAct 循环（LangGraph 图执行）并产出 SSE 事件（tool_call/tool_result/token/meta）。
+
+        走编译后的子图 `self._react_loop_graph`，消息累积由 `add_messages` reducer
+        保证、循环终止由条件边保证；SSE 事件从图事件流映射（D-M3-1）。
 
         与固定管线共用 validate/generate 兜底节点与幻觉守卫，保证行为一致性。
         """
-        react = self._react
         yield {"type": "thinking", "content": "🤖 进入 Agent 工具调用模式"}
 
-        # ---- ReAct 循环：agent ⇄ tools ----
-        # 终止性由 agent_node 保证：达到轮数上限时移除 tools，模型被迫产出最终答案（REQ-UW4）。
-        max_turns = AGENT_MAX_TOOL_TURNS
-        guard = 0
-        while True:
-            guard += 1
-            if guard > max_turns + 2:
-                logger.warning("ReAct 循环超出安全上限，强制终止")
-                break
-            upd = react["agent"](state)
-            _merge_stream_update(state, upd)
-            tool_calls = state.get("tool_calls", []) or []
-            if not tool_calls:
-                break
-            turn = state.get("agent_turns", 0) or 0
-            # SSE: LLM 决策调用工具（F4）
-            for tc in tool_calls:
-                yield {
-                    "type": "tool_call",
-                    "tool": tc.name,
-                    "arguments": tc.arguments,
-                    "turn": turn,
-                }
-            # 执行全部 tool_calls（DeepSeek V4 parallel_tool_calls 恒启用，R5）
-            toup = react["tools"](state)
-            _merge_stream_update(state, toup)
-            # SSE: 工具执行结果（F4，summary 已截断 ≤300 字符）
-            for res in state.get("tool_results", []) or []:
-                yield {
-                    "type": "tool_result",
-                    "tool": res.tool,
-                    "ok": res.ok,
-                    "summary": res.summary,
-                    "turn": turn,
-                }
+        # ---- ReAct 循环：agent ⇄ tools（框架驱动，stream_mode 双通道）----
+        #   "updates" → {节点名: 本节点状态增量}，用于映射 SSE tool_call / tool_result
+        #   "values"  → 每个节点执行后的完整状态快照，最后一次即循环终态
+        # 终止性由条件边保证：agent_node 达轮数上限会移除 tools 强制作答（REQ-UW4）。
+        final_state: dict = dict(state)
+        turn = 0
+        for mode, chunk in self._react_loop_graph.stream(state, stream_mode=["updates", "values"]):
+            if mode == "values":
+                final_state = chunk
+                continue
+            # mode == "updates"
+            for node_name, delta in (chunk or {}).items():
+                if node_name == "agent":
+                    turn = (delta or {}).get("agent_turns", turn) or turn
+                    # SSE: LLM 决策调用工具（F4）
+                    for tc in (delta or {}).get("tool_calls") or []:
+                        yield {
+                            "type": "tool_call",
+                            "tool": tc.name,
+                            "arguments": tc.arguments,
+                            "turn": turn,
+                        }
+                elif node_name == "tools":
+                    # SSE: 工具执行结果（F4，summary 已截断 ≤300 字符）
+                    for res in (delta or {}).get("tool_results") or []:
+                        yield {
+                            "type": "tool_result",
+                            "tool": res.tool,
+                            "ok": res.ok,
+                            "summary": res.summary,
+                            "turn": turn,
+                        }
 
+        state = final_state
         answer = (state.get("answer", "") or "").strip() or "抱歉，暂时无法回答该问题。"
         state["answer"] = answer
         docs = state.get("retrieved_docs", []) or []

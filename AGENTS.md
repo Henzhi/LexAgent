@@ -6,7 +6,7 @@
 
 LexAgent 是一套**法律 RAG 智能问答系统**，正从固定管线 RAG 重构为**工具调用型自主 Agent**（详见 `docs/自主Agent重构PRD.md`）。
 
-- 里程碑：M1 工具调用型 Agent（已完成）→ M2 双路融合（进行中）→ M3 分场景人工确认 + 多 Agent 预留
+- 里程碑：M1 工具调用型 Agent（已完成）→ M2 双路融合（已完成，2026-08-28）→ M3 分场景人工确认 + 多 Agent 预留（进行中，已完成 D-M3-1~5 相关基建）
 - 双 LLM 后端：外接 API（DeepSeek，OpenAI 兼容）为主，Ollama 本地为降级
 - 双路检索：内部 pgvector 知识库（最高优先级法律依据）+ 网络搜索（Tavily，仅作线索）+ 官方法律源二次验证
 - 姊妹仓库 `Law-RAG-Agent` 为干净上游，**所有新代码只写在 LexAgent**
@@ -113,4 +113,5 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 | `DECISIONS.md` | 关键决策及原因，避免重复争论 |
 | `docs/自主Agent重构PRD.md` | 重构总需求（EARS 原则、验收标准） |
 | `docs/M1-架构设计.md` | M1 详细设计（D1~D7 决策、共享约定 §8） |
+| `docs/M2联调结论-2026-08-28.md` | M2 验收结论：双路径口径、配额策略、前端渲染约定（前端/测试必读） |
 | `docs/adr-*.md` | 历史检索配置 ADR |

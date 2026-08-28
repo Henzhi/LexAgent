@@ -2,7 +2,9 @@
 
 > 记录有意义的变更，帮助 AI 快速了解最新动态、避免回归。格式参考 Keep a Changelog，新条目放最上面。
 
-## [Unreleased] — M2 双路融合（进行中）
+## 2026-08-28 — M2 双路融合（已完成）
+
+> 联调结论见 `docs/M2联调结论-2026-08-28.md`（双路径口径 / 配额策略 / 前端渲染约定）。
 
 - **feat**：前端引用溯源可视化（M2 / F10 收尾）——`ChatMessage.vue` 每条来源加验证状态徽章（内部库绿 / 官方源蓝 / 第三方橙 / 网络未验证灰），标题栏显示来源构成汇总，含未验证线索时顶部显示警示条；`App.vue` 主题新增 `--color-warning` / `--color-success-light`（light + dark 双套）
 - **fix**：网络线索融合后被系统性挤掉——`fuse_evidence` 纯按 `fused_score` 排序截断，网络（≤0.5）永远排在权威来源（≥0.5）之后，`top_k=8` 被填满时一条都不展示，Tavily 调用成本花了用户却看不到。新增 `_truncate_with_web_quota` 保底配额（`FUSION_WEB_MIN_SLOTS`，默认 2，设 0 关闭）；新增 6 项测试

@@ -138,14 +138,17 @@ def chat(req: ChatRequest):
             result = agent.ask(safe_query, history=_sanitize_history(req.history))
             elapsed = (time.perf_counter() - t_start) * 1000
             ret_docs = result.get("retrieved_docs", [])
+            # M2 / F10：优先用融合后的 fused_sources（去重 + 来源加权排序 + verification
+            # 验证状态标注），与流式路径行为一致；融合不可用时回退原始检索结果。
+            fused = result.get("fused_sources")
             perf_logger.info(
                 f"[chat] mode=agent query_len={len(req.query)} "
                 f"legal={result.get('is_legal_query', True)} "
-                f"retrieved={len(ret_docs)} elapsed={elapsed:.0f}ms"
+                f"retrieved={len(ret_docs)} fused={len(fused or [])} elapsed={elapsed:.0f}ms"
             )
             return ChatResponse.from_rag_answer(
                 query=result["query"], answer=result["answer"],
-                sources=_dicts_to_retrieved(ret_docs),
+                sources=_dicts_to_retrieved(fused if fused is not None else ret_docs),
                 is_casual=not result.get("is_legal_query", True),
             )
 
@@ -637,11 +640,16 @@ def get_me(user_id: str = Depends(get_current_user)):
     return {"user_id": user_id, "anonymous": is_anonymous}
 
 
+# M2 / F10 引用溯源字段：融合结果（fused_sources）附带，固定管线检索结果没有。
+# 动态构造兼容对象时必须一并保留，否则非流式 /api/chat 会丢失验证状态标注。
+_SOURCE_TRACE_KEYS = ("source", "verification", "url", "law_status", "superseded")
+
+
 def _dicts_to_retrieved(docs: list[dict]) -> list:
-    """将 agent 返回的 dict 转为 RetrievedDoc 兼容格式"""
+    """将 agent 返回的 dict 转为 RetrievedDoc 兼容格式（保留引用溯源字段）"""
     result = []
     for d in docs:
-        result.append(type("RetrievedDoc", (), {
+        attrs = {
             "law_name": d.get("law_name", ""),
             "chapter": d.get("chapter", ""),
             "section": d.get("section", ""),
@@ -649,7 +657,12 @@ def _dicts_to_retrieved(docs: list[dict]) -> list:
             "citation": d.get("citation", ""),
             "content": d.get("content", ""),
             "score": float(d.get("score", 0)),
-        })())
+        }
+        for key in _SOURCE_TRACE_KEYS:
+            val = d.get(key)
+            if val not in ("", None, False):
+                attrs[key] = val
+        result.append(type("RetrievedDoc", (), attrs)())
     return result
 
 

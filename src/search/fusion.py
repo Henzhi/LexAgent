@@ -25,6 +25,7 @@ from typing import Any
 
 from src.config import (
     FUSION_TOP_K,
+    FUSION_WEB_MIN_SLOTS,
     FUSION_WEIGHT_INTERNAL,
     FUSION_WEIGHT_LEGAL,
     FUSION_WEIGHT_WEB,
@@ -72,11 +73,51 @@ def _internal_key(doc: dict) -> tuple:
     return (doc.get("law_name") or "", doc.get("article_range") or "")
 
 
+def _truncate_with_web_quota(
+    items: list[dict[str, Any]],
+    top_k: int,
+    web_min_slots: int = FUSION_WEB_MIN_SLOTS,
+) -> list[dict[str, Any]]:
+    """按 fused_score 截断，但为网络线索保留保底配额。
+
+    纯按分排序时网络线索（fused_score ≤ 0.5）必然排在权威来源（≥0.5）之后，
+    一旦权威来源条数 ≥ top_k 就会被全部截断——Tavily 调用成本花了，用户却
+    一条网络线索都看不到，"网络未验证"这一验证状态形同虚设。
+
+    策略：网络线索先占 min(配额, 网络条数, top_k) 个位置，其余名额给权威来源；
+    权威不足额时用剩余网络线索补满（保证结果数尽量接近 top_k）。
+    最终仍按 fused_score 排序，权威来源展示在前。
+
+    Args:
+        items: 已按 fused_score 降序排好的统一条目
+        top_k: 输出条数上限
+        web_min_slots: 网络线索保底配额，0 表示关闭（退化为纯按分截断）
+    """
+    k = max(1, int(top_k))
+    quota = max(0, int(web_min_slots or 0))
+    if quota == 0:
+        return items[:k]
+
+    # items 已排序，分区后各自仍保持降序
+    web_items = [x for x in items if x.get("verification") == WEB_UNVERIFIED]
+    authority = [x for x in items if x.get("verification") != WEB_UNVERIFIED]
+
+    web_quota = min(len(web_items), quota, k)
+    sources = web_items[:web_quota] + authority[: k - web_quota]
+    # 权威不足额 → 用剩余网络线索补满到 k
+    if len(sources) < k:
+        sources += web_items[web_quota : web_quota + (k - len(sources))]
+
+    sources.sort(key=lambda x: x["fused_score"], reverse=True)
+    return sources
+
+
 def fuse_evidence(
     internal_docs: list[dict],
     web_results: list[dict],
     legal_results: list[dict],
     top_k: int = FUSION_TOP_K,
+    web_min_slots: int = FUSION_WEB_MIN_SLOTS,
 ) -> dict[str, Any]:
     """三路证据融合、去重、排序与冲突裁决（F6/F7/F8）。
 
@@ -85,6 +126,7 @@ def fuse_evidence(
         web_results: 网络搜索条目（web_search 的 results 字典，Tavily 结构）
         legal_results: 官方源条目（legal_source_search 的 results 字典）
         top_k: 输出条数上限
+        web_min_slots: 网络线索保底配额（0 = 关闭，纯按分截断）
 
     Returns:
         {"sources": [统一来源条目], "count": 条数,
@@ -174,10 +216,10 @@ def fuse_evidence(
             "fused_score": FUSION_WEIGHT_WEB * tavily_score,
         })
 
-    # ---- 4. 排序（fused_score 降序；内部库天然权重最高）+ 截断 ----
+    # ---- 4. 排序（fused_score 降序；内部库天然权重最高）+ 配额截断 ----
     items.sort(key=lambda x: x["fused_score"], reverse=True)
     k = max(1, int(top_k))
-    sources = items[:k]
+    sources = _truncate_with_web_quota(items, k, web_min_slots)
 
     return {
         "sources": sources,

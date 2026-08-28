@@ -150,3 +150,65 @@ class TestEmptyInputs:
         fused = fuse_evidence([], [_web("线索", "https://x.com/1")], [])
         assert fused["count"] == 1
         assert fused["sources"][0]["source"] == "web"
+
+
+class TestWebQuota:
+    """网络线索保底配额：避免权威来源占满 top_k 后网络线索一条都不展示。"""
+
+    def test_web_survives_when_authority_fills_top_k(self):
+        """回归：权威条数 ≥ top_k 时，网络线索仍保底进入（否则 Tavily 白调用）。"""
+        docs = [_internal(article=f"第{i}条") for i in range(10)]
+        webs = [_web(f"线索{i}", f"https://x.com/{i}", score=0.9) for i in range(5)]
+        fused = fuse_evidence(docs, webs, [], top_k=8)
+
+        verifications = [s["verification"] for s in fused["sources"]]
+        assert verifications.count(WEB_UNVERIFIED) == 2, "网络线索应保底占 2 个名额"
+        assert fused["count"] == 8
+
+    def test_authority_still_ranks_before_web(self):
+        """配额不破坏优先级：权威来源仍排在网络线索之前。"""
+        docs = [_internal(article=f"第{i}条", score=0.9) for i in range(4)]
+        webs = [_web("线索", "https://x.com/1", score=1.0)]
+        fused = fuse_evidence(docs, webs, [], top_k=8)
+
+        srcs = fused["sources"]
+        assert srcs[0]["verification"] == VERIFIED_INTERNAL
+        assert srcs[-1]["verification"] == WEB_UNVERIFIED
+
+    def test_quota_capped_by_web_count(self):
+        """网络线索不足配额时，全部保留且权威来源补齐剩余名额（不浪费位置）。"""
+        docs = [_internal(article=f"第{i}条") for i in range(6)]
+        webs = [_web("唯一线索", "https://x.com/1", score=0.9)]
+        fused = fuse_evidence(docs, webs, [], top_k=8)
+
+        # 可用条目共 7 条（6 内部 + 1 网络），不足 top_k → 全部保留，不额外填充
+        assert fused["count"] == 7
+        assert sum(1 for s in fused["sources"] if s["verification"] == WEB_UNVERIFIED) == 1
+        assert sum(1 for s in fused["sources"] if s["verification"] == VERIFIED_INTERNAL) == 6
+
+    def test_no_web_means_no_quota_waste(self):
+        """无网络线索时结果不受影响（仍按分截断到 top_k）。"""
+        docs = [_internal(article=f"第{i}条") for i in range(10)]
+        fused = fuse_evidence(docs, [], [], top_k=5)
+        assert fused["count"] == 5
+        assert all(s["verification"] == VERIFIED_INTERNAL for s in fused["sources"])
+
+    def test_quota_zero_restores_pure_score_ordering(self):
+        """配额设 0 → 退化为纯按分截断（可通过 FUSION_WEB_MIN_SLOTS=0 关闭）。"""
+        docs = [_internal(article=f"第{i}条") for i in range(10)]
+        webs = [_web(f"线索{i}", f"https://x.com/{i}", score=0.9) for i in range(5)]
+        fused = fuse_evidence(docs, webs, [], top_k=8, web_min_slots=0)
+
+        assert fused["count"] == 8
+        assert all(s["verification"] == VERIFIED_INTERNAL for s in fused["sources"])
+
+    def test_legal_still_prioritized_over_web(self):
+        """官方源（0.85）优先于网络线索，配额只保证网络不被清零。"""
+        legals = [_legal(f"法规{i}", f"https://flk/{i}") for i in range(10)]
+        webs = [_web(f"线索{i}", f"https://x.com/{i}", score=1.0) for i in range(5)]
+        fused = fuse_evidence([], webs, legals, top_k=8)
+
+        veris = [s["verification"] for s in fused["sources"]]
+        assert veris.count(VERIFIED_OFFICIAL) == 6
+        assert veris.count(WEB_UNVERIFIED) == 2
+        assert veris[0] == VERIFIED_OFFICIAL

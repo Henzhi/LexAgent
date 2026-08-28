@@ -18,8 +18,15 @@
       <button class="src-toggle" @click="srcOpen = !srcOpen">
         <svg :class="{ rotated: srcOpen }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="9 18 15 12 9 6"/></svg>
         <span>引用条文 · {{ sources.length }} 条</span>
+        <!-- 来源构成汇总：一眼看清依据的可信度分布 -->
+        <span v-if="sourceSummary" class="src-summary">{{ sourceSummary }}</span>
       </button>
       <ul v-if="srcOpen" class="src-list">
+        <!-- 未验证线索警示：法律场景下须明确区分"可引用"与"仅供参考" -->
+        <li v-if="unverifiedCount" class="src-caution">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>含 {{ unverifiedCount }} 条未经官方源验证的线索，仅供参考，不宜直接作为法律依据</span>
+        </li>
         <li v-for="(s, i) in sources" :key="i" class="src-item">
           <button
             class="src-head"
@@ -30,6 +37,13 @@
             <svg v-if="s.content" :class="{ rotated: expandedSources.includes(i) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><polyline points="9 18 15 12 9 6"/></svg>
             <span class="src-name">{{ s.law_name }}</span>
             <span class="src-citation">{{ s.citation }}</span>
+            <!-- 来源与验证状态徽章（M2 / F10 引用溯源） -->
+            <span
+              v-if="veriMeta(s).label"
+              class="src-badge"
+              :class="`badge-${veriMeta(s).tone}`"
+              :title="veriMeta(s).hint"
+            >{{ veriMeta(s).label }}</span>
             <span v-if="s.content" class="src-hint">{{ expandedSources.includes(i) ? '收起' : '查看原文' }}</span>
           </button>
           <div v-if="s.content && expandedSources.includes(i)" class="src-content">{{ s.content }}</div>
@@ -47,6 +61,53 @@ const props = defineProps({
   thinking: { type: Boolean, default: false },
   sources: { type: Array, default: () => [] },
 })
+
+// 来源验证状态 → 展示配置（M2 / F10 引用溯源，字段由后端 fusion.py 产出）
+// verification 缺失（旧会话/固定管线路径）时回退为空白，不显示徽章。
+const VERIFICATION_META = {
+  verified_internal: {
+    label: '内部库', tone: 'internal',
+    hint: '已收录于内部法律知识库，可直接作为法律依据',
+  },
+  verified_official: {
+    label: '官方源', tone: 'official',
+    hint: '来自国家法律法规数据库等官方源，已验证现行有效',
+  },
+  third_party: {
+    label: '第三方', tone: 'third',
+    hint: '来自第三方数据源，建议回源官方库二次核验',
+  },
+  web_unverified: {
+    label: '网络未验证', tone: 'web',
+    hint: '来自网络搜索，未经官方源验证，仅供参考',
+  },
+}
+
+function veriMeta(s) {
+  return VERIFICATION_META[s?.verification] || { label: '', tone: '', hint: '' }
+}
+
+// 标题栏来源构成汇总，例："6 官方源 · 2 内部库 · 1 网络未验证"
+const sourceSummary = computed(() => {
+  const counts = new Map()
+  for (const s of props.sources) {
+    const label = veriMeta(s).label
+    if (!label) continue
+    counts.set(label, (counts.get(label) || 0) + 1)
+  }
+  if (!counts.size) return ''
+  // 按可信度排序：内部库 → 官方源 → 第三方 → 网络未验证
+  const order = ['内部库', '官方源', '第三方', '网络未验证']
+  return [...counts.entries()]
+    .sort((a, b) => order.indexOf(a[0]) - order.indexOf(b[0]))
+    .map(([label, n]) => `${n} ${label}`)
+    .join(' · ')
+})
+
+// 未验证线索条数（第三方 + 网络未验证），用于顶部警示
+const unverifiedCount = computed(
+  () => props.sources.filter((s) => ['third_party', 'web_unverified'].includes(s?.verification)).length,
+)
 
 const thinkingCollapsed = ref(true)
 const srcOpen = ref(true)
@@ -144,6 +205,15 @@ const renderedContent = computed(() => {
   flex-shrink: 0;
 }
 .src-toggle svg.rotated { transform: rotate(90deg); }
+/* 来源构成汇总：次要信息，弱化但可读 */
+.src-summary {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  padding-right: 2px;
+}
 .src-list {
   padding: 4px 14px 14px;
   list-style: none;
@@ -182,6 +252,57 @@ const renderedContent = computed(() => {
   white-space: nowrap;
 }
 .src-citation { color: var(--color-text-muted); }
+
+/* ---- 来源验证状态徽章（M2 / F10）----
+   四态配色：内部库绿（已验证可引用）、官方源蓝（权威已验证）、
+   第三方橙、网络未验证灰橙。双主题靠 CSS 变量自动适配。 */
+.src-badge {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  cursor: help;
+}
+.badge-internal {
+  color: var(--color-success);
+  background: var(--color-success-light);
+  border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
+}
+.badge-official {
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  border-color: var(--color-primary-border);
+}
+.badge-third {
+  color: var(--color-warning);
+  background: var(--color-warning-light);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+.badge-web {
+  color: var(--color-text-secondary);
+  background: var(--color-surface-hover);
+  border-color: var(--color-border);
+}
+
+/* 未验证线索警示条 */
+.src-caution {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--color-warning-light);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  color: var(--color-warning);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.src-caution svg { flex-shrink: 0; margin-top: 1px; }
 .src-hint {
   margin-left: auto;
   font-size: 12px;

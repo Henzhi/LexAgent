@@ -226,6 +226,10 @@ FUSION_TOP_K = _safe_int("FUSION_TOP_K", 8)
 FUSION_WEIGHT_INTERNAL = _safe_float("FUSION_WEIGHT_INTERNAL", 1.0)
 FUSION_WEIGHT_LEGAL = _safe_float("FUSION_WEIGHT_LEGAL", 0.85)
 FUSION_WEIGHT_WEB = _safe_float("FUSION_WEIGHT_WEB", 0.5)
+# 网络线索保底配额：纯按分排序时网络（≤0.5）会被权威来源（≥0.5）全部挤出 top_k，
+# 导致 Tavily 调用了却一条都不展示给用户。设为 N 可保证至少 N 条网络线索进入结果
+# （带 web_unverified 标注，用户仍能分辨可信度）。设 0 = 关闭配额，回归纯按分排序。
+FUSION_WEB_MIN_SLOTS = _safe_int("FUSION_WEB_MIN_SLOTS", 2)
 
 # ---------------------------------------------------------------------------
 # pgvector

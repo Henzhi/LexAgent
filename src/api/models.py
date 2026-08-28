@@ -25,6 +25,13 @@ class RewriteRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=2000, description="用户原始提问")
 
 
+def _source_field(source, key: str, default=""):
+    """从来源条目取值，兼容 dict（M2 fused_sources）与对象（RetrievedDoc）。"""
+    if isinstance(source, dict):
+        return source.get(key, default)
+    return getattr(source, key, default)
+
+
 class ChatResponse(BaseModel):
     """单次问答响应"""
     query: str
@@ -34,22 +41,28 @@ class ChatResponse(BaseModel):
 
     @classmethod
     def from_rag_answer(cls, query: str, answer: str, sources: list, is_casual: bool = False) -> "ChatResponse":
-        return cls(
-            query=query,
-            answer=answer,
-            is_casual=is_casual,
-            sources=[
-                {
-                    "law_name": s.law_name,
-                    "chapter": s.chapter,
-                    "article_range": s.article_range,
-                    "citation": s.citation,
-                    "score": float(s.score),  # pgvector 返回 float，统一转 Python float
-                    "content": getattr(s, "content", ""),  # 条文原文，供前端查看
-                }
-                for s in sources
-            ],
-        )
+        """构造响应。
+
+        sources 既支持 RetrievedDoc 对象（固定管线 / 融合不可用时的回退），
+        也支持 M2 融合后的 dict（fused_sources，带 source / verification 标注）。
+        """
+        normalized: list[dict] = []
+        for s in sources:
+            item = {
+                "law_name": _source_field(s, "law_name"),
+                "chapter": _source_field(s, "chapter"),
+                "article_range": _source_field(s, "article_range"),
+                "citation": _source_field(s, "citation"),
+                "score": float(_source_field(s, "score", 0.0) or 0.0),  # pgvector 返回 float，统一转 Python float
+                "content": _source_field(s, "content"),                 # 条文原文，供前端查看
+            }
+            # M2 / F10 引用溯源字段（仅融合结果具备）
+            for key in ("source", "verification", "url", "law_status", "superseded"):
+                val = _source_field(s, key)
+                if val not in ("", None, False):
+                    item[key] = val
+            normalized.append(item)
+        return cls(query=query, answer=answer, is_casual=is_casual, sources=normalized)
 
 
 class HealthResponse(BaseModel):

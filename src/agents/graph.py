@@ -615,7 +615,7 @@ class LawAgentGraph:
                 yield {"type": "thinking", "content": f"⚠️ 回答已拦截: {guard_result['reason']}"}
 
         # ---- sources（M2 / F6-F10：三路证据融合，含来源与验证状态）----
-        fused = fuse_evidence(docs, state.get("web_results", []) or [], state.get("legal_results", []) or [])
+        fused = fuse_evidence(docs, state.get("web_results", []) or [], state.get("legal_results") or [])
         sources = fused["sources"]
         state["fused_sources"] = sources
         if fused["web_conflicts"]:

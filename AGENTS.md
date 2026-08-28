@@ -56,7 +56,10 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - 消息累积由 `AgentState.messages` 的 `Annotated[list, add_messages]` reducer 保证，循环终止由条件边 `route_after_agent` 保证。**手工合并状态（如 `dict.update()` 覆盖 messages）会破坏 tool 消息与 `assistant(tool_calls)` 的配对关系，导致 DeepSeek 400 并降级 Ollama**（历史 Bug，勿重蹈）。
 2. **回退路径**：`AGENT_REACT_ENABLED=false` 或主后端降级（Ollama）或 LLM 不支持工具 → 回退固定管线图（AC-7 向后兼容），**不许破坏**。
 3. **工具失败不抛异常**：统一返回 `ToolResult(ok=False)`，summary 首词为错误标签（如"搜索不可用"），ReAct 循环继续。
-4. **来源优先级**：内部库 `internal_kb` > 官方源 `legal_source` > 网络 `web`。网络结果仅作线索，作为法律依据必须回源官方库二次验证。
+4. **来源优先级与融合（D-M3-4 / D-M3-5）**：内部库 `internal_kb` > 官方源 `legal_source` > 网络 `web`。网络结果仅作线索，作为法律依据必须回源官方库二次验证。
+   - 三路证据由 `search/fusion.py::fuse_evidence()` 融合：去重 → 来源加权排序 → 打 `verification` 状态（`verified_internal` / `verified_official` / `third_party` / `web_unverified`）。
+   - **截断有保底配额**：网络权重最低（0.5×tavily_score），纯按分排序会被权威来源挤空，故 `_truncate_with_web_quota` 给网络留 `FUSION_WEB_MIN_SLOTS`（默认 2，设 0 关闭）——否则 Tavily 调用了用户却一条线索都看不到。
+   - **流式与非流式口径必须一致**：两条路径都取 `fused_sources`，都不能直接返回原始 `retrieved_docs`（历史 Bug：非流式曾返回 74 条无 verification 的未去重文档）。新增来源字段时，`_dicts_to_retrieved` 的 `_SOURCE_TRACE_KEYS` 要同步加，否则字段在中间转换时被丢掉。
 5. **summary 截断**：工具结果 summary ≤300 字符（`TOOL_RESULT_SUMMARY_MAX_CHARS`），防上下文膨胀。
 6. **空 tool_call 过滤**：DeepSeek V4 想直接回答时会返回 name="" 的占位 tool_call，`agent_node` 必须过滤（历史 Bug 2939ab3）。
 7. **模型名**：deepseek-chat 已于 2026-07-24 弃用，用 `deepseek-v4-flash`。

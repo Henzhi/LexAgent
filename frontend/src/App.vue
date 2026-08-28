@@ -32,6 +32,9 @@ body {
   --color-error: #DC2626;
   --color-error-light: #FEF2F2;
   --color-success: #059669;
+  --color-success-light: #ECFDF5;
+  --color-warning: #D97706;         /* 琥珀橙：需谨慎对待的未验证/第三方来源 */
+  --color-warning-light: #FFFBEB;
   --color-danger: #EF4444;
   --color-danger-hover: #DC2626;
   --color-sidebar-bg: #F9FAFB;
@@ -60,6 +63,9 @@ body {
   --color-error: #F87171;
   --color-error-light: rgba(248, 113, 113, 0.12);
   --color-success: #34D399;
+  --color-success-light: rgba(52, 211, 153, 0.12);
+  --color-warning: #FBBF24;
+  --color-warning-light: rgba(251, 191, 36, 0.12);
   --color-danger: #F87171;
   --color-danger-hover: #EF4444;
   --color-sidebar-bg: #1F2026;

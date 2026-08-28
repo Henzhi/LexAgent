@@ -33,7 +33,7 @@ from src.agents.tools.base import (
     truncate_summary,
 )
 from src.agents.tools.registry import ToolRegistry
-from src.agents.tools.web_search import WebSearchTool
+from src.agents.tools.web_search import build_web_search_spec
 from src.llm.base import LLMBackend, ToolCall, ToolCallResponse
 from src.llm.failover import FailoverLLMBackend
 from src.search.tavily import TavilySearchClient
@@ -357,8 +357,8 @@ class TestWebSearchEdge:
         """Tavily 超时 → ok=False + "搜索不可用"，不向调用方抛出。"""
         client = self._mock_client()
         client.search.side_effect = TimeoutError("timed out")
-        tool = WebSearchTool(client)
-        result = tool._exec(query="测试")
+        spec = build_web_search_spec(client)
+        result = spec.executor(query="测试")
         assert not result.ok
         assert result.summary.startswith("搜索不可用")
 
@@ -366,8 +366,8 @@ class TestWebSearchEdge:
         """Tavily 任意异常 → ok=False + "搜索不可用"（REQ-UW1 归一化）。"""
         client = self._mock_client()
         client.search.side_effect = RuntimeError("网络异常")
-        tool = WebSearchTool(client)
-        result = tool._exec(query="测试")
+        spec = build_web_search_spec(client)
+        result = spec.executor(query="测试")
         assert not result.ok
         assert result.summary.startswith("搜索不可用")
         assert result.source == SOURCE_WEB
@@ -375,12 +375,12 @@ class TestWebSearchEdge:
     def test_max_results_clamped_to_1_10(self):
         """max_results 越界 → 上限收敛到 10；0/负值语义：0=未指定→默认，负值→下限 1。"""
         client = self._mock_client()
-        tool = WebSearchTool(client, default_max_results=5)
-        tool._exec(query="q", max_results=999)
+        spec = build_web_search_spec(client, default_max_results=5)
+        spec.executor(query="q", max_results=999)
         assert client.search.call_args.kwargs["max_results"] == 10
-        tool._exec(query="q", max_results=0)  # 0 = 未指定 → 默认 5
+        spec.executor(query="q", max_results=0)  # 0 = 未指定 → 默认 5
         assert client.search.call_args.kwargs["max_results"] == 5
-        tool._exec(query="q", max_results=-3)  # 负值 → clamp 到 1
+        spec.executor(query="q", max_results=-3)  # 负值 → clamp 到 1
         assert client.search.call_args.kwargs["max_results"] == 1
 
     def test_tavily_search_raises_when_unavailable(self):
@@ -392,10 +392,10 @@ class TestWebSearchEdge:
 
     def test_retrieve_knowledge_error_source_tag(self, fake_retriever):
         """内部检索失败 → ok=False + source=internal_kb + 首词"检索失败"（共享约定 §8.3）。"""
-        from src.agents.tools.retrieve_knowledge import RetrieveKnowledgeTool
+        from src.agents.tools.retrieve_knowledge import build_retrieve_knowledge_spec
         fake_retriever.search = MagicMock(side_effect=RuntimeError("pg down"))
-        tool = RetrieveKnowledgeTool(fake_retriever)
-        result = tool._exec(query="测试")
+        spec = build_retrieve_knowledge_spec(fake_retriever)
+        result = spec.executor(query="测试")
         assert not result.ok
         assert result.source == SOURCE_INTERNAL_KB
         assert result.summary.startswith("检索失败")

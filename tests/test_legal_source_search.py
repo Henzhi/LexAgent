@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agents.tools import build_default_tools
-from src.agents.tools.legal_source_search import LegalSourceSearchTool
+from src.agents.tools.legal_source_search import build_legal_source_search_spec
 from src.agents.tools.base import SOURCE_LEGAL
 from src.search.legal_sources import (
     SOURCE_COURT_CASE_LIB,
@@ -180,8 +180,8 @@ class TestLegalSourceClientAggregate:
 # ---------------------------------------------------------------------------
 
 class TestLegalSourceSearchTool:
-    def _tool(self, client):
-        return LegalSourceSearchTool(client)
+    def _spec(self, client):
+        return build_legal_source_search_spec(client)
 
     def test_ok_result(self):
         client = MagicMock()
@@ -192,7 +192,7 @@ class TestLegalSourceSearchTool:
             "sources": [SOURCE_NATIONAL_LAW_DB],
             "errors": [],
         }
-        result = self._tool(client)._exec("民事诉讼法")
+        result = self._spec(client).executor("民事诉讼法")
         assert result.ok is True
         assert result.source == SOURCE_LEGAL
         assert "现行有效" in result.summary
@@ -202,7 +202,7 @@ class TestLegalSourceSearchTool:
         """全部官方源未配置 → ok=False，首词"权威源检索失败"。"""
         client = MagicMock()
         client.is_available.return_value = False
-        result = self._tool(client)._exec("测试")
+        result = self._spec(client).executor("测试")
         assert result.ok is False
         assert result.summary.startswith("权威源检索失败")
 
@@ -211,7 +211,7 @@ class TestLegalSourceSearchTool:
         client = MagicMock()
         client.is_available.return_value = True
         client.search.side_effect = RuntimeError("全部子源失败")
-        result = self._tool(client)._exec("测试")
+        result = self._spec(client).executor("测试")
         assert result.ok is False
         assert result.summary.startswith("权威源检索失败")
 
@@ -219,12 +219,12 @@ class TestLegalSourceSearchTool:
         client = MagicMock()
         client.is_available.return_value = True
         client.search.return_value = {"results": [], "count": 0, "sources": [], "errors": []}
-        self._tool(client)._exec("测试", source_type="bogus")
+        self._spec(client).executor("测试", source_type="bogus")
         assert client.search.call_args.kwargs.get("source_type") == "law"
 
     def test_spec_schema(self):
         client = MagicMock()
-        spec = self._tool(client).build_spec()
+        spec = self._spec(client)
         assert spec.name == "legal_source_search"
         schema = spec.to_openai_format()
         assert schema["function"]["name"] == "legal_source_search"

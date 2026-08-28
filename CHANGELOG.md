@@ -4,6 +4,7 @@
 
 ## [Unreleased] — M2 双路融合（进行中）
 
+- **refactor**：工具定义改用 `@tool` 装饰器（D-M3-3）——`base.py` 新增 `Param` 与 `@tool`，从类型注解 + `Annotated` 元数据推导 OpenAI JSON Schema、docstring 作 description，产出与手写 class 一致的 `ToolSpec`。三个内置工具改为 `build_xxx_spec(dep)` 工厂 + 闭包注入依赖；新增 `tests/test_tool_decorator.py`（13 项）。零第三方依赖，纯语法糖，工具行为与 schema 不变
 - **refactor**：SSE 流式路径改为 LangGraph 图执行驱动（D-M3-1）——新增 `_build_react_loop_graph()`（纯 ReAct 循环子图，入口 agent），`_stream_react` 用 `graph.stream(state, stream_mode=["updates","values"])` 替换手写 `while` 循环；消息累积交由 `add_messages` reducer、循环终止交由条件边，SSE 事件从图事件流映射。删除 `_merge_stream_update`（手工补框架行为的补丁）与手写 guard 计数器
 - **fix**：SSE 流式路径 ReAct 消息历史覆盖 Bug——`_stream_react` 用 `state.update()` 整体替换 messages，导致第 2 轮 `tool` 消息前丢失 `assistant(tool_calls)`，DeepSeek 返回 400 并降级 Ollama。当时用 `_merge_stream_update` 补丁对齐 `add_messages` 语义，新增 2 项回归测试（消息序列完整性 + user 查询保留）——**根因已由上条重构用框架消除，补丁随之删除，回归测试保留**
 - **fix**：轮数上限强制作答时 DeepSeek 在纯文本输出 DSML 工具调用语法——`agent_node` 在 `schemas=[]` 时注入引导 system 消息（"禁止再输出工具调用语法"），并新增 `_strip_dsml_tool_calls` 兜底清除答案中的 DSML 块

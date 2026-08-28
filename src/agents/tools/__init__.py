@@ -13,15 +13,17 @@ from src.agents.tools.base import (
     SOURCE_INTERNAL_KB,
     SOURCE_LEGAL,
     SOURCE_WEB,
+    Param,
     ToolExecutionError,
     ToolResult,
     ToolSpec,
+    tool,
     truncate_summary,
 )
 from src.agents.tools.registry import ToolRegistry
-from src.agents.tools.retrieve_knowledge import RetrieveKnowledgeTool
-from src.agents.tools.web_search import WebSearchTool
-from src.agents.tools.legal_source_search import LegalSourceSearchTool
+from src.agents.tools.retrieve_knowledge import build_retrieve_knowledge_spec
+from src.agents.tools.web_search import build_web_search_spec
+from src.agents.tools.legal_source_search import build_legal_source_search_spec
 from src.config import (
     LEGAL_SOURCE_ENABLED,
     TAVILY_API_KEY,
@@ -37,9 +39,11 @@ __all__ = [
     "ToolResult",
     "ToolExecutionError",
     "ToolRegistry",
-    "RetrieveKnowledgeTool",
-    "WebSearchTool",
-    "LegalSourceSearchTool",
+    "tool",
+    "Param",
+    "build_retrieve_knowledge_spec",
+    "build_web_search_spec",
+    "build_legal_source_search_spec",
     "build_default_tools",
     "CATEGORY_KNOWLEDGE",
     "CATEGORY_WEB",
@@ -69,17 +73,17 @@ def build_default_tools(
         已注册内置工具的 ToolRegistry
     """
     registry = ToolRegistry()
-    registry.register(RetrieveKnowledgeTool(retriever).build_spec())
+    registry.register(build_retrieve_knowledge_spec(retriever))
     client = tavily_client or TavilySearchClient(
         api_key=TAVILY_API_KEY,
         timeout=TAVILY_TIMEOUT,
         max_results=TAVILY_MAX_RESULTS,
     )
-    registry.register(WebSearchTool(client, default_max_results=TAVILY_MAX_RESULTS).build_spec())
+    registry.register(build_web_search_spec(client, default_max_results=TAVILY_MAX_RESULTS))
     if LEGAL_SOURCE_ENABLED:
         # 官方案例库线索依赖 Tavily 域限定搜索，复用同一 client
         legal = legal_client or LegalSourceClient(
             court_case=CourtCaseLibraryClient(tavily_client=client),
         )
-        registry.register(LegalSourceSearchTool(legal).build_spec())
+        registry.register(build_legal_source_search_spec(legal))
     return registry

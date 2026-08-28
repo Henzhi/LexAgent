@@ -17,8 +17,8 @@ from src.agents.tools.base import (
     truncate_summary,
 )
 from src.agents.tools.registry import ToolRegistry
-from src.agents.tools.retrieve_knowledge import RetrieveKnowledgeTool
-from src.agents.tools.web_search import WebSearchTool
+from src.agents.tools.retrieve_knowledge import build_retrieve_knowledge_spec
+from src.agents.tools.web_search import build_web_search_spec
 from src.search.tavily import TavilySearchClient
 
 
@@ -120,20 +120,19 @@ class TestToolRegistry:
 
 
 # ---------------------------------------------------------------------------
-# RetrieveKnowledgeTool
+# retrieve_knowledge（@tool 装饰器声明）
 # ---------------------------------------------------------------------------
 
 class TestRetrieveKnowledgeTool:
     def test_build_spec(self, fake_retriever):
-        tool = RetrieveKnowledgeTool(fake_retriever)
-        spec = tool.build_spec()
+        spec = build_retrieve_knowledge_spec(fake_retriever)
         assert spec.name == "retrieve_knowledge"
         assert "query" in spec.parameters
         assert spec.required == ["query"]
 
     def test_exec_ok(self, fake_retriever):
-        tool = RetrieveKnowledgeTool(fake_retriever, default_top_k=5)
-        result = tool._exec(query="测试")
+        spec = build_retrieve_knowledge_spec(fake_retriever, default_top_k=5)
+        result = spec.executor(query="测试")
         assert result.ok
         assert result.source == SOURCE_INTERNAL_KB
         assert "检索到 1 条相关法条" in result.summary
@@ -143,20 +142,20 @@ class TestRetrieveKnowledgeTool:
 
     def test_exec_retriever_error(self, fake_retriever):
         fake_retriever.search = MagicMock(side_effect=RuntimeError("pg down"))
-        tool = RetrieveKnowledgeTool(fake_retriever)
-        result = tool._exec(query="测试")
+        spec = build_retrieve_knowledge_spec(fake_retriever)
+        result = spec.executor(query="测试")
         assert not result.ok
         assert result.summary.startswith("检索失败")
 
     def test_top_k_bounds(self, fake_retriever):
-        tool = RetrieveKnowledgeTool(fake_retriever, default_top_k=5)
-        result = tool._exec(query="测试", top_k=999)
+        spec = build_retrieve_knowledge_spec(fake_retriever, default_top_k=5)
+        result = spec.executor(query="测试", top_k=999)
         assert result.ok
         assert result.data["count"] <= 20
 
 
 # ---------------------------------------------------------------------------
-# WebSearchTool
+# web_search（@tool 装饰器声明）
 # ---------------------------------------------------------------------------
 
 class TestWebSearchTool:
@@ -169,14 +168,13 @@ class TestWebSearchTool:
         return client
 
     def test_build_spec(self):
-        tool = WebSearchTool(self._mock_client())
-        spec = tool.build_spec()
+        spec = build_web_search_spec(self._mock_client())
         assert spec.name == "web_search"
         assert spec.required == ["query"]
 
     def test_exec_ok(self):
-        tool = WebSearchTool(self._mock_client())
-        result = tool._exec(query="民事诉讼法 最新修订")
+        spec = build_web_search_spec(self._mock_client())
+        result = spec.executor(query="民事诉讼法 最新修订")
         assert result.ok
         assert result.source == SOURCE_WEB
         assert "搜索到 1 条网络结果" in result.summary
@@ -184,16 +182,16 @@ class TestWebSearchTool:
 
     def test_exec_unavailable(self):
         """未配置 TAVILY_API_KEY → 搜索不可用（REQ-UW1）"""
-        tool = WebSearchTool(self._mock_client(available=False))
-        result = tool._exec(query="测试")
+        spec = build_web_search_spec(self._mock_client(available=False))
+        result = spec.executor(query="测试")
         assert not result.ok
         assert result.summary.startswith("搜索不可用")
 
     def test_exec_search_error(self):
         client = self._mock_client()
         client.search.side_effect = RuntimeError("timeout")
-        tool = WebSearchTool(client)
-        result = tool._exec(query="测试")
+        spec = build_web_search_spec(client)
+        result = spec.executor(query="测试")
         assert not result.ok
         assert result.summary.startswith("搜索不可用")
 

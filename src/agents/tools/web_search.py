@@ -10,12 +10,14 @@ web_search 内置工具（M1 / F3）。
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from src.agents.tools.base import (
     CATEGORY_WEB,
     SOURCE_WEB,
     ToolResult,
     ToolSpec,
+    tool,
     truncate_summary,
 )
 from src.search.tavily import TavilySearchClient
@@ -38,46 +40,28 @@ def _build_summary(results: list[dict]) -> str:
     return truncate_summary("；".join(parts))
 
 
-class WebSearchTool:
-    """Tavily 通用网络搜索工具。"""
+def build_web_search_spec(
+    client: TavilySearchClient,
+    default_max_results: int = 5,
+) -> ToolSpec:
+    """构造 web_search 工具的 ToolSpec（依赖经闭包注入）。
 
-    def __init__(self, client: TavilySearchClient, default_max_results: int = 5):
-        """初始化。
+    Args:
+        client: Tavily 搜索客户端封装
+        default_max_results: LLM 未指定时的默认返回结果数
+    """
 
-        Args:
-            client: Tavily 搜索客户端封装
-            default_max_results: 默认返回结果数
+    @tool(name="web_search", category=CATEGORY_WEB)
+    def web_search(
+        query: Annotated[str, "搜索关键词，如 '民事诉讼法 最新修订 2026'"],
+        max_results: Annotated[int, "返回结果数，默认 5，最大 10"] = 5,
+    ) -> ToolResult:
+        """搜索互联网获取最新法律法规、司法解释、案例等线索。
+
+        当涉及最新修订、时效性信息、外部案例时使用；
+        网络搜索结果仅作线索，不得直接作为最终法律依据。
         """
-        self.client = client
-        self.default_max_results = default_max_results
-
-    def build_spec(self) -> ToolSpec:
-        """构造工具自描述（OpenAI 兼容 schema）。"""
-        return ToolSpec(
-            name="web_search",
-            description=(
-                "搜索互联网获取最新法律法规、司法解释、案例等线索。"
-                "当涉及最新修订、时效性信息、外部案例时使用；"
-                "网络搜索结果仅作线索，不得直接作为最终法律依据。"
-            ),
-            parameters={
-                "query": {
-                    "type": "string",
-                    "description": "搜索关键词，如 '民事诉讼法 最新修订 2026'",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "返回结果数，默认 5，最大 10",
-                },
-            },
-            required=["query"],
-            category=CATEGORY_WEB,
-            executor=self._exec,
-        )
-
-    def _exec(self, query: str, max_results: int | None = None) -> ToolResult:
-        """执行网络搜索（失败归一化为 ok=False 的"搜索不可用"，不抛出）。"""
-        if not self.client.is_available():
+        if not client.is_available():
             return ToolResult(
                 tool="web_search",
                 call_id="",
@@ -87,9 +71,9 @@ class WebSearchTool:
                 source=SOURCE_WEB,
             )
         try:
-            k = int(max_results) if max_results else self.default_max_results
+            k = int(max_results) if max_results else default_max_results
             k = max(1, min(k, 10))
-            results = self.client.search(query, max_results=k)
+            results = client.search(query, max_results=k)
             return ToolResult(
                 tool="web_search",
                 call_id="",
@@ -108,3 +92,5 @@ class WebSearchTool:
                 data={},
                 source=SOURCE_WEB,
             )
+
+    return web_search

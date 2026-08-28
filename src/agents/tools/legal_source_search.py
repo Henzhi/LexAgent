@@ -10,13 +10,15 @@ legal_source_search 内置工具（M2 / F9）。
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from src.agents.tools.base import (
     CATEGORY_LEGAL,
     SOURCE_LEGAL,
+    Param,
     ToolResult,
     ToolSpec,
+    tool,
     truncate_summary,
 )
 from src.search.legal_sources import LegalSourceClient
@@ -45,43 +47,30 @@ def _build_summary(data: dict[str, Any]) -> str:
     return truncate_summary("；".join(parts))
 
 
-class LegalSourceSearchTool:
-    """官方法律源检索工具（法规验证 / 案例权威线索）。"""
+def build_legal_source_search_spec(client: LegalSourceClient) -> ToolSpec:
+    """构造 legal_source_search 工具的 ToolSpec（依赖经闭包注入）。
 
-    def __init__(self, client: LegalSourceClient):
-        """Args: client: 官方法律源统一门面客户端"""
-        self.client = client
+    Args:
+        client: 官方法律源统一门面客户端
+    """
 
-    def build_spec(self) -> ToolSpec:
-        """构造工具自描述（OpenAI 兼容 schema）。"""
-        return ToolSpec(
-            name="legal_source_search",
-            description=(
-                "检索官方法律权威源：国家法律法规数据库（验证法规现行有效性、"
-                "最新版本与修订状态）与人民法院案例库（权威案例）。"
-                "当需要验证网络搜索到的法规线索、确认法条是否现行有效、"
-                "或查找权威案例时调用本工具；结果为官方源，可信度高于网络搜索。"
-            ),
-            parameters={
-                "query": {
-                    "type": "string",
-                    "description": "检索关键词，建议使用规范法律名称，如 '民事诉讼法'",
-                },
-                "source_type": {
-                    "type": "string",
-                    "enum": ["law", "case", "all"],
-                    "description": "law=仅法规（默认），case=仅案例，all=两者",
-                },
-            },
-            required=["query"],
-            category=CATEGORY_LEGAL,
-            executor=self._exec,
-        )
+    @tool(name="legal_source_search", category=CATEGORY_LEGAL)
+    def legal_source_search(
+        query: Annotated[str, "检索关键词，建议使用规范法律名称，如 '民事诉讼法'"],
+        source_type: Annotated[
+            str,
+            Param("law=仅法规（默认），case=仅案例，all=两者", enum=["law", "case", "all"]),
+        ] = "law",
+    ) -> ToolResult:
+        """检索官方法律权威源：国家法律法规数据库与人民法院案例库。
 
-    def _exec(self, query: str, source_type: str | None = None) -> ToolResult:
-        """执行官方源检索（失败归一化为 ok=False，不抛出）。"""
+        国家法律法规数据库可验证法规现行有效性、最新版本与修订状态；
+        人民法院案例库提供权威案例。当需要验证网络搜索到的法规线索、
+        确认法条是否现行有效、或查找权威案例时调用本工具；
+        结果为官方源，可信度高于网络搜索。
+        """
         st = source_type if source_type in ("law", "case", "all") else "law"
-        if not self.client.is_available():
+        if not client.is_available():
             return ToolResult(
                 tool="legal_source_search",
                 call_id="",
@@ -91,7 +80,7 @@ class LegalSourceSearchTool:
                 source=SOURCE_LEGAL,
             )
         try:
-            data = self.client.search(query, source_type=st)
+            data = client.search(query, source_type=st)
             return ToolResult(
                 tool="legal_source_search",
                 call_id="",
@@ -111,3 +100,5 @@ class LegalSourceSearchTool:
                 data={},
                 source=SOURCE_LEGAL,
             )
+
+    return legal_source_search

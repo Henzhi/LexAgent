@@ -64,7 +64,23 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 ## 代码规范
 
 - Python：类型注解（`from __future__ import annotations`）、模块级 docstring 说明"哪个需求/决策"、中文注释
-- 新工具：实现 `XxxTool.build_spec() -> ToolSpec`，在 `tools/__init__.build_default_tools()` 注册，executor 异常全部内部消化
+- **新工具用 `@tool` 装饰器**（D-M3-3），依赖经闭包注入，在 `tools/__init__.build_default_tools()` 注册：
+
+  ```python
+  def build_xxx_spec(client) -> ToolSpec:
+      @tool(name="xxx", category=CATEGORY_WEB)
+      def xxx(
+          query: Annotated[str, "检索关键词"],
+          kind: Annotated[str, Param("类型", enum=["a", "b"])] = "a",
+          top_k: Annotated[int, "返回条数"] = 5,
+      ) -> ToolResult:
+          """工具描述（docstring 即 description，写给 LLM 看的路由依据）。"""
+          ...
+      return xxx
+  ```
+
+  规则：函数名即工具名（或显式 `name=`）；docstring 即 description；schema 从类型注解自动推导（`Optional[X]` 取 X 的类型，无默认值即 required）；executor 异常全部内部消化返回 `ToolResult(ok=False)`。
+  **不用 LangChain 的 `@tool`**——它产出的对象只有 `BaseChatModel.bind_tools` 能消费，会倒逼重写 LLM 层。
 - State 新字段：先在 `state.py` 的 `AgentState` TypedDict 声明，再在 `graph.py` 的 initial state 初始化
 - 测试：外部服务一律 mock（见 `tests/fakes.py`），不许单测打真实网络
 

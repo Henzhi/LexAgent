@@ -9,13 +9,15 @@ retrieve_knowledge 内置工具（M1 / F1）。
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from src.agents.tools.base import (
     CATEGORY_KNOWLEDGE,
     SOURCE_INTERNAL_KB,
+    Param,
     ToolResult,
     ToolSpec,
+    tool,
     truncate_summary,
 )
 from src.rag.retriever import BaseRetriever, RetrievedDoc
@@ -55,59 +57,35 @@ def _build_summary(docs: list[RetrievedDoc]) -> str:
     return truncate_summary("；".join(parts))
 
 
-class RetrieveKnowledgeTool:
-    """内部法律知识库检索工具。"""
+def build_retrieve_knowledge_spec(
+    retriever: BaseRetriever,
+    default_top_k: int = 5,
+) -> ToolSpec:
+    """构造 retrieve_knowledge 工具的 ToolSpec（依赖经闭包注入）。
 
-    def __init__(self, retriever: BaseRetriever, default_top_k: int = 5):
-        """初始化。
+    Args:
+        retriever: 统一检索入口（pgvector → Reranker → AdjacentExpander → Hybrid → ArticleRouter 链）
+        default_top_k: LLM 未指定 top_k 时的默认返回条数
+    """
 
-        Args:
-            retriever: 统一检索入口（pgvector → Reranker → AdjacentExpander → Hybrid → ArticleRouter 链）
-            default_top_k: 默认返回条数
-        """
-        self.retriever = retriever
-        self.default_top_k = default_top_k
-
-    def build_spec(self) -> ToolSpec:
-        """构造工具自描述（OpenAI 兼容 schema）。"""
-        return ToolSpec(
-            name="retrieve_knowledge",
-            description=(
-                "从系统内部法律知识库检索相关法条或案例。"
-                "当需要引用具体法条原文、查询法律条文规定或查找类案时优先调用本工具；"
-                "内部库检索结果为最高优先级法律依据。"
-            ),
-            parameters={
-                "query": {
-                    "type": "string",
-                    "description": "法律检索查询语句，建议使用规范法言法语，如《治安管理处罚法》行政拘留",
-                },
-                "doc_type": {
-                    "type": "string",
-                    "enum": ["law", "case"],
-                    "description": "文档类型：law=法条（默认），case=案例",
-                },
-                "top_k": {
-                    "type": "integer",
-                    "description": "返回结果条数，默认 5，最大 20",
-                },
-            },
-            required=["query"],
-            category=CATEGORY_KNOWLEDGE,
-            executor=self._exec,
-        )
-
-    def _exec(
-        self,
-        query: str,
-        doc_type: str | None = None,
-        top_k: int | None = None,
+    @tool(name="retrieve_knowledge", category=CATEGORY_KNOWLEDGE)
+    def retrieve_knowledge(
+        query: Annotated[str, "法律检索查询语句，建议使用规范法言法语，如《治安管理处罚法》行政拘留"],
+        doc_type: Annotated[
+            str | None,
+            Param("文档类型：law=法条，case=案例；不传则不限", enum=["law", "case"]),
+        ] = None,
+        top_k: Annotated[int, "返回结果条数，默认 5，最大 20"] = 5,
     ) -> ToolResult:
-        """执行检索（异常归一化为 ok=False，不抛出）。"""
+        """从系统内部法律知识库检索相关法条或案例。
+
+        当需要引用具体法条原文、查询法律条文规定或查找类案时优先调用本工具；
+        内部库检索结果为最高优先级法律依据。
+        """
         try:
-            k = int(top_k) if top_k else self.default_top_k
+            k = int(top_k) if top_k else default_top_k
             k = max(1, min(k, 20))
-            docs = self.retriever.search(query, top_k=k, doc_type=doc_type)
+            docs = retriever.search(query, top_k=k, doc_type=doc_type)
             return ToolResult(
                 tool="retrieve_knowledge",
                 call_id="",
@@ -129,3 +107,5 @@ class RetrieveKnowledgeTool:
                 data={},
                 source=SOURCE_INTERNAL_KB,
             )
+
+    return retrieve_knowledge

@@ -14,9 +14,11 @@
 """
 from __future__ import annotations
 
+import inspect
 import logging
+import types
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Annotated, Any, Callable, Union, get_args, get_origin, get_type_hints
 
 from src.config import TOOL_RESULT_SUMMARY_MAX_CHARS
 
@@ -122,3 +124,142 @@ class ToolResult:
             "summary": self.summary,
             "source": self.source,
         }
+
+
+# ---------------------------------------------------------------------------
+# @tool 装饰器：函数式工具声明（M3，零第三方依赖）
+#
+# 只做语法糖——从类型注解 + Annotated 元数据推导 OpenAI JSON Schema，
+# 产出与手写 class 完全一致的 ToolSpec。不引入 LangChain 的 @tool /
+# BaseChatModel / bind_tools（D1 决策已否决那条路线）。
+#
+# 用法:
+#     def build_xxx_spec(dep) -> ToolSpec:
+#         @tool(name="xxx", category=CATEGORY_WEB)
+#         def xxx(query: Annotated[str, "检索关键词"],
+#                 top_k: Annotated[int, "返回条数"] = 5) -> ToolResult:
+#             '''工具描述（docstring 即 description）。'''
+#             return ToolResult(tool="xxx", call_id="", ok=True, summary="...")
+#         return xxx
+# ---------------------------------------------------------------------------
+
+# Python 类型 → JSON Schema type
+_PY_TO_JSON_TYPE: dict[Any, str] = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+    list: "array",
+    dict: "object",
+}
+
+
+@dataclass(frozen=True)
+class Param:
+    """工具参数的额外描述（用于 `Annotated[T, Param(...)]`）。
+
+    简写：只给描述时可直接写字符串——`Annotated[str, "描述文本"]`。
+
+    Attributes:
+        description: 参数说明（进入 schema，供 LLM 理解参数含义）
+        enum: 可选值枚举（进入 schema 的 enum，约束 LLM 输出）
+    """
+
+    description: str = ""
+    enum: list[Any] | None = None
+
+
+def _json_type_of(annotation: Any) -> str:
+    """Python 类型注解 → JSON Schema type 字符串。
+
+    `Optional[X]` / `X | None` 取 X 的类型（可选性由 required 表达，不由 type 表达）；
+    无法识别的类型一律降级为 string（宁可宽松，也不让 schema 校验卡死 LLM）。
+    """
+    origin = get_origin(annotation)
+    if origin is Union or origin is types.UnionType:
+        non_none = [a for a in get_args(annotation) if a is not type(None)]
+        if len(non_none) == 1:
+            return _json_type_of(non_none[0])
+    return _PY_TO_JSON_TYPE.get(annotation, "string")
+
+
+def _build_parameters(fn: Callable) -> tuple[dict[str, dict], list[str]]:
+    """从函数签名推导 (parameters, required)。
+
+    处理 `from __future__ import annotations` 下的字符串注解：必须走
+    `get_type_hints(..., include_extras=True)` 才能拿到 Annotated 元数据。
+    """
+    try:
+        hints = get_type_hints(fn, include_extras=True)
+    except Exception:
+        # 解析失败（如闭包引用的局部类型）时退化为原始 __annotations__
+        hints = dict(getattr(fn, "__annotations__", {}) or {})
+
+    parameters: dict[str, dict] = {}
+    required: list[str] = []
+
+    for pname, p in inspect.signature(fn).parameters.items():
+        if pname in ("self", "cls"):
+            continue
+        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+            continue
+
+        hint = hints.get(pname, str)
+        description = ""
+        enum: list[Any] | None = None
+
+        if get_origin(hint) is Annotated:
+            meta_args = get_args(hint)
+            hint = meta_args[0]
+            for m in meta_args[1:]:
+                if isinstance(m, Param):
+                    description, enum = m.description, m.enum
+                elif isinstance(m, str):
+                    description = m  # 简写：直接给描述字符串
+
+        schema: dict[str, Any] = {"type": _json_type_of(hint)}
+        if enum:
+            schema["enum"] = list(enum)
+        if description:
+            schema["description"] = description
+        parameters[pname] = schema
+
+        if p.default is inspect.Parameter.empty:
+            required.append(pname)
+
+    return parameters, required
+
+
+def tool(
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    category: str = CATEGORY_KNOWLEDGE,
+) -> Callable[[Callable[..., ToolResult]], ToolSpec]:
+    """把函数声明为 Agent 工具，产出 ToolSpec（供 ToolRegistry 注册）。
+
+    Args:
+        name: 工具名，缺省用函数名
+        description: 工具描述，缺省用函数 docstring（推荐写在 docstring）
+        category: 工具分类（CATEGORY_KNOWLEDGE / CATEGORY_WEB / CATEGORY_LEGAL）
+
+    Returns:
+        装饰器：接收工具函数，返回 ToolSpec（函数本身即 executor）。
+
+    Raises:
+        ValueError: 函数无任何参数且也未声明 name（防御性，实际不会触发）
+    """
+
+    def decorator(fn: Callable[..., ToolResult]) -> ToolSpec:
+        tool_name = name or fn.__name__
+        parameters, required = _build_parameters(fn)
+        return ToolSpec(
+            name=tool_name,
+            description=(description or inspect.getdoc(fn) or "").strip() or tool_name,
+            parameters=parameters,
+            required=required,
+            category=category,
+            executor=fn,
+        )
+
+    return decorator

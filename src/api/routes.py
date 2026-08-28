@@ -22,6 +22,7 @@ from .dependencies import get_engine, get_agent, get_llm, _create_embedder
 from .models import ChatRequest, ChatResponse, CancelRequest, HealthResponse, RegisterRequest, LoginRequest, AuthResponse, CrawlRequest, CrawlTaskResponse, CrawlStatusResponse, RewriteRequest
 from .auth import get_current_user, require_registered_user, register_user, login_user
 from src.config import AGENT_ENABLED, LLM_MAX_CONCURRENCY
+from src.observability.cost_budget import get_budget
 from src.rag.engine import needs_retrieval
 from src.rag.intent import sanitize_input, is_capability_query, get_capability_reply
 from src.llm.client import Message
@@ -39,6 +40,31 @@ def _dicts_to_messages(history: list[dict]) -> list[Message]:
 # 对话历史上限：最多保留轮数 / 单条最大字符数（防 token 放大与超大 body）
 _HISTORY_MAX_TURNS = 10
 _HISTORY_MAX_CHARS = 2000
+
+
+def _budget_block_message() -> str:
+    """F14：LLM 预算超限时给用户的提示文案；未超限返回空串。
+
+    LLM 是生成回答的必需品，故整体熔断（Tavily 超限只停网络搜索，
+    不影响主流程，见 web_search 工具内的降级处理）。
+    """
+    try:
+        from src.observability.cost_budget import KIND_LLM, BudgetExceededError
+
+        budget = get_budget()
+        try:
+            budget.check(KIND_LLM)
+            return ""
+        except BudgetExceededError as e:
+            return (
+                f"抱歉，系统今日的 AI 服务调用额度已用尽，暂时无法回答新的问题。\n\n"
+                f"详情：{e}\n"
+                f"如需紧急使用，请联系系统管理员调整额度或手动重置。"
+            )
+    except Exception as e:
+        # 预算组件自身故障不应阻断服务（与"工具失败不抛异常"同一原则）
+        logger.warning(f"预算检查失败（放行）: {e}")
+        return ""
 
 
 def _sanitize_history(history: list[dict] | None) -> list[dict]:
@@ -92,6 +118,20 @@ def rewrite(req: RewriteRequest):
     return {"proposed_query": proposed, "changed": changed, "skipped": False}
 
 
+@router.get("/budget")
+def budget_status(user_id: str = Depends(get_current_user)):
+    """F14：当日外部 API 用量与熔断状态（运维监控用，需登录）。
+
+    返回 {enabled, enforce, date, storage, exceeded, detail:{llm, tavily}}，
+    每项含 used / limit / remaining / exceeded。limit=0 表示不限制。
+    """
+    try:
+        return get_budget().status()
+    except Exception as e:
+        logger.warning(f"预算状态查询失败: {e}")
+        return {"enabled": False, "error": str(e)}
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health():
     try:
@@ -131,6 +171,13 @@ def chat(req: ChatRequest):
     if not is_safe:
         perf_logger.warning(f"[chat] blocked: reason={reject_reason} query_preview={req.query[:100]}")
         return ChatResponse(query=req.query, answer=safe_query, sources=[], is_casual=True)
+
+    # F14：LLM 预算熔断前置检查——超限时不进入 Agent 流程，避免无谓的
+    # 多轮调用尝试（LLM 是回答的必需品，故整体熔断而非局部降级）。
+    budget_msg = _budget_block_message()
+    if budget_msg:
+        perf_logger.warning("[chat] budget_exceeded: llm")
+        return ChatResponse(query=req.query, answer=budget_msg, sources=[], is_casual=True)
 
     try:
         if AGENT_ENABLED:
@@ -421,6 +468,23 @@ async def chat_stream(req: ChatRequest, request: Request):
             yield "data: [DONE]\n\n"
         return StreamingResponse(
             _reject_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # F14：LLM 预算熔断前置检查（与非流式 /api/chat 口径一致）
+    budget_msg = _budget_block_message()
+    if budget_msg:
+        perf_logger.warning("[stream] budget_exceeded: llm")
+
+        async def _budget_stream():
+            yield _sse({"type": "thinking", "content": "⚠️ 系统今日 AI 服务额度已用尽"})
+            yield _sse({"type": "token", "content": budget_msg})
+            yield _sse({"type": "meta", "sources": [], "is_casual": True})
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            _budget_stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

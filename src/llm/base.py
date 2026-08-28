@@ -8,10 +8,41 @@ M1 新增：ToolCall / ToolCallResponse 数据结构 + chat_with_tools()（F2 �
 from __future__ import annotations
 
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Iterator
+
+from src.observability.cost_budget import (
+    KIND_LLM,
+    BudgetExceededError,
+    get_budget,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _budget_check(kind: str) -> None:
+    """预算熔断检查（F14）。
+
+    统计组件自身故障（Redis 抖动等）不应影响主链路，仅告警放行；
+    真正的 BudgetExceededError 原样上抛以触发熔断。
+    """
+    try:
+        get_budget().check(kind)
+    except BudgetExceededError:
+        raise
+    except Exception as e:
+        logger.warning(f"预算检查失败（放行）: {e}")
+
+
+def _budget_record(kind: str, n: int = 1) -> None:
+    """记录用量（F14）。统计失败仅告警，不影响主链路。"""
+    try:
+        get_budget().record(kind, n)
+    except Exception as e:
+        logger.warning(f"预算计数失败（忽略）: {e}")
 
 
 def parse_tool_arguments(args_raw: str) -> tuple[dict[str, Any], str]:
@@ -139,9 +170,15 @@ class LLMBackend(ABC):
 
         Returns:
             LLM 响应文本
+
+        Raises:
+            BudgetExceededError: 当日 LLM 调用预算已用尽（F14）
         """
         messages = self._build_messages(user_message, history, system_prompt)
-        return self._generate_impl(messages)
+        _budget_check(KIND_LLM)
+        result = self._generate_impl(messages)
+        _budget_record(KIND_LLM)
+        return result
 
     def chat_stream(
         self,
@@ -153,9 +190,21 @@ class LLMBackend(ABC):
 
         Yields:
             逐个 token 的输出文本
+
+        Raises:
+            BudgetExceededError: 当日 LLM 调用预算已用尽（F14）
         """
         messages = self._build_messages(user_message, history, system_prompt)
-        yield from self._stream_impl(messages)
+        _budget_check(KIND_LLM)
+        # 生成器：首个 token 产出后再计数，避免未真正发起的请求占用配额
+        started = False
+        for token in self._stream_impl(messages):
+            if not started:
+                started = True
+                _budget_record(KIND_LLM)
+            yield token
+        if not started:
+            _budget_record(KIND_LLM)
 
     # ------------------------------------------------------------------
     # 工具调用（M1 / F2）
@@ -177,8 +226,14 @@ class LLMBackend(ABC):
         Returns:
             ToolCallResponse：tool_calls 非空表示模型请求调用工具；
             为空时 content 即最终答案文本。
+
+        Raises:
+            BudgetExceededError: 当日 LLM 调用预算已用尽（F14）
         """
-        return self._chat_with_tools_impl(messages, tools, tool_choice)
+        _budget_check(KIND_LLM)
+        resp = self._chat_with_tools_impl(messages, tools, tool_choice)
+        _budget_record(KIND_LLM)
+        return resp
 
     def _chat_with_tools_impl(
         self,

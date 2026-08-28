@@ -20,6 +20,7 @@ from src.agents.tools.base import (
     tool,
     truncate_summary,
 )
+from src.observability.cost_budget import BudgetExceededError
 from src.search.tavily import TavilySearchClient
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,18 @@ def build_web_search_spec(
                 ok=True,
                 summary=_build_summary(results),
                 data={"results": results, "count": len(results)},
+                source=SOURCE_WEB,
+            )
+        except BudgetExceededError as e:
+            # F14：预算用尽不是故障，单独文案便于 LLM 与前端区分
+            # （内部库与官方源仍可用，回答照常生成）
+            logger.warning(f"web_search 当日预算已用尽: {e}")
+            return ToolResult(
+                tool="web_search",
+                call_id="",
+                ok=False,
+                summary=f"搜索额度已用尽: {e}",
+                data={},
                 source=SOURCE_WEB,
             )
         except Exception as e:

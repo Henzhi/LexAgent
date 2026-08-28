@@ -232,6 +232,21 @@ FUSION_WEIGHT_WEB = _safe_float("FUSION_WEIGHT_WEB", 0.5)
 FUSION_WEB_MIN_SLOTS = _safe_int("FUSION_WEB_MIN_SLOTS", 2)
 
 # ---------------------------------------------------------------------------
+# 预算熔断（M3 / F14）
+# ---------------------------------------------------------------------------
+
+# 总开关：false 时完全不做统计与拦截（运维临时关闭用）
+BUDGET_ENABLED = os.getenv("BUDGET_ENABLED", "true").lower() == "true"
+# 每日 LLM 调用次数上限（0 = 不限制）。按"逻辑调用次数"计——一次 chat() 内
+# 的 SDK 重试不重复计数，口径稳定且不受重试策略影响。
+BUDGET_MAX_LLM_CALLS_PER_DAY = _safe_int("BUDGET_MAX_LLM_CALLS_PER_DAY", 5000)
+# 每日 Tavily 搜索次数上限（0 = 不限制）。Tavily 按次计费，口径精确。
+BUDGET_MAX_TAVILY_CALLS_PER_DAY = _safe_int("BUDGET_MAX_TAVILY_CALLS_PER_DAY", 500)
+# 超限是否真的拦截：true = 抛 BudgetExceededError 熔断；false = 仅告警不阻断
+# （上线观察期可先设 false，确认阈值合理后再打开）
+BUDGET_ENFORCE = os.getenv("BUDGET_ENFORCE", "true").lower() == "true"
+
+# ---------------------------------------------------------------------------
 # pgvector
 # ---------------------------------------------------------------------------
 

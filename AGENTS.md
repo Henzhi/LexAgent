@@ -63,6 +63,11 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 5. **summary 截断**：工具结果 summary ≤300 字符（`TOOL_RESULT_SUMMARY_MAX_CHARS`），防上下文膨胀。
 6. **空 tool_call 过滤**：DeepSeek V4 想直接回答时会返回 name="" 的占位 tool_call，`agent_node` 必须过滤（历史 Bug 2939ab3）。
 7. **模型名**：deepseek-chat 已于 2026-07-24 弃用，用 `deepseek-v4-flash`。
+8. **预算熔断（F14，D-M3-6/7/8）**：外部付费 API 的日用量统计与熔断（`src/observability/cost_budget.py`）。
+   - **埋点位置**：LLM 在 `LLMBackend` 三个公开入口（chat / chat_stream / chat_with_tools）check + record，**新增 LLM 后端不要绕过基类入口**；Tavily 在 `search()` 内埋点。新增付费外部依赖时同步接入预算（新增 kind）。
+   - **两级熔断**：LLM 超限整体熔断（API 前置拦截 `_budget_block_message()`，流式/非流式都返回友好提示）；Tavily 超限只降级该工具（`ok=False`，summary 首词「搜索额度已用尽」），回答照常生成。
+   - **存储降级**：Redis 优先、不可用时退化进程内计数；统计异常一律告警放行，**统计故障不许拖垮主链路**。
+   - 配置：`BUDGET_*`（阈值设 0 = 不限制，`BUDGET_ENFORCE=false` 只告警不拦截）；运维接口 `GET /api/budget`（需登录）。实测一次复杂查询约 18~20 次 LLM 调用，调整默认阈值时以此为参考。
 
 ## 代码规范
 

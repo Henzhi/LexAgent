@@ -14,6 +14,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.observability.cost_budget import (
+    KIND_TAVILY,
+    BudgetExceededError,
+    get_budget,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,15 +77,32 @@ class TavilySearchClient:
 
         Raises:
             RuntimeError: 未配置 / 初始化失败 / 搜索异常（由工具层捕获归一化）
+            BudgetExceededError: 当日搜索预算已用尽（F14）
         """
         if not self.is_available():
             detail = self._init_error or "缺少 TAVILY_API_KEY"
             raise RuntimeError(f"Tavily 未配置或初始化失败: {detail}")
+
+        # F14：Tavily 按次计费，调用前熔断检查
+        try:
+            get_budget().check(KIND_TAVILY)
+        except BudgetExceededError:
+            # 上抛给工具层 → ToolResult(ok=False)，ReAct 循环继续（不阻断回答）
+            raise
+        except Exception as e:
+            logger.warning(f"预算检查失败（放行）: {e}")
+
         k = max(1, min(max_results or self.max_results, 10))
         try:
             resp = self._client.search(query=query, max_results=k)
         except Exception as e:
             raise RuntimeError(f"Tavily 搜索失败: {e}") from e
+
+        # 成功才计数
+        try:
+            get_budget().record(KIND_TAVILY)
+        except Exception as e:
+            logger.warning(f"预算计数失败（忽略）: {e}")
 
         raw_results = (resp or {}).get("results", []) or []
         results = []

@@ -2,6 +2,17 @@
 
 > 记录有意义的变更，帮助 AI 快速了解最新动态、避免回归。格式参考 Keep a Changelog，新条目放最上面。
 
+## [Unreleased] — M3 分场景确认（进行中）
+
+- **feat**：F14 预算熔断——新增 `src/observability/cost_budget.py`，监控外部付费 API 日用量并自动熔断。
+  - 计数口径：LLM 按**逻辑调用次数**（埋点于 `LLMBackend` 公开入口，SDK 重试不重复计数）；Tavily 按次（按次计费，口径精确）。流式一次调用只计一次
+  - 存储：Redis 原子 `INCR` + TTL 到次日零点自动失效；Redis 不可用时自动退化为进程内计数并告警，**不因监控组件故障拖垮主链路**
+  - 熔断粒度：LLM 超限 → 整体熔断（API 前置检查，流式/非流式都返回友好提示）；Tavily 超限 → 只停网络搜索，工具返回 `ok=False`「搜索额度已用尽」，内部库与官方源照常，**回答正常生成**
+  - 可观测：超限打 ERROR 日志（同日同种类仅一次）；新增 `GET /api/budget` 状态接口（需登录）
+  - 配置：`BUDGET_ENABLED` / `BUDGET_MAX_LLM_CALLS_PER_DAY`(5000) / `BUDGET_MAX_TAVILY_CALLS_PER_DAY`(500) / `BUDGET_ENFORCE`(true，设 false 只告警不拦截)；阈值设 0 = 不限制
+  - 新增 `tests/test_cost_budget.py`（23 项）
+  - **实测参考**：一次复杂查询约消耗 18~20 次 LLM 调用（ReAct 多轮 + 校验），默认 5000 次 ≈ 250~280 次查询/天，部署时按实际用量调整
+
 ## 2026-08-28 — M2 双路融合（已完成）
 
 > 联调结论见 `docs/M2联调结论-2026-08-28.md`（双路径口径 / 配额策略 / 前端渲染约定）。

@@ -3,8 +3,6 @@ M2 双路融合测试（F6/F7/F8）：排序、去重、冲突裁决、验证状
 """
 from __future__ import annotations
 
-import pytest
-
 from src.search.fusion import (
     THIRD_PARTY,
     VERIFIED_INTERNAL,

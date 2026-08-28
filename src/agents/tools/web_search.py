@@ -10,7 +10,6 @@ web_search 内置工具（M1 / F3）。
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from src.agents.tools.base import (
     CATEGORY_WEB,

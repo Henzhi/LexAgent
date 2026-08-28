@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.agents.graph import LawAgentGraph
 from src.agents.tools import build_default_tools
 from src.llm.base import ToolCall, ToolCallResponse

@@ -5,8 +5,6 @@ M1 ReAct 循环测试：图结构、轮数上限、非法 tool_calls 容错、SS
 """
 from __future__ import annotations
 
-import pytest
-
 from tests.fakes import FakeRetriever, FakeToolLLM
 from src.agents.graph import LawAgentGraph
 from src.agents.tools import build_default_tools

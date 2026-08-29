@@ -91,9 +91,27 @@ def hit_one(rel: dict, results: list) -> bool:
     return False
 
 
-def build_retriever(bare: bool):
-    """构建检索器：bare=False 用生产配置（reranker+adjacent+阈值）"""
+def build_retriever(bare: bool, mode: str = "vector"):
+    """构建检索器。
+
+    mode=vector: 向量路（bare=False 用生产配置：reranker+adjacent+阈值）
+    mode=bm25  : BM25 关键词路（不依赖 embedder，分词方案评测用）
+    """
     sys.path.insert(0, str(ROOT))
+
+    if mode == "bm25":
+        from src.knowledge.pgvector_store import PgvectorStore
+        from src.rag.bm25_retriever import Bm25Retriever
+        from src.config import PG_CONN
+
+        store = PgvectorStore(PG_CONN)
+        store.ensure_tables()
+        t0 = time.time()
+        bm25 = Bm25Retriever(store)
+        bm25.load_index()
+        print(f"BM25 索引构建完成: {time.time() - t0:.1f}s")
+        return bm25, None
+
     from src.api import dependencies
 
     embedder = dependencies._create_embedder()
@@ -116,6 +134,10 @@ def main():
     ap.add_argument("--bare", action="store_true", help="纯 pgvector 粗排（不含 reranker/adjacent/阈值）")
     ap.add_argument("--limit", type=int, default=0, help="只评测前 N 条（0=全部）")
     ap.add_argument("--queries", default=str(QUERIES_PATH), help="评测集文件（JSON 或 JSONL）")
+    ap.add_argument(
+        "--mode", choices=["vector", "bm25"], default="vector",
+        help="vector=向量路（可配 --bare 关精排）；bm25=BM25 关键词路（分词方案评测用）",
+    )
     args = ap.parse_args()
 
     qpath = Path(args.queries)
@@ -129,12 +151,16 @@ def main():
     if args.limit:
         queries = queries[: args.limit]
 
-    print(f"评测配置: {'BARE 纯向量' if args.bare else '生产配置(纯向量+reranker+adjacent+sim阈值)'} | "
-          f"查询数: {len(queries)} | top_k={args.top_k}")
+    mode_desc = {
+        "vector": "BARE 纯向量" if args.bare else "生产配置(纯向量+reranker+adjacent+sim阈值)",
+        "bm25": "BM25 关键词路(jieba 分词 + rank-bm25)",
+    }[args.mode]
+    print(f"评测配置: {mode_desc} | 查询数: {len(queries)} | top_k={args.top_k}")
     print("-" * 76)
 
-    retriever, embedder = build_retriever(args.bare)
-    print(f"检索器就绪: {type(retriever).__name__} | embedder={embedder.model}")
+    retriever, embedder = build_retriever(args.bare, args.mode)
+    emb_desc = embedder.model if embedder else "（BM25 路不需要 embedding）"
+    print(f"检索器就绪: {type(retriever).__name__} | embedder={emb_desc}")
 
     # 评测
     hits = {1: 0, 3: 0, 5: 0, 10: 0}
@@ -176,7 +202,7 @@ def main():
 
     elapsed = time.time() - t0
     n = len(queries)
-    mode = "BARE" if args.bare else "PROD"
+    mode = "BM25" if args.mode == "bm25" else ("BARE" if args.bare else "PROD")
 
     baselines = {1: 0.52, 3: 0.65, 5: 0.73, 10: 0.81}
     mrr = rr_sum / n
@@ -187,13 +213,24 @@ def main():
     lines.append(f"评测时间: {time.strftime('%Y-%m-%d %H:%M:%S')} | 配置: {mode}")
     lines.append(f"查询数: {n} | 总耗时: {elapsed:.1f}s | 平均: {elapsed / max(n, 1):.2f}s/查询")
     lines.append("-" * 76)
-    lines.append(f"{'指标':<10}{'本系统':<10}{'旧FAISS基线':<14}{'差值'}")
-    for k in (1, 3, 5, 10):
-        cur = hits[k] / n
-        bl = baselines[k]
-        lines.append(f"{'Hit@' + str(k):<10}{cur:<10.1%}{bl:<14.1%}{cur - bl:+.1%}")
-    lines.append(f"{'MRR':<10}{mrr:<10.4f}{'0.6113':<14}{mrr - 0.6113:+.4f}")
-    lines.append("-" * 76)
+    if args.mode == "bm25":
+        # BM25 是关键词召回一路，生产上与向量路 RRF 融合，无独立历史基线可比
+        lines.append(f"{'指标':<10}{'BM25 单路':<12}")
+        for k in (1, 3, 5, 10):
+            lines.append(f"{'Hit@' + str(k):<10}{hits[k] / n:<12.1%}")
+        lines.append(f"{'MRR':<10}{mrr:<12.4f}")
+        lines.append("-" * 76)
+        lines.append("注：BM25 为关键词召回一路，生产上与向量路 RRF 融合后才是最终召回。")
+        lines.append("    本基线用于对比分词方案（jieba / 字符 2-gram / 法律词典）的召回差异，")
+        lines.append("    需与同评测集的 vector 模式结果一起看。")
+    else:
+        lines.append(f"{'指标':<10}{'本系统':<10}{'旧FAISS基线':<14}{'差值'}")
+        for k in (1, 3, 5, 10):
+            cur = hits[k] / n
+            bl = baselines[k]
+            lines.append(f"{'Hit@' + str(k):<10}{cur:<10.1%}{bl:<14.1%}{cur - bl:+.1%}")
+        lines.append(f"{'MRR':<10}{mrr:<10.4f}{'0.6113':<14}{mrr - 0.6113:+.4f}")
+        lines.append("-" * 76)
     lines.append(f"\nHit@5 未命中 {len(miss5)}/{n} 条:")
     for d in miss5:
         lines.append(f"  #{d['id']:<4} {d['query'][:50]}")
@@ -204,9 +241,10 @@ def main():
     # 保存 UTF-8 报告 + 明细（绕开 Windows 控制台重定向的编码问题）
     out_dir = EVAL_DIR / "data" / "lexeval" / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
-    report_path = out_dir / f"retrieval_{'bare' if args.bare else 'prod'}.txt"
+    tag = "bm25" if args.mode == "bm25" else ("bare" if args.bare else "prod")
+    report_path = out_dir / f"retrieval_{tag}.txt"
     report_path.write_text(report + "\n", encoding="utf-8")
-    detail_path = out_dir / f"retrieval_{'bare' if args.bare else 'prod'}.jsonl"
+    detail_path = out_dir / f"retrieval_{tag}.jsonl"
     with open(detail_path, "w", encoding="utf-8") as f:
         for d in details:
             f.write(json.dumps(d, ensure_ascii=False) + "\n")

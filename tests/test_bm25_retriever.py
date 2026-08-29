@@ -8,7 +8,13 @@ from __future__ import annotations
 
 import pytest
 
-from src.rag.bm25_retriever import _STOPWORDS, _tokenize
+from src.rag.bm25_retriever import (
+    LAW_NAME_BOOST,
+    Bm25Retriever,
+    _STOPWORDS,
+    _is_fragment,
+    _tokenize,
+)
 
 
 class TestStopwordTable:
@@ -100,3 +106,96 @@ class TestBm25RetrieverSearch:
         retriever.load_index()
 
         assert retriever.search("的 了 和", top_k=5) == []
+
+
+class TestFragmentFilter:
+    """碎片 chunk 过滤：纯条号引用（「第九条」「第十七条、」）不得进索引。
+
+    基线评测发现 ~3400 个此类碎片（占 6.4%），DF 极高且文档极短在 BM25
+    长度归一化下占便宜，会系统性挤占 top-k。
+    """
+
+    def test_article_number_only_is_fragment(self):
+        assert _is_fragment("第九条")
+        assert _is_fragment("第十七条、")
+        assert _is_fragment("第二十条、第二十一条")
+
+    def test_substantive_text_is_not_fragment(self):
+        assert not _is_fragment("用人单位应当按月支付劳动报酬")
+        assert not _is_fragment("正当防卫不负刑事责任")
+
+    def test_load_index_skips_fragments(self):
+        store = _FakeStore([
+            ("第九条", {"law_name": "刑法", "article_range": "第九条"}),
+            ("正当防卫不负刑事责任", {"law_name": "刑法", "article_range": "第二十条"}),
+        ])
+        retriever = Bm25Retriever(store)
+        retriever.load_index()
+        assert len(retriever._chunks) == 1
+
+
+class TestLawNameBoost:
+    """法名加权：法名 token 在本法 chunk 内 TF 应等于 LAW_NAME_BOOST。
+
+    法名只拼一次时 DF=该法 chunk 数，IDF 被稀释到低于条号 token（实测
+    「刑法」3.53 < 「第二十条」4.11），导致「刑法第二十条」被其他法律的
+    第二十条淹没。文档内重复不改变 BM25 的 DF，是纯增益的加权方式。
+    """
+
+    def test_law_name_token_repeated_in_index(self):
+        store = _FakeStore([
+            ("正当防卫不负刑事责任", {"law_name": "中华人民共和国刑法"}),
+        ])
+        retriever = Bm25Retriever(store)
+        retriever.load_index()
+        doc_terms = retriever._bm25.doc_freqs[0]
+        assert doc_terms.get("刑法", 0) == LAW_NAME_BOOST
+
+    def test_law_name_beats_other_laws_same_article(self):
+        """「刑法第二十条」应命中刑法，而不是其他法律的第二十条。
+
+        回归基线：加权前 top5 全是信托法/关税法等的「第二十条」碎片。
+        """
+        store = _FakeStore([
+            ("正当防卫不负刑事责任", {"law_name": "中华人民共和国刑法",
+                                    "article_range": "第二十条"}),
+            ("信托当事人的其他权利义务", {"law_name": "中华人民共和国信托法",
+                                       "article_range": "第二十条"}),
+            ("关税的退还与补缴规则", {"law_name": "中华人民共和国关税法",
+                          "article_range": "第二十条"}),
+        ])
+        retriever = Bm25Retriever(store)
+        retriever.load_index()
+        docs = retriever.search("刑法第二十条", top_k=3)
+        assert docs[0].law_name == "中华人民共和国刑法"
+
+
+class TestSearchDedupByArticle:
+    """同一条文的多 chunk 只保留最高排名的一个，空位由后续条文补足。"""
+
+    def test_same_article_chunks_dedup(self):
+        store = _FakeStore([
+            ("第四十二条第一款关于初步审查的内容", {"law_name": "专利法实施细则",
+                                              "article_range": "第四十二条"}),
+            ("第四十二条第二款关于期限补偿的内容", {"law_name": "专利法实施细则",
+                                            "article_range": "第四十二条"}),
+            ("第四十三条关于优先权恢复的内容", {"law_name": "专利法实施细则",
+                                          "article_range": "第四十三条"}),
+        ])
+        retriever = Bm25Retriever(store)
+        retriever.load_index()
+        docs = retriever.search("第四十二条 第四十三条 初步审查 期限补偿", top_k=5)
+        keys = [(d.law_name, d.article_range) for d in docs]
+        assert len(keys) == len(set(keys))
+        assert len(docs) == 2  # 去重后空位被第四十三条补足，不浪费名额
+
+    def test_chunks_without_article_range_not_dedup(self):
+        """article_range 为空的 chunk（总则等）不参与去重。"""
+        store = _FakeStore([
+            ("总则编的适用范围说明", {"law_name": "民法典", "article_range": ""}),
+            ("总则编的基本原则说明", {"law_name": "民法典", "article_range": ""}),
+        ])
+        retriever = Bm25Retriever(store)
+        retriever.load_index()
+        docs = retriever.search("总则编 段 内容", top_k=5)
+        assert len(docs) == 2

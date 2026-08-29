@@ -153,6 +153,9 @@ HYBRID_RRF_K = _safe_int("HYBRID_RRF_K", 60)                  # RRF 常数
 # 查询上碾压向量排名（语义集净丢 6 条，见 docs/向量路质量排查-2026-08-29.md）；
 # w=0.5 时语义集 67% / 法条级 85.3%，两集最优平衡
 HYBRID_BM25_WEIGHT = _safe_float("HYBRID_BM25_WEIGHT", 0.5)   # BM25 路权重（向量=1.0）
+# True = BM25 无条件参与融合（跳过法名/条款号识别）。默认 False（条件激活）：
+# 是否常开需双集评测决定，见 docs/向量路质量排查-2026-08-29.md §5.4
+HYBRID_ALWAYS_ON = os.getenv("HYBRID_ALWAYS_ON", "false").lower() == "true"
 
 
 # ---------------------------------------------------------------------------

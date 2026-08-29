@@ -40,6 +40,7 @@ class HybridRetriever(BaseRetriever):
         bm25_top_n: int = 15,
         vec_weight: float = 1.0,
         bm25_weight: float = 0.5,
+        always_on: bool = False,
     ):
         """
         Args:
@@ -50,6 +51,8 @@ class HybridRetriever(BaseRetriever):
             bm25_top_n: BM25 一路取多少条参与融合
             vec_weight: 向量一路融合权重（默认 1.0）
             bm25_weight: BM25 一路融合权重（激活时默认 0.5）
+            always_on: True 时 BM25 无条件参与融合（跳过实体识别）；
+                       False（默认）时仅查询含法名/条款号才激活
         """
         self._base = base_retriever
         self._bm25 = bm25_retriever
@@ -58,6 +61,7 @@ class HybridRetriever(BaseRetriever):
         self._bm25_top_n = bm25_top_n
         self._vec_weight = vec_weight
         self._bm25_weight = bm25_weight
+        self._always_on = always_on
 
     def is_ready(self) -> bool:
         return self._base.is_ready()
@@ -73,7 +77,13 @@ class HybridRetriever(BaseRetriever):
     # ------------------------------------------------------------------
 
     def _should_activate(self, query: str) -> bool:
-        """查询是否含明确法律实体（法名/条款号）。"""
+        """查询是否含明确法律实体（法名/条款号）。
+
+        always_on=True 时跳过识别，BM25 无条件参与——用于对比实验：
+        语义查询上 BM25 是补充还是噪声，须由评测数据决定，不能想当然。
+        """
+        if self._always_on:
+            return True
         if _ARTICLE_RE.search(query):
             return True
         if _BOOK_RE.search(query):

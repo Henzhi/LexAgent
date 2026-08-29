@@ -17,7 +17,7 @@ from src.config import (
     AGENT_MAX_RETRIES,
     PG_CONN,
     ADJACENT_ENABLED, ADJACENT_WINDOW,
-    HYBRID_ENABLED, HYBRID_RRF_K, HYBRID_BM25_WEIGHT,
+    HYBRID_ENABLED, HYBRID_RRF_K, HYBRID_BM25_WEIGHT, HYBRID_ALWAYS_ON,
     FAQ_CACHE_BACKEND, REDIS_URL,
 )
 from src.llm.adapter import LLMAdapter, EmbeddingAdapter
@@ -127,8 +127,10 @@ def _create_retriever(embedder):
             bm25_retriever=bm25,
             rrf_k=HYBRID_RRF_K,
             bm25_weight=HYBRID_BM25_WEIGHT,
+            always_on=HYBRID_ALWAYS_ON,
         )
-        logger.info(f"BM25 条件混合就绪: RRF k={HYBRID_RRF_K}, bm25_w={HYBRID_BM25_WEIGHT} (懒加载)")
+        logger.info(f"BM25 混合就绪: RRF k={HYBRID_RRF_K}, bm25_w={HYBRID_BM25_WEIGHT}, "
+                     f"模式={'常开' if HYBRID_ALWAYS_ON else '条件激活'} (BM25 索引懒加载)")
 
     # 条款号精确路由（最外层）：对"法名+第X条"查询做精确置顶，弥补纯向量对条款号查询的失配
     from src.rag.article_router import ArticleRouter

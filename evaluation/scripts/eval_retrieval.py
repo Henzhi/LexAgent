@@ -241,7 +241,16 @@ def main():
     # 保存 UTF-8 报告 + 明细（绕开 Windows 控制台重定向的编码问题）
     out_dir = EVAL_DIR / "data" / "lexeval" / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = "bm25" if args.mode == "bm25" else ("bare" if args.bare else "prod")
+    # PROD 口径按 HYBRID_ENABLED 区分文件名：Hybrid 开关直接改变检索链行为
+    # （见 docs/向量路质量排查-2026-08-29.md），混用一个文件会互相覆盖、
+    # 掩盖配置差异（2026-08-29 排查时实测踩坑）
+    if args.mode == "bm25":
+        tag = "bm25"
+    elif args.bare:
+        tag = "bare"
+    else:
+        from src.config import HYBRID_ENABLED
+        tag = "prod" if HYBRID_ENABLED else "prod_nohybrid"
     report_path = out_dir / f"retrieval_{tag}.txt"
     report_path.write_text(report + "\n", encoding="utf-8")
     detail_path = out_dir / f"retrieval_{tag}.jsonl"

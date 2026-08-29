@@ -4,6 +4,11 @@
 
 ## [Unreleased] — M3 分场景确认（进行中）
 
+- **fix**：BM25 停用词表误删 `万元`——金额类查询（"赔偿标准是多少万元"）丢失关键 token，属极隐蔽的召回损失（索引能建、查询能跑，只是"某些问题搜不到"）。顺带清掉死代码 `年月日`：jieba 会把日期切成 `['2023','年','1','月','1','日']`，该词作为整体**从未被产出过**。
+  - 停用词表定位收紧为「只放真正的虚词」：BM25 靠 IDF 自动压制高频词，人工停用词边际收益很小，误删有区分度的词却是实打实的损失
+  - 法律模态词（不得/应当/可以/规定）**暂不过滤**并在代码注释标明「待评测」——「用人单位不得解除劳动合同」里「不得」就是核心语义，是否过滤应由评测数据决定
+  - `中华人民共和国` 保留为停用词（法名前缀归一化，让"中华人民共和国劳动合同法"与"劳动合同法"等价）
+  - 新增 `tests/test_bm25_retriever.py`（13 项），覆盖停用词表内容、金额/日期 token 保留、法名归一化、纯虚词查询兜底
 - **refactor（重大）**：LLM 层与工具层迁移到 LangChain 标准生态（D-M3-13，推翻 D-M1-1「不用 bind_tools」）——目标为生态标准化、降低学习成本。
   - **阶段① LLM 层**：`OpenAICompatibleBackend` / `OllamaBackend` 内部改用 `ChatOpenAI` / `ChatOllama`，经 `.chat_model` 暴露（`.model` 仍是模型名字符串，18 处调用点不动）；`agent_node` 改为标准写法 `chat_model.bind_tools(schemas).invoke(messages)`
   - **阶段② 工具层**：`@tool` 装饰器底层改为委托 LangChain 的 `@tool`，**删除自研 schema 推导与 `Param` 类**（约 100 行）；`ToolSpec.langchain_tool` 持有 `BaseTool`，新增 `registry.langchain_tools()` 供 `bind_tools()` 直接消费

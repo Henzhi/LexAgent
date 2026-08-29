@@ -1,15 +1,21 @@
 """
-@tool 装饰器测试（M3）：从类型注解 + Annotated 元数据推导 OpenAI JSON Schema。
+@tool 装饰器测试（M3 + D-M3-13）。
 
-装饰器只做语法糖，产出与手写 class 一致的 ToolSpec，不引入任何第三方依赖。
+D-M3-13 后 schema 推导交给 LangChain 的 `@tool`，本装饰器只负责再包一层
+`ToolSpec`（带项目自己的 category / executor / langchain_tool）。
+
+与迁移前的行为差异（已实测确认，见各用例注释）：
+1. `str | None` → `anyOf [string, null]`（原为扁平 string），语义等价且更规范
+2. dataclass 类型 → 展开为对象 schema（原降级为 string）
+3. 枚举必须用 `Literal` 表达；历史上的 `Param` 类会被 LangChain **静默丢弃**
 """
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
+from src.rag.retriever import RetrievedDoc
 from src.agents.tools.base import (
     CATEGORY_LEGAL,
-    Param,
     ToolResult,
     ToolSpec,
     tool,
@@ -80,13 +86,21 @@ class TestSchemaDerivation:
 
         props = t.to_openai_format()["function"]["parameters"]["properties"]
         assert props["query"] == {"type": "string", "description": "关键词"}
-        assert props["top_k"] == {"type": "integer", "description": "条数"}
-        assert props["ratio"] == {"type": "number"}
-        assert props["flag"] == {"type": "boolean"}
+        # pydantic 会把默认值写进 schema（迁移前自研推导不写）。
+        # 这是有益的差异：模型能感知默认值，不传时心里有数。
+        assert props["top_k"]["type"] == "integer"
+        assert props["top_k"]["description"] == "条数"
+        assert props["top_k"]["default"] == 5
+        assert props["ratio"]["type"] == "number"
+        assert props["flag"]["type"] == "boolean"
         assert t.required == ["query"]
 
-    def test_optional_type_unwraps_to_base_type(self):
-        """Optional[X] / X | None → X 的类型，可选性只体现在 required。"""
+    def test_optional_type_yields_anyof(self):
+        """`str | None` → anyOf [string, null]（pydantic 的标准表达）。
+
+        迁移前自研推导会展开成扁平的 string；迁移后由 pydantic 生成 anyOf。
+        语义等价，且更符合 JSON Schema 规范。
+        """
 
         @tool(name="t")
         def t(query: str, doc_type: str | None = None) -> ToolResult:
@@ -94,17 +108,21 @@ class TestSchemaDerivation:
             return ToolResult(tool="t", call_id="", ok=True, summary="")
 
         props = t.to_openai_format()["function"]["parameters"]["properties"]
-        assert props["doc_type"]["type"] == "string"
-        assert "null" not in str(props["doc_type"])
+        assert props["doc_type"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
         assert t.required == ["query"]
 
-    def test_param_enum_and_description(self):
-        """Param 元数据：description + enum。"""
+    def test_literal_enum_and_description(self):
+        """枚举约束用 `Literal` 表达（LangChain 原生写法）。
+
+        ⚠️ 历史上用 `Annotated[str, Param(...)]`，但 LangChain 不认识 `Param`，
+        会**静默丢弃**其中的 description 与 enum（实测确认）——不报错，只是
+        发给模型的 schema 少了引导信息，很难发现。改用 Literal 后都正常。
+        """
 
         @tool(name="t")
         def t(
             query: str,
-            source_type: Annotated[str, Param("来源类型", enum=["law", "case", "all"])] = "law",
+            source_type: Annotated[Literal["law", "case", "all"], "来源类型"] = "law",
         ) -> ToolResult:
             """enum 测试。"""
             return ToolResult(tool="t", call_id="", ok=True, summary="")
@@ -113,17 +131,23 @@ class TestSchemaDerivation:
         assert props["source_type"]["enum"] == ["law", "case", "all"]
         assert props["source_type"]["description"] == "来源类型"
 
-    def test_unknown_type_falls_back_to_string(self):
-        """无法识别的类型降级为 string（不让 schema 卡死 LLM）。"""
-        from src.rag.retriever import RetrievedDoc
+    def test_dataclass_type_is_expanded(self):
+        """dataclass 类型 → 展开为对象 schema（迁移前是降级为 string）。
+
+        实际工具参数不会用这种复杂类型，此例仅记录行为差异。
+
+        注：import 必须在模块顶层——LangChain 用 get_type_hints 解析注解，
+        函数内 import 的名字它取不到（NameError）。
+        """
 
         @tool(name="t")
         def t(doc: RetrievedDoc) -> ToolResult:  # type: ignore[valid-type]
-            """未知类型测试。"""
+            """dataclass 类型测试。"""
             return ToolResult(tool="t", call_id="", ok=True, summary="")
 
         props = t.to_openai_format()["function"]["parameters"]["properties"]
-        assert props["doc"]["type"] == "string"
+        assert props["doc"]["type"] == "object"
+        assert "content" in props["doc"]["properties"]
 
     def test_openai_format_shape(self):
         """产出结构对齐 OpenAI tools 参数格式。"""
@@ -152,7 +176,8 @@ class TestRealToolsUseDecorator:
         assert schema["name"] == "retrieve_knowledge"
         props = schema["parameters"]["properties"]
         assert set(props) == {"query", "doc_type", "top_k"}
-        assert props["doc_type"]["enum"] == ["law", "case"]
+        # doc_type 是 Literal|None → enum 包在 anyOf 里
+        assert props["doc_type"]["anyOf"][0]["enum"] == ["law", "case"]
         assert schema["parameters"]["required"] == ["query"]
 
     def test_web_search_schema(self):

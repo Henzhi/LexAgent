@@ -4,6 +4,8 @@ LLM 后端抽象基类。
 定义统一的 LLM 调用接口，支持 Ollama 和 OpenAI 兼容 API 两种后端。
 所有后端实现必须继承此基类并实现对应方法。
 M1 新增：ToolCall / ToolCallResponse 数据结构 + chat_with_tools()（F2 工具调用）。
+D-M3-13：内部实现改为 LangChain 的 BaseChatModel，预算埋点移到
+`src/llm/budget_callback.py`（原 _budget_check / _budget_record 已删除）。
 """
 from __future__ import annotations
 
@@ -14,35 +16,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
-from src.observability.cost_budget import (
-    KIND_LLM,
-    BudgetExceededError,
-    get_budget,
-)
-
 logger = logging.getLogger(__name__)
-
-
-def _budget_check(kind: str) -> None:
-    """预算熔断检查（F14）。
-
-    统计组件自身故障（Redis 抖动等）不应影响主链路，仅告警放行；
-    真正的 BudgetExceededError 原样上抛以触发熔断。
-    """
-    try:
-        get_budget().check(kind)
-    except BudgetExceededError:
-        raise
-    except Exception as e:
-        logger.warning(f"预算检查失败（放行）: {e}")
-
-
-def _budget_record(kind: str, n: int = 1) -> None:
-    """记录用量（F14）。统计失败仅告警，不影响主链路。"""
-    try:
-        get_budget().record(kind, n)
-    except Exception as e:
-        logger.warning(f"预算计数失败（忽略）: {e}")
 
 
 def parse_tool_arguments(args_raw: str) -> tuple[dict[str, Any], str]:
@@ -126,6 +100,52 @@ class ToolCallResponse:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+# ---------------------------------------------------------------------------
+# LangChain 互操作（D-M3-13：LLM 层迁移到 LangChain 标准生态）
+#
+# 项目内部消息格式一直是 OpenAI 风格的 dict（{"role", "content", ...}），
+# 迁移时保留这个内部表示，只在实际调用 LangChain 时做一次转换——
+# 上层 18 处调用点与 state 里的消息历史都不受影响。
+# ---------------------------------------------------------------------------
+
+
+def to_langchain_messages(messages: list[dict]) -> list[Any]:
+    """项目内部的 OpenAI 格式 dict 消息 → LangChain Message 对象。
+
+    支持 system / user / assistant / assistant(tool_calls) / tool 五种形态，
+    与 react_nodes 回灌的消息结构一致（共享约定 §8.4）。
+    """
+    from langchain_core.messages import convert_to_messages
+
+    return convert_to_messages(messages or [])
+
+
+def tool_calls_from_langchain(message: Any) -> list[ToolCall]:
+    """LangChain AIMessage.tool_calls → 项目 ToolCall 列表。
+
+    空 name 的占位 tool_call 一律跳过（D-M1-6）：DeepSeek V4 的
+    parallel_tool_calls 恒启用，模型想直接回答时会返回函数名为空的占位调用。
+
+    注意：LangChain 的 tool_call 里参数是**已解析的 dict**（`args`），
+    不像 OpenAI 原始响应那样是 JSON 字符串，因此不存在解析失败的情况，
+    parse_error 恒为空。
+    """
+    result: list[ToolCall] = []
+    for tc in getattr(message, "tool_calls", None) or []:
+        if isinstance(tc, dict):
+            name = tc.get("name") or ""
+            args = tc.get("args") or {}
+            call_id = tc.get("id") or ""
+        else:
+            name = getattr(tc, "name", "") or ""
+            args = getattr(tc, "args", None) or {}
+            call_id = getattr(tc, "id", "") or ""
+        if not name:
+            continue
+        result.append(ToolCall(id=call_id, name=name, arguments=args))
+    return result
+
+
 class LLMBackend(ABC):
     """LLM 后端抽象基类
 
@@ -133,6 +153,14 @@ class LLMBackend(ABC):
       - _generate_impl(): 同步生成
       - _stream_impl(): 流式生成
       - context_window: 返回上下文窗口大小
+
+    D-M3-13：内部实现改为 LangChain 的 `BaseChatModel`（ChatOpenAI / ChatOllama），
+    并通过 `.model` 属性暴露，上层可直接用标准写法：
+
+        llm.model.bind_tools(schemas).invoke(messages)
+
+    对外的 `chat` / `chat_stream` / `chat_with_tools` 三个入口保持不变，
+    供上层 18 处既有调用点继续使用，迁移期零改动。
     """
 
     def __init__(
@@ -150,6 +178,25 @@ class LLMBackend(ABC):
         self.max_tokens = max_tokens
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        # 子类在 __init__ 中赋值为具体的 BaseChatModel
+        self._model: Any = None
+
+    # ------------------------------------------------------------------
+    # LangChain 标准入口（D-M3-13）
+    # ------------------------------------------------------------------
+
+    @property
+    def chat_model(self) -> Any:
+        """底层 LangChain ChatModel（`BaseChatModel`）。
+
+        注：不叫 `.model` 是因为该名字已被模型名字符串占用（历史包袱，
+        18 处调用点与多处配置都在读 `llm.model` 取模型名）。
+        """
+        if self._model is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} 未初始化 LangChain ChatModel"
+            )
+        return self._model
 
     # ------------------------------------------------------------------
     # 公开接口
@@ -173,12 +220,13 @@ class LLMBackend(ABC):
 
         Raises:
             BudgetExceededError: 当日 LLM 调用预算已用尽（F14）
+
+        注（D-M3-13）：预算的检查与计数不再写在这里，改由
+        `LLMBudgetCallbackHandler` 在 LangChain 调用链路上统一埋点——
+        这样无论走本入口还是直接 `chat_model.invoke()` 都会被计数。
         """
         messages = self._build_messages(user_message, history, system_prompt)
-        _budget_check(KIND_LLM)
-        result = self._generate_impl(messages)
-        _budget_record(KIND_LLM)
-        return result
+        return self._generate_impl(messages)
 
     def chat_stream(
         self,
@@ -193,18 +241,13 @@ class LLMBackend(ABC):
 
         Raises:
             BudgetExceededError: 当日 LLM 调用预算已用尽（F14）
+
+        注（D-M3-13）：预算的检查与计数不再写在这里，改由
+        `LLMBudgetCallbackHandler` 在 LangChain 调用链路上统一埋点——
+        这样无论走本入口还是直接 `chat_model.invoke()` 都会被计数。
         """
         messages = self._build_messages(user_message, history, system_prompt)
-        _budget_check(KIND_LLM)
-        # 生成器：首个 token 产出后再计数，避免未真正发起的请求占用配额
-        started = False
-        for token in self._stream_impl(messages):
-            if not started:
-                started = True
-                _budget_record(KIND_LLM)
-            yield token
-        if not started:
-            _budget_record(KIND_LLM)
+        yield from self._stream_impl(messages)
 
     # ------------------------------------------------------------------
     # 工具调用（M1 / F2）
@@ -229,11 +272,12 @@ class LLMBackend(ABC):
 
         Raises:
             BudgetExceededError: 当日 LLM 调用预算已用尽（F14）
+
+        注（D-M3-13）：预算的检查与计数不再写在这里，改由
+        `LLMBudgetCallbackHandler` 在 LangChain 调用链路上统一埋点——
+        这样无论走本入口还是直接 `chat_model.invoke()` 都会被计数。
         """
-        _budget_check(KIND_LLM)
-        resp = self._chat_with_tools_impl(messages, tools, tool_choice)
-        _budget_record(KIND_LLM)
-        return resp
+        return self._chat_with_tools_impl(messages, tools, tool_choice)
 
     def _chat_with_tools_impl(
         self,

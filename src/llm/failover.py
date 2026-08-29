@@ -99,6 +99,15 @@ class FailoverLLMBackend(LLMBackend):
         """是否已降级到备用后端。"""
         return self._degraded
 
+    @property
+    def chat_model(self):
+        """当前生效后端的 LangChain ChatModel（D-M3-13）。
+
+        降级后要指向备用后端的 model，因此每次访问动态解析，不在构造期固定。
+        """
+        active = self.fallback if self._degraded else (self.primary or self.fallback)
+        return active.chat_model
+
     def mark_degraded(self, reason: str) -> None:
         """创建期降级标记（由工厂在构造失败时调用）。"""
         with self._lock:

@@ -9,12 +9,11 @@ retrieve_knowledge 内置工具（M1 / F1）。
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from src.agents.tools.base import (
     CATEGORY_KNOWLEDGE,
     SOURCE_INTERNAL_KB,
-    Param,
     ToolResult,
     ToolSpec,
     tool,
@@ -72,8 +71,8 @@ def build_retrieve_knowledge_spec(
     def retrieve_knowledge(
         query: Annotated[str, "法律检索查询语句，建议使用规范法言法语，如《治安管理处罚法》行政拘留"],
         doc_type: Annotated[
-            str | None,
-            Param("文档类型：law=法条，case=案例；不传则不限", enum=["law", "case"]),
+            Literal["law", "case"] | None,
+            "文档类型：law=法条，case=案例；不传则不限",
         ] = None,
         top_k: Annotated[int, "返回结果条数，默认 5，最大 20"] = 5,
     ) -> ToolResult:

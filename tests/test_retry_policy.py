@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from langchain_core.messages import AIMessageChunk
+
 import pytest
 
 
@@ -79,71 +81,73 @@ class TestBackoff:
 # ---------------------------------------------------------------------------
 
 class TestStreamRetry:
+    """流式/同步重试行为。
+
+    D-M3-13 迁移后：实现改走 LangChain ChatModel（`backend._model`），
+    因此 mock 点从 openai SDK 的 `_client.chat.completions.create`
+    改为 `_model.stream` / `_model.invoke`。**重试策略本身不变**
+    （仍是 is_retryable + wait_and_log，D-M1-3）。
+    """
+
     def _backend(self):
-        with patch("src.llm.openai_backend.OpenAICompatibleBackend._init_client", return_value=MagicMock()):
-            from src.llm.openai_backend import OpenAICompatibleBackend
-            backend = OpenAICompatibleBackend(model="m", api_key="k")
-            backend.max_retries = 3
-            return backend
+        from src.llm.openai_backend import OpenAICompatibleBackend
+
+        backend = OpenAICompatibleBackend(model="m", api_key="k")
+        backend.max_retries = 3
+        backend._model = MagicMock()
+        return backend
 
     def test_no_retry_after_yield(self):
-        """已产出内容后失败：不重试整个流，且 finally 关闭流"""
+        """已产出内容后失败：不重试整个流（避免重复 token / 重复计费）"""
         backend = self._backend()
         calls = {"n": 0}
-        closed = {"v": False}
 
-        class FakeStream:
-            def __iter__(self):
-                yield from [
-                    MagicMock(choices=[MagicMock(delta=MagicMock(content="a"))]),
-                    MagicMock(choices=[MagicMock(delta=MagicMock(content="b"))]),
-                ]
-                raise ConnectionError("mid-stream broken")
-
-            def close(self):
-                closed["v"] = True
-
-        def fake_create(**kwargs):
+        def fake_stream(*args, **kwargs):
             calls["n"] += 1
-            return FakeStream()
+            yield AIMessageChunk(content="a")
+            yield AIMessageChunk(content="b")
+            raise ConnectionError("mid-stream broken")
 
-        with patch.object(backend._client.chat.completions, "create", side_effect=fake_create):
-            tokens = []
-            with pytest.raises(ConnectionError):
-                for t in backend._stream_impl([{"role": "user", "content": "x"}]):
-                    tokens.append(t)
-            assert tokens == ["a", "b"]
-            assert calls["n"] == 1, "已产出内容后不应重试"
-            assert closed["v"] is True, "流应在 finally 中关闭"
+        backend._model.stream.side_effect = fake_stream
+
+        tokens = []
+        with pytest.raises(ConnectionError):
+            for t in backend._stream_impl([{"role": "user", "content": "x"}]):
+                tokens.append(t)
+        assert tokens == ["a", "b"]
+        assert calls["n"] == 1, "已产出内容后不应重试"
 
     def test_retry_before_first_yield_on_429(self):
         """首 token 前 429：退避后重试成功"""
         backend = self._backend()
         calls = {"n": 0}
 
-        def fake_create(**kwargs):
+        def fake_stream(*args, **kwargs):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise _FakeStatusError(429)
-            return iter([MagicMock(choices=[MagicMock(delta=MagicMock(content="ok"))])])
+            yield AIMessageChunk(content="ok")
 
-        with patch.object(backend._client.chat.completions, "create", side_effect=fake_create):
-            with patch("src.llm.retry.time.sleep") as mock_sleep:
-                tokens = list(backend._stream_impl([{"role": "user", "content": "x"}]))
-            assert tokens == ["ok"]
-            assert calls["n"] == 2
-            assert mock_sleep.call_count == 1
+        backend._model.stream.side_effect = fake_stream
+
+        with patch("src.llm.retry.time.sleep") as mock_sleep:
+            tokens = list(backend._stream_impl([{"role": "user", "content": "x"}]))
+        assert tokens == ["ok"]
+        assert calls["n"] == 2
+        assert mock_sleep.call_count == 1
 
     def test_4xx_generate_no_retry(self):
         """同步生成：4xx 业务错误直接抛出，不重试"""
         backend = self._backend()
         calls = {"n": 0}
 
-        def fake_create(**kwargs):
+        def fake_invoke(*args, **kwargs):
             calls["n"] += 1
             raise _FakeStatusError(400)
 
-        with patch.object(backend._client.chat.completions, "create", side_effect=fake_create):
-            with pytest.raises(_FakeStatusError):
-                backend._generate_impl([{"role": "user", "content": "x"}])
-            assert calls["n"] == 1, "4xx 不应重试"
+        backend._model.invoke.side_effect = fake_invoke
+
+        with pytest.raises(_FakeStatusError):
+            backend._generate_impl([{"role": "user", "content": "x"}])
+        assert calls["n"] == 1, "4xx 不应重试"
+

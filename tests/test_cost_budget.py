@@ -168,93 +168,110 @@ class TestRedisDegradation:
         assert budget.status()["storage"] == "redis"
 
 
-class TestLLMBackendIntegration:
-    """LLM 基类埋点：chat / chat_stream / chat_with_tools 均受预算管控。"""
+class TestLLMBudgetCallback:
+    """F14 预算埋点（D-M3-13 后改为 LangChain callback）。
 
-    def _backend(self, limit: int):
-        from src.llm.base import LLMBackend
+    迁移前埋点写在 `LLMBackend` 的三个公开入口；迁移后统一由
+    `LLMBudgetCallbackHandler` 在 LangChain 调用链路上埋点——这样即使上层
+    绕过公开入口直接 `chat_model.invoke()` 也会被计数。
+    """
 
-        class _Dummy(LLMBackend):
-            def _generate_impl(self, messages):
-                return "ok"
+    def _handler(self):
+        from src.llm.budget_callback import LLMBudgetCallbackHandler
 
-            def _stream_impl(self, messages):
-                yield "a"
-                yield "b"
+        return LLMBudgetCallbackHandler()
 
-            def _chat_with_tools_impl(self, messages, tools, tool_choice="auto"):
-                from src.llm.base import ToolCallResponse
-
-                return ToolCallResponse(content="ok", tool_calls=[], raw={})
-
-            def get_context_window(self):
-                return 1000
-
-        return _Dummy(model="dummy")
-
-    def test_chat_consumes_quota(self, monkeypatch):
+    def _setup(self, monkeypatch, limit: int):
         monkeypatch.setattr("src.observability.cost_budget._budget", None)
-        monkeypatch.setattr("src.config.BUDGET_MAX_LLM_CALLS_PER_DAY", 2)
         monkeypatch.setattr("src.config.BUDGET_ENABLED", True)
+        monkeypatch.setattr("src.config.BUDGET_MAX_LLM_CALLS_PER_DAY", limit)
         reset_budget()
         b = get_budget()
         b.reset(KIND_LLM)
+        return b
 
-        llm = self._backend(2)
-        llm.chat("你好")
+    def test_one_call_consumes_one_quota(self, monkeypatch):
+        """一次调用完成 → 计数 1"""
+        b = self._setup(monkeypatch, 10)
+        h = self._handler()
+        h.on_llm_start({}, ["hi"])
+        h.on_llm_end(None)
         assert b.used(KIND_LLM) == 1
-        llm.chat("再问一次")
-        assert b.used(KIND_LLM) == 2
+        reset_budget()
 
+    def test_stream_call_counts_once_not_per_token(self, monkeypatch):
+        """流式一次调用只计一次——不是每个 token 一次。
+
+        这是把埋点放 callback 上时最容易踩的坑：LangChain 每生成一个 token
+        都会回调 on_llm_new_token，若在那里计数会把配额瞬间打满。
+        """
+        b = self._setup(monkeypatch, 10)
+        h = self._handler()
+        h.on_llm_start({}, ["hi"])
+        for _ in range(500):  # 模拟 500 个流式 token
+            h.on_llm_new_token("x", run_id="r1")
+        h.on_llm_end(None)
+        assert b.used(KIND_LLM) == 1, "500 个 token 也应只计一次调用"
+        reset_budget()
+
+    def test_error_does_not_consume_quota(self, monkeypatch):
+        """调用失败不计数（请求未真正完成，与 D-M3-6 一致）"""
+        b = self._setup(monkeypatch, 10)
+        h = self._handler()
+        h.on_llm_start({}, ["hi"])
+        h.on_llm_error(RuntimeError("boom"))
+        assert b.used(KIND_LLM) == 0
+        reset_budget()
+
+    def test_exceeded_raises_on_start(self, monkeypatch):
+        """超限 → on_llm_start 抛 BudgetExceededError（熔断，中断调用链）"""
         from src.observability.cost_budget import BudgetExceededError
 
-        with pytest.raises(BudgetExceededError):
-            llm.chat("第三次")
-        reset_budget()
-
-    def test_chat_stream_consumes_one_quota(self, monkeypatch):
-        """流式一次调用只计一次（不是每个 token 一次）。"""
-        monkeypatch.setattr("src.observability.cost_budget._budget", None)
-        monkeypatch.setattr("src.config.BUDGET_MAX_LLM_CALLS_PER_DAY", 10)
-        monkeypatch.setattr("src.config.BUDGET_ENABLED", True)
-        reset_budget()
-        b = get_budget()
-        b.reset(KIND_LLM)
-
-        llm = self._backend(10)
-        tokens = list(llm.chat_stream("你好"))
-        assert tokens == ["a", "b"]
-        assert b.used(KIND_LLM) == 1
-        reset_budget()
-
-    def test_chat_with_tools_consumes_quota(self, monkeypatch):
-        monkeypatch.setattr("src.observability.cost_budget._budget", None)
-        monkeypatch.setattr("src.config.BUDGET_MAX_LLM_CALLS_PER_DAY", 1)
-        monkeypatch.setattr("src.config.BUDGET_ENABLED", True)
-        reset_budget()
-        b = get_budget()
-        b.reset(KIND_LLM)
-
-        llm = self._backend(1)
-        llm.chat_with_tools([{"role": "user", "content": "q"}], [])
+        b = self._setup(monkeypatch, 1)
+        h = self._handler()
+        h.on_llm_start({}, ["hi"])
+        h.on_llm_end(None)
         assert b.used(KIND_LLM) == 1
 
-        from src.observability.cost_budget import BudgetExceededError
-
         with pytest.raises(BudgetExceededError):
-            llm.chat_with_tools([{"role": "user", "content": "q"}], [])
+            h.on_llm_start({}, ["再问一次"])
         reset_budget()
 
-    def test_disabled_budget_never_blocks(self, monkeypatch):
-        """BUDGET_ENABLED=false 时不做任何拦截。"""
-        monkeypatch.setattr("src.observability.cost_budget._budget", None)
-        monkeypatch.setattr("src.config.BUDGET_ENABLED", False)
+    def test_stats_failure_does_not_block(self, monkeypatch):
+        """统计组件故障 → 告警放行，不拖垮主链路（D-M3-8）"""
+        b = self._setup(monkeypatch, 10)
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("redis down")
+
+        monkeypatch.setattr(type(b), "check", _boom)
+        monkeypatch.setattr(type(b), "record", _boom)
+
+        h = self._handler()
+        h.on_llm_start({}, ["hi"])  # 不应抛出
+        h.on_llm_end(None)  # 不应抛出
         reset_budget()
 
-        llm = self._backend(0)
-        for _ in range(50):
-            llm.chat("q")           # 不应抛
-        reset_budget()
+    def test_callback_mounted_on_real_backends(self):
+        """两个真实后端的 ChatModel 必须挂着预算 callback（防漏挂）。
+
+        漏挂的后果很隐蔽：调用照常进行，只是不计数，预算熔断形同虚设。
+        """
+        from src.llm.ollama_backend import OllamaBackend
+        from src.llm.openai_backend import OpenAICompatibleBackend
+
+        backends = [
+            OpenAICompatibleBackend(model="deepseek-v4-flash", api_key="sk-test"),
+            OllamaBackend(model="qwen2.5:7b"),
+        ]
+        for backend in backends:
+            names = [
+                getattr(cb, "name", type(cb).__name__)
+                for cb in (backend.chat_model.callbacks or [])
+            ]
+            assert "llm_budget_callback" in names, (
+                f"{type(backend).__name__} 未挂载预算 callback"
+            )
 
 
 class TestTavilyIntegration:

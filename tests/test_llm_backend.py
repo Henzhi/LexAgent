@@ -21,9 +21,10 @@ class TestLLMBackendImports:
         assert LLMBackend is not None
 
     def test_import_ollama_backend(self):
-        from src.llm.ollama_backend import OllamaBackend, OllamaLangChainWrapper
+        from src.llm.ollama_backend import OllamaBackend
         assert OllamaBackend is not None
-        assert OllamaLangChainWrapper is not None
+        # 注：OllamaLangChainWrapper 已在 D-M3-13 迁移中删除——
+        # 后端直接持有 ChatOllama，不再需要自研的 BaseChatModel 包装器。
 
     def test_import_openai_backend(self):
         from src.llm.openai_backend import OpenAICompatibleBackend
@@ -85,22 +86,16 @@ class TestOllamaBackend:
         assert backend.num_ctx == 4096
 
     @patch("src.llm.ollama_backend.ollama.Client")
-    def test_num_ctx_passed_to_options(self, mock_client):
-        """num_ctx 实际下发到 Ollama options（同步调用）"""
+    def test_num_ctx_passed_to_model(self, mock_client):
+        """num_ctx 实际下发到 ChatOllama（D-M3-13）
+
+        迁移前是调用时传 `options={"num_ctx": ...}`；迁移后改为构造 ChatOllama
+        时固定的参数。这个坑必须守住：Ollama 服务端 num_ctx 默认仅 2048，
+        不显式下发会**静默截断输入**。
+        """
         from src.llm.ollama_backend import OllamaBackend
         backend = OllamaBackend(model="qwen2.5:7b", num_ctx=8192)
-        backend._generate_impl([{"role": "user", "content": "测试"}])
-        # 验证传给 ollama client 的 options 含 num_ctx
-        _, kwargs = mock_client.return_value.chat.call_args
-        assert kwargs["options"]["num_ctx"] == 8192
-
-    @patch("src.llm.ollama_backend.ollama.Client")
-    def test_langchain_wrapper(self, mock_client):
-        from src.llm.ollama_backend import OllamaBackend, OllamaLangChainWrapper
-        backend = OllamaBackend(model="qwen2.5:7b")
-        wrapper = OllamaLangChainWrapper(backend)
-        assert wrapper.model_name == "qwen2.5:7b"
-        assert wrapper._llm_type == "ollama-law-llm"
+        assert backend._model.num_ctx == 8192
 
 
 class TestOpenAIBackend:

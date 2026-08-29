@@ -49,6 +49,15 @@ class LLMAdapter:
         self.model_name = backend.model
         self.temperature = backend.temperature
 
+    @property
+    def chat_model(self):
+        """底层 LangChain ChatModel（D-M3-13）——委托给被包装的后端。
+
+        agent_node 已改为标准写法（`chat_model.bind_tools(...).invoke(...)`），
+        本适配器必须透传该属性，否则 ReAct 路径会拿不到模型。
+        """
+        return self._backend.chat_model
+
     # ----- 基础 API -----
 
     def chat(

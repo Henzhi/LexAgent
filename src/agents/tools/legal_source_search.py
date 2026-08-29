@@ -10,12 +10,11 @@ legal_source_search 内置工具（M2 / F9）。
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from src.agents.tools.base import (
     CATEGORY_LEGAL,
     SOURCE_LEGAL,
-    Param,
     ToolResult,
     ToolSpec,
     tool,
@@ -58,8 +57,8 @@ def build_legal_source_search_spec(client: LegalSourceClient) -> ToolSpec:
     def legal_source_search(
         query: Annotated[str, "检索关键词，建议使用规范法律名称，如 '民事诉讼法'"],
         source_type: Annotated[
-            str,
-            Param("law=仅法规（默认），case=仅案例，all=两者", enum=["law", "case", "all"]),
+            Literal["law", "case", "all"],
+            "检索源类型：law=仅法规（默认），case=仅案例，all=两者",
         ] = "law",
     ) -> ToolResult:
         """检索官方法律权威源：国家法律法规数据库与人民法院案例库。

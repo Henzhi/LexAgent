@@ -1,89 +1,66 @@
 """
-空 name tool_call 解析回归测试（DeepSeek V4 parallel_tool_calls 空占位 Bug）。
+空 name tool_call 过滤回归测试（DeepSeek V4 parallel_tool_calls 空占位 Bug，D-M1-6）。
 
-覆盖：
-- OpenAI 兼容后端 _parse_tool_calls：空 name 的占位 tool_call 被过滤，正常调用不受影响
-- Ollama 后端 _parse_tool_calls：同上（三处解析逻辑保持一致）
+D-M3-13 迁移后：两个后端都走 LangChain，解析逻辑统一收敛到
+`src.llm.base.tool_calls_from_langchain()`，不再各自维护一份 `_parse_tool_calls`。
+本文件因此改为直接测这个统一入口。
+
+与迁移前的行为差异：LangChain 的 tool_calls 参数是**已解析的 dict**，
+不再有「arguments 是非法 JSON 字符串」的情况，`ToolCall.parse_error` 恒为空，
+因此原先针对 parse_error 的断言不再适用（该容错层由 LangChain 负责）。
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src.llm.ollama_backend import OllamaBackend
-from src.llm.openai_backend import OpenAICompatibleBackend
+from langchain_core.messages import AIMessage
+
+from src.llm.base import tool_calls_from_langchain
 
 
-def _openai_message(tool_calls: list[dict]) -> SimpleNamespace:
-    """构造形如 openai SDK response message 的假对象。"""
-    return SimpleNamespace(tool_calls=[
-        SimpleNamespace(
-            id=tc["id"],
-            function=SimpleNamespace(name=tc["name"], arguments=tc["arguments"]),
-        )
-        for tc in tool_calls
-    ])
+def _ai_message(tool_calls: list[dict]) -> AIMessage:
+    """构造 LangChain AIMessage（tool_calls 为 LangChain 形态：args 是 dict）。"""
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"id": tc["id"], "name": tc["name"], "args": tc["args"], "type": "tool_call"}
+            for tc in tool_calls
+        ],
+    )
 
 
-class TestOpenAIParseToolCalls:
+class TestToolCallsFromLangChain:
     def test_filters_empty_name(self):
         """空 name 的占位 tool_call 被跳过，正常调用保留。"""
-        msg = _openai_message([
-            {"id": "c1", "name": "", "arguments": "{}"},
-            {"id": "c2", "name": "retrieve_knowledge", "arguments": '{"query":"测试"}'},
+        msg = _ai_message([
+            {"id": "c1", "name": "", "args": {}},
+            {"id": "c2", "name": "retrieve_knowledge", "args": {"query": "测试"}},
         ])
-        calls = OpenAICompatibleBackend._parse_tool_calls(msg)
+        calls = tool_calls_from_langchain(msg)
         assert [c.name for c in calls] == ["retrieve_knowledge"]
         assert calls[0].id == "c2"
         assert calls[0].arguments == {"query": "测试"}
-        assert calls[0].parse_error == ""
 
     def test_only_empty_name_returns_empty(self):
-        """只有空 name 占位 → 解析结果为空列表（content 即最终答案）。"""
-        msg = _openai_message([
-            {"id": "c1", "name": "", "arguments": ""},
-        ])
-        assert OpenAICompatibleBackend._parse_tool_calls(msg) == []
+        """只有空 name 占位 → 结果为空列表（content 即最终答案）。"""
+        msg = _ai_message([{"id": "c1", "name": "", "args": {}}])
+        assert tool_calls_from_langchain(msg) == []
 
     def test_normal_calls_unaffected(self):
-        """正常 tool_call 解析语义不变（含非法 JSON 的 parse_error）。"""
-        msg = _openai_message([
-            {"id": "a1", "name": "web_search", "arguments": '{"query":"最新修订"}'},
-            {"id": "a2", "name": "retrieve_knowledge", "arguments": "{bad"},
+        """多个正常 tool_call 全部保留（DeepSeek parallel_tool_calls 恒启用）。"""
+        msg = _ai_message([
+            {"id": "a1", "name": "web_search", "args": {"query": "最新修订"}},
+            {"id": "a2", "name": "retrieve_knowledge", "args": {"query": "测试"}},
         ])
-        calls = OpenAICompatibleBackend._parse_tool_calls(msg)
+        calls = tool_calls_from_langchain(msg)
         assert [c.name for c in calls] == ["web_search", "retrieve_knowledge"]
         assert calls[0].arguments == {"query": "最新修订"}
-        assert calls[0].parse_error == ""
-        assert calls[1].arguments == {}
-        assert calls[1].parse_error != ""
-
-
-class TestOllamaParseToolCalls:
-    def test_filters_empty_name(self):
-        """Ollama dict 形态：空 name 占位被跳过。"""
-        msg = {
-            "tool_calls": [
-                {"id": "c1", "function": {"name": "", "arguments": {}}},
-                {"id": "c2", "function": {"name": "retrieve_knowledge", "arguments": {"query": "测试"}}},
-            ]
-        }
-        calls = OllamaBackend._parse_tool_calls(msg)
-        assert [c.name for c in calls] == ["retrieve_knowledge"]
-        assert calls[0].arguments == {"query": "测试"}
-
-    def test_only_empty_name_returns_empty(self):
-        msg = {"tool_calls": [{"id": "c1", "function": {"name": "", "arguments": {}}}]}
-        assert OllamaBackend._parse_tool_calls(msg) == []
-
-    def test_normal_calls_unaffected(self):
-        msg = {
-            "tool_calls": [
-                {"id": "a1", "function": {"name": "web_search", "arguments": {"query": "x"}}},
-                {"id": "a2", "function": {"name": "retrieve_knowledge", "arguments": '{"query":"测试"}'}},
-            ]
-        }
-        calls = OllamaBackend._parse_tool_calls(msg)
-        assert [c.name for c in calls] == ["web_search", "retrieve_knowledge"]
-        assert calls[0].arguments == {"query": "x"}
-        # 字符串形式的 arguments 同样被解析
         assert calls[1].arguments == {"query": "测试"}
+
+    def test_no_tool_calls(self):
+        """无 tool_calls 的纯文本回答 → 空列表（content 即最终答案）。"""
+        assert tool_calls_from_langchain(AIMessage(content="你好")) == []
+
+    def test_object_without_tool_calls_attr(self):
+        """没有 tool_calls 属性的对象不应抛异常（容错）。"""
+        assert tool_calls_from_langchain(SimpleNamespace(content="x")) == []

@@ -2,6 +2,10 @@
 M1 测试共用替身（fake retriever / fake tool LLM）。
 
 不依赖外部服务；供 test_tools / test_react_agent / test_failover 等模块复用。
+
+D-M3-13：`FakeToolLLM` 额外提供 `chat_model` 属性，把脚本化响应包装成
+LangChain ChatModel 形态（bind_tools / invoke），使既有测试无需改动即可
+覆盖迁移后的 LangChain 代码路径。
 """
 from __future__ import annotations
 
@@ -60,3 +64,47 @@ class FakeToolLLM:
 
     def get_context_window(self):
         return 32000
+
+    @property
+    def chat_model(self):
+        """LangChain 标准接口（D-M3-13）——包装成本版 ChatModel 形态。
+
+        让迁移后的 `agent_node`（走 bind_tools + invoke）仍能消费脚本化响应。
+        """
+        return _FakeChatModel(self)
+
+
+class _FakeChatModel:
+    """把 FakeToolLLM 的脚本化响应包装成 LangChain ChatModel 形态。
+
+    只实现 agent_node 用到的两个方法：`bind_tools()` 与 `invoke()`。
+    invoke 时把 LangChain 消息转回项目内部的 OpenAI dict 格式再交给
+    FakeToolLLM，保证既有测试对 `calls[0]["messages"]` 的断言不受影响。
+    """
+
+    def __init__(self, owner, tools=None, **bind_kwargs):
+        self._owner = owner
+        self._tools = tools or []
+        self._bind_kwargs = bind_kwargs
+
+    def bind_tools(self, tools, **kwargs):
+        return _FakeChatModel(self._owner, tools, **kwargs)
+
+    def invoke(self, messages, **kwargs):
+        from langchain_core.messages import AIMessage, convert_to_openai_messages
+
+        # LangChain Message 对象 → 项目内部的 OpenAI dict 格式
+        dict_messages = convert_to_openai_messages(messages)
+        resp = self._owner.chat_with_tools(dict_messages, self._tools)
+        return AIMessage(
+            content=resp.content or "",
+            tool_calls=[
+                {
+                    "id": tc.id,
+                    "name": tc.name,
+                    "args": tc.arguments,
+                    "type": "tool_call",
+                }
+                for tc in (resp.tool_calls or [])
+            ],
+        )

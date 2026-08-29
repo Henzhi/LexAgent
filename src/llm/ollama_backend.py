@@ -12,21 +12,18 @@ Ollama LLM 后端实现。
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterator
+from typing import Iterator
 
 import ollama
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import (
-    AIMessage,
-    AIMessageChunk,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-)
-from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langchain_ollama import ChatOllama
 
-from src.llm.base import LLMBackend, ToolCall, ToolCallResponse, parse_tool_arguments
+from src.llm.base import (
+    LLMBackend,
+    ToolCallResponse,
+    to_langchain_messages,
+    tool_calls_from_langchain,
+)
+from src.llm.budget_callback import budget_callbacks
 from src.llm.retry import is_retryable, wait_and_log
 
 logger = logging.getLogger(__name__)
@@ -85,10 +82,30 @@ class OllamaBackend(LLMBackend):
         # Ollama 服务端 num_ctx 默认仅 2048，不显式下发会静默截断输入。
         self.num_ctx = num_ctx or self.get_context_window()
         self._client = self._init_client()
+        # D-M3-13：LangChain 标准 ChatModel，供 bind_tools / invoke / stream 使用
+        self._model = self._init_model()
 
     def _init_client(self) -> ollama.Client:
         host = self.base_url.replace("http://", "").replace("https://", "")
         return ollama.Client(host=host, timeout=300.0)
+
+    def _init_model(self) -> ChatOllama:
+        """LangChain 标准 ChatModel（D-M3-13）。
+
+        `num_ctx` 必须显式下发：Ollama 服务端默认仅 2048，不指定会静默截断输入
+        （这行注释来自迁移前的实现，是个真实的坑，别丢）。
+        """
+        return ChatOllama(
+            model=self.model,
+            base_url=self.base_url,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            num_predict=self.max_tokens,
+            num_ctx=self.num_ctx,
+            repeat_penalty=self.repeat_penalty,
+            seed=self.seed,
+            callbacks=budget_callbacks(),  # F14 预算熔断埋点（D-M3-13）
+        )
 
     def get_context_window(self) -> int:
         return _OLLAMA_CONTEXT_WINDOWS.get(self.model, 28000)
@@ -98,22 +115,12 @@ class OllamaBackend(LLMBackend):
     # ------------------------------------------------------------------
 
     def _generate_impl(self, messages: list[dict[str, str]]) -> str:
+        lc_messages = to_langchain_messages(messages)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = self._client.chat(
-                    model=self.model,
-                    messages=messages,
-                    options={
-                        "temperature": self.temperature,
-                        "top_p": self.top_p,
-                        "num_predict": self.max_tokens,
-                        "num_ctx": self.num_ctx,
-                        "repeat_penalty": self.repeat_penalty,
-                        "seed": self.seed,
-                    },
-                )
-                return response["message"]["content"]
+                resp = self._model.invoke(lc_messages)
+                return resp.content or ""
             except Exception as e:
                 last_error = e
                 if not is_retryable(e):
@@ -126,32 +133,19 @@ class OllamaBackend(LLMBackend):
         )
 
     def _stream_impl(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        lc_messages = to_langchain_messages(messages)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
-            stream = None
             yielded_any = False
             try:
-                stream = self._client.chat(
-                    model=self.model,
-                    messages=messages,
-                    options={
-                        "temperature": self.temperature,
-                        "top_p": self.top_p,
-                        "num_predict": self.max_tokens,
-                        "num_ctx": self.num_ctx,
-                        "repeat_penalty": self.repeat_penalty,
-                        "seed": self.seed,
-                    },
-                    stream=True,
-                )
-                for chunk in stream:
-                    content = chunk.get("message", {}).get("content", "")
-                    if content:
+                for chunk in self._model.stream(lc_messages):
+                    text = getattr(chunk, "content", "") or ""
+                    if text:
                         yielded_any = True
-                        yield content
+                        yield text
                 return
             except GeneratorExit:
-                # 调用方中断：释放底层连接后继续抛出，由生成器框架处理
+                # 调用方中断（客户端断开 / 桥接取消）：立即停止，不重试
                 raise
             except Exception as e:
                 last_error = e
@@ -164,20 +158,6 @@ class OllamaBackend(LLMBackend):
                     logger.warning(f"Ollama 流式调用失败（不可重试）: {e}")
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
-            finally:
-                if stream is not None:
-                    try:
-                        # ollama SDK 迭代器没有 close()，但可通过 close 底层响应释放连接
-                        close = getattr(stream, "close", None)
-                        if callable(close):
-                            close()
-                        resp = getattr(stream, "_response", None) or getattr(stream, "response", None)
-                        if resp is not None:
-                            rc = getattr(resp, "close", None)
-                            if callable(rc):
-                                rc()
-                    except Exception:
-                        pass
 
         raise RuntimeError(
             f"Ollama 流式调用失败，已重试 {self.max_retries} 次: {last_error}"
@@ -193,37 +173,26 @@ class OllamaBackend(LLMBackend):
         tools: list[dict],
         tool_choice: str = "auto",
     ) -> ToolCallResponse:
-        """Ollama 工具调用（非流式）。
+        """Ollama 工具调用（非流式）：LangChain `bind_tools()` + `invoke()`。
 
-        - ollama SDK `client.chat(..., tools=[...])`；0.4.x 不支持 tool_choice，不传。
         - 模型不支持工具 / 未返回 tool_calls → 返回空列表 + content，上层据此直接生成。
-        - 参数 JSON 非法 → 记录 parse_error，由 tools 节点回灌错误消息（R1）。
+        - D-M1-4：小模型 tool calling 不可靠，上层在 Ollama 降级时走固定管线，
+          本方法只在显式调用时才走到。
+        - LangChain 的 tool_calls 参数是已解析的 dict，无需 JSON 容错。
+
+        注：Ollama 0.4.x 的 SDK 不支持 tool_choice，LangChain ChatOllama 同样
+        忽略该参数，因此这里不传（保持与迁移前一致的行为）。
         """
+        lc_messages = to_langchain_messages(messages)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                kwargs: dict = {
-                    "model": self.model,
-                    "messages": messages,
-                    "options": {
-                        "temperature": self.temperature,
-                        "top_p": self.top_p,
-                        "num_predict": self.max_tokens,
-                        "num_ctx": self.num_ctx,
-                        "repeat_penalty": self.repeat_penalty,
-                        "seed": self.seed,
-                    },
-                }
-                if tools:
-                    kwargs["tools"] = tools
-                response = self._client.chat(**kwargs)
-                msg = response.get("message", {}) if isinstance(response, dict) else getattr(response, "message", {})
-                content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "") or ""
-                tool_calls = self._parse_tool_calls(msg)
-                raw = response if isinstance(response, dict) else {}
+                model = self._model.bind_tools(tools) if tools else self._model
+                resp = model.invoke(lc_messages)
+                raw = resp.model_dump() if hasattr(resp, "model_dump") else {}
                 return ToolCallResponse(
-                    content=str(content),
-                    tool_calls=tool_calls,
+                    content=resp.content or "",
+                    tool_calls=tool_calls_from_langchain(resp),
                     raw=raw,
                 )
             except Exception as e:
@@ -236,115 +205,3 @@ class OllamaBackend(LLMBackend):
         raise RuntimeError(
             f"Ollama 工具调用失败，已重试 {self.max_retries} 次: {last_error}"
         )
-
-    @staticmethod
-    def _parse_tool_calls(message) -> list[ToolCall]:
-        """解析 Ollama message.tool_calls（arguments 通常已是 dict）。"""
-        result: list[ToolCall] = []
-        if isinstance(message, dict):
-            raw_calls = message.get("tool_calls") or []
-        else:
-            raw_calls = getattr(message, "tool_calls", None) or []
-        for tc in raw_calls:
-            if isinstance(tc, dict):
-                fn = tc.get("function", {}) or {}
-                tc_id = tc.get("id", "") or ""
-                name = fn.get("name", "") or ""
-                args = fn.get("arguments", {}) or {}
-            else:
-                fn = getattr(tc, "function", {}) or {}
-                tc_id = getattr(tc, "id", "") or ""
-                name = fn.get("name", "") if isinstance(fn, dict) else ""
-                args = fn.get("arguments", {}) if isinstance(fn, dict) else {}
-            if not name:
-                # 空 name 的 tool_call 为无效占位（模型想直接回答却返回空 tool_call），跳过
-                continue
-            if isinstance(args, str):
-                arguments, error = parse_tool_arguments(args)
-            elif isinstance(args, dict):
-                arguments, error = args, ""
-            else:
-                arguments, error = {}, "参数格式非法"
-            result.append(
-                ToolCall(
-                    id=tc_id,
-                    name=name,
-                    arguments=arguments,
-                    parse_error=error,
-                )
-            )
-        return result
-
-
-# ---------------------------------------------------------------------------
-# LangChain 兼容包装器
-# ---------------------------------------------------------------------------
-
-class OllamaLangChainWrapper(BaseChatModel):
-    """将 OllamaBackend 包装为 LangChain BaseChatModel
-
-    使 Ollama 后端可以无缝用于 LangGraph Agent 和其他 LangChain 组件。
-    """
-
-    model_name: str = "qwen2.5:7b"
-    temperature: float = 0.1
-
-    _backend: OllamaBackend | None = None
-
-    def __init__(self, backend: OllamaBackend):
-        super().__init__(
-            model_name=backend.model,
-            temperature=backend.temperature,
-        )
-        self._backend = backend
-
-    def _generate(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> ChatResult:
-        ollama_msgs = self._langchain_to_dict(messages)
-        response = self._backend._generate_impl(ollama_msgs)
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=response))])
-
-    def _stream(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> Iterator[ChatGenerationChunk]:
-        ollama_msgs = self._langchain_to_dict(messages)
-        for token_text in self._backend._stream_impl(ollama_msgs):
-            chunk = ChatGenerationChunk(message=AIMessageChunk(content=token_text))
-            if run_manager:
-                run_manager.on_llm_new_token(token_text, chunk=chunk)
-            yield chunk
-
-    @property
-    def _llm_type(self) -> str:
-        return "ollama-law-llm"
-
-    @property
-    def _identifying_params(self) -> dict[str, Any]:
-        return {
-            "model": self.model_name,
-            "temperature": self.temperature,
-            "base_url": self._backend.base_url,
-        }
-
-    @staticmethod
-    def _langchain_to_dict(messages: list[BaseMessage]) -> list[dict[str, str]]:
-        result = []
-        for msg in messages:
-            if isinstance(msg, SystemMessage):
-                result.append({"role": "system", "content": str(msg.content)})
-            elif isinstance(msg, HumanMessage):
-                result.append({"role": "user", "content": str(msg.content)})
-            elif isinstance(msg, AIMessage):
-                result.append({"role": "assistant", "content": str(msg.content)})
-            else:
-                result.append({"role": "user", "content": str(msg.content)})
-        return result

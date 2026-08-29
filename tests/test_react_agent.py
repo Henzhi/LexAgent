@@ -130,11 +130,18 @@ class TestAskReact:
         assert result["answer"], "清除后仍应有可用答案（兜底文案）"
 
     def test_invalid_tool_arguments_fed_back(self, monkeypatch):
-        """arguments JSON 非法 → 不执行工具，回灌错误消息（R1 容错）。"""
+        """工具参数不合法 → 不执行工具，回灌错误消息（R1 容错）。
+
+        D-M3-13 前测的是「arguments JSON 字符串非法」（parse_error）；
+        迁移到 LangChain 后参数在框架层就已解析为 dict，非法 JSON 的情况
+        不再存在（Pydantic 会先拦截）。因此改为测更贴近现实的场景：
+        模型传了缺少必填字段的参数 —— 容错机制本身不变。
+        """
         llm = FakeToolLLM([
             ToolCallResponse(
                 content="",
-                tool_calls=[ToolCall(id="bad_1", name="retrieve_knowledge", arguments={}, parse_error="参数 JSON 解析失败: {bad")],
+                # 缺 query（必填）→ 工具执行应失败并回灌错误
+                tool_calls=[ToolCall(id="bad_1", name="retrieve_knowledge", arguments={})],
                 raw={},
             ),
             _final_response("容错后回答"),
@@ -144,10 +151,11 @@ class TestAskReact:
         assert result["answer"] == "容错后回答"
         assert len(result["tool_log"]) == 1
         assert result["tool_log"][0]["ok"] is False
-        assert "参数解析失败" in result["tool_log"][0]["summary"]
+        # 错误信息回灌给模型，循环能继续并产出答案
+        assert "参数" in result["tool_log"][0]["summary"]
         # 第二轮 LLM 应看到工具错误消息
         tool_msgs = [m for m in llm.calls[1]["messages"] if m.get("role") == "tool"]
-        assert tool_msgs and "参数解析失败" in tool_msgs[0]["content"]
+        assert tool_msgs and "参数" in tool_msgs[0]["content"]
 
     def test_unknown_tool_returns_error_result(self, monkeypatch):
         """LLM 请求未知工具 → 工具返回 ok=False 的 ToolResult，循环继续。"""

@@ -51,6 +51,19 @@ class ToolRegistry:
         """输出 OpenAI 兼容 schema 列表，供 LLM chat_with_tools 使用。"""
         return [spec.to_openai_format() for spec in self._tools.values()]
 
+    def langchain_tools(self) -> list:
+        """LangChain BaseTool 列表（D-M3-13）——`chat_model.bind_tools()` 直接消费。
+
+        与 `to_openai_schemas()` 内容等价，区别是传对象而非 dict，这是 LangChain
+        的推荐写法（schema 由 BaseTool 自己负责，且能做参数校验）。
+        工具未带 LangChain 对象时（如历史自定义 ToolSpec）跳过。
+        """
+        return [
+            spec.langchain_tool
+            for spec in self._tools.values()
+            if spec.langchain_tool is not None
+        ]
+
     def execute(self, name: str, arguments: dict[str, Any], call_id: str = "") -> ToolResult:
         """执行工具。
 

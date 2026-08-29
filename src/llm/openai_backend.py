@@ -21,9 +21,16 @@ from __future__ import annotations
 import logging
 from typing import Iterator
 
+from langchain_openai import ChatOpenAI
 from openai import OpenAI
 
-from src.llm.base import LLMBackend, ToolCall, ToolCallResponse, parse_tool_arguments
+from src.llm.base import (
+    LLMBackend,
+    ToolCallResponse,
+    to_langchain_messages,
+    tool_calls_from_langchain,
+)
+from src.llm.budget_callback import budget_callbacks
 from src.llm.retry import is_retryable, wait_and_log
 
 logger = logging.getLogger(__name__)
@@ -81,6 +88,8 @@ class OpenAICompatibleBackend(LLMBackend):
         self.api_key = api_key
         self.base_url = base_url
         self._client = self._init_client()
+        # D-M3-13：LangChain 标准 ChatModel，供 bind_tools / invoke / stream 使用
+        self._model = self._init_model()
 
     def _init_client(self) -> OpenAI:
         return OpenAI(
@@ -88,6 +97,25 @@ class OpenAICompatibleBackend(LLMBackend):
             base_url=self.base_url,
             max_retries=0,  # 我们自己管理重试
             timeout=120.0,
+        )
+
+    def _init_model(self) -> ChatOpenAI:
+        """LangChain 标准 ChatModel（D-M3-13）。
+
+        `max_retries=0`：重试仍由本模块的 `is_retryable` + `wait_and_log` 统一控制，
+        保持 D-M1-3 的策略——429/5xx/网络 可重试，4xx 业务错误直接抛出交由
+        Failover 降级（4xx 重试必然失败，浪费请求）。
+        """
+        return ChatOpenAI(
+            model=self.model,
+            api_key=self.api_key or "sk-placeholder",
+            base_url=self.base_url,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            max_tokens=self.max_tokens,
+            max_retries=0,  # 重试由我们自己管理
+            timeout=120.0,
+            callbacks=budget_callbacks(),  # F14 预算熔断埋点（D-M3-13）
         )
 
     def get_context_window(self) -> int:
@@ -98,18 +126,12 @@ class OpenAICompatibleBackend(LLMBackend):
     # ------------------------------------------------------------------
 
     def _generate_impl(self, messages: list[dict[str, str]]) -> str:
+        lc_messages = to_langchain_messages(messages)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.max_tokens,
-                    stream=False,
-                )
-                return response.choices[0].message.content or ""
+                resp = self._model.invoke(lc_messages)
+                return resp.content or ""
             except Exception as e:
                 last_error = e
                 if not is_retryable(e):
@@ -124,26 +146,20 @@ class OpenAICompatibleBackend(LLMBackend):
         )
 
     def _stream_impl(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        lc_messages = to_langchain_messages(messages)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
-            stream = None
             yielded_any = False
             try:
-                stream = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    top_p=self.top_p,
-                    max_tokens=self.max_tokens,
-                    stream=True,
-                )
-                for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
+                for chunk in self._model.stream(lc_messages):
+                    text = getattr(chunk, "content", "") or ""
+                    if text:
                         yielded_any = True
-                        yield chunk.choices[0].delta.content
+                        yield text
                 return
             except GeneratorExit:
-                # 调用方中断（客户端断开 / 桥接取消）：关闭底层连接立即停止消耗
+                # 调用方中断（客户端断开 / 桥接取消）：立即停止，不重试。
+                # LangChain 的 stream 是生成器，GeneratorExit 会沿调用链关闭底层连接。
                 raise
             except Exception as e:
                 last_error = e
@@ -160,22 +176,13 @@ class OpenAICompatibleBackend(LLMBackend):
                     )
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
-            finally:
-                if stream is not None:
-                    try:
-                        # openai SDK 的 Stream 支持 close()，立即断开 HTTP 连接
-                        close = getattr(stream, "close", None)
-                        if callable(close):
-                            close()
-                    except Exception:
-                        pass
 
         raise RuntimeError(
             f"OpenAI API 流式调用失败，已重试 {self.max_retries} 次: {last_error}"
         )
 
     # ------------------------------------------------------------------
-    # 工具调用实现（M1 / F2）
+    # 工具调用实现（M1 / F2，D-M3-13 改为 LangChain bind_tools）
     # ------------------------------------------------------------------
 
     def _chat_with_tools_impl(
@@ -184,34 +191,31 @@ class OpenAICompatibleBackend(LLMBackend):
         tools: list[dict],
         tool_choice: str = "auto",
     ) -> ToolCallResponse:
-        """非流式工具调用：openai SDK `tools` 参数 + tool_calls 解析容错。
+        """非流式工具调用：LangChain `bind_tools()` + `invoke()`。
 
         - DeepSeek V4 parallel_tool_calls 恒启用：返回的多个 tool_calls 全部解析。
-        - 仅在有工具时传 tools/tool_choice（空数组可能被部分供应商拒绝）。
-        - 参数 JSON 非法 → 记录 parse_error，由 tools 节点回灌错误消息（R1）。
+        - 仅在有工具时 bind_tools（空数组可能被部分供应商拒绝）。
+        - 空 name 的占位 tool_call 由 `tool_calls_from_langchain` 跳过（D-M1-6）。
         - 重试策略与普通调用一致：仅可重试异常（429/5xx/网络/超时）重试。
+
+        与迁移前的行为差异：LangChain 的 tool_calls 参数是**已解析的 dict**，
+        不像 OpenAI 原始响应那样是 JSON 字符串，因此不再需要
+        `parse_tool_arguments` 容错，`ToolCall.parse_error` 恒为空。
         """
+        lc_messages = to_langchain_messages(messages)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                kwargs: dict = {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": self.temperature,
-                    "top_p": self.top_p,
-                    "max_tokens": self.max_tokens,
-                    "stream": False,
-                }
-                if tools:
-                    kwargs["tools"] = tools
-                    kwargs["tool_choice"] = tool_choice
-                response = self._client.chat.completions.create(**kwargs)
-                msg = response.choices[0].message
-                tool_calls = self._parse_tool_calls(msg)
-                raw = response.model_dump() if hasattr(response, "model_dump") else {}
+                model = (
+                    self._model.bind_tools(tools, tool_choice=tool_choice)
+                    if tools
+                    else self._model
+                )
+                resp = model.invoke(lc_messages)
+                raw = resp.model_dump() if hasattr(resp, "model_dump") else {}
                 return ToolCallResponse(
-                    content=msg.content or "",
-                    tool_calls=tool_calls,
+                    content=resp.content or "",
+                    tool_calls=tool_calls_from_langchain(resp),
                     raw=raw,
                 )
             except Exception as e:
@@ -224,27 +228,3 @@ class OpenAICompatibleBackend(LLMBackend):
         raise RuntimeError(
             f"OpenAI API 工具调用失败，已重试 {self.max_retries} 次: {last_error}"
         )
-
-    @staticmethod
-    def _parse_tool_calls(message) -> list[ToolCall]:
-        """解析响应 message.tool_calls（含 function.arguments JSON 容错）。"""
-        result: list[ToolCall] = []
-        raw_calls = getattr(message, "tool_calls", None) or []
-        for tc in raw_calls:
-            fn = getattr(tc, "function", None)
-            name = getattr(fn, "name", "") or ""
-            if not name:
-                # DeepSeek V4 parallel_tool_calls 恒启用，模型想直接回答时会返回
-                # 函数名为空的 tool_call 占位；空 name 是无效占位，跳过。
-                continue
-            args_raw = getattr(fn, "arguments", "") or ""
-            arguments, error = parse_tool_arguments(args_raw)
-            result.append(
-                ToolCall(
-                    id=getattr(tc, "id", "") or "",
-                    name=name,
-                    arguments=arguments,
-                    parse_error=error,
-                )
-            )
-        return result

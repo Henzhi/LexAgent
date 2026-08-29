@@ -14,11 +14,9 @@
 """
 from __future__ import annotations
 
-import inspect
 import logging
-import types
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Callable, Union, get_args, get_origin, get_type_hints
+from typing import Any, Callable
 
 from src.config import TOOL_RESULT_SUMMARY_MAX_CHARS
 
@@ -68,6 +66,8 @@ class ToolSpec:
     required: list[str] = field(default_factory=list)
     category: str = CATEGORY_KNOWLEDGE
     executor: Callable[..., "ToolResult"] | None = None
+    # D-M3-13：LangChain BaseTool（schema 由 LangChain 推导，供 bind_tools 直接传对象）
+    langchain_tool: Any | None = None
 
     def to_openai_format(self) -> dict:
         """输出 OpenAI 兼容的工具 schema（tools 参数直接使用）。"""
@@ -152,84 +152,6 @@ _PY_TO_JSON_TYPE: dict[Any, str] = {
     list: "array",
     dict: "object",
 }
-
-
-@dataclass(frozen=True)
-class Param:
-    """工具参数的额外描述（用于 `Annotated[T, Param(...)]`）。
-
-    简写：只给描述时可直接写字符串——`Annotated[str, "描述文本"]`。
-
-    Attributes:
-        description: 参数说明（进入 schema，供 LLM 理解参数含义）
-        enum: 可选值枚举（进入 schema 的 enum，约束 LLM 输出）
-    """
-
-    description: str = ""
-    enum: list[Any] | None = None
-
-
-def _json_type_of(annotation: Any) -> str:
-    """Python 类型注解 → JSON Schema type 字符串。
-
-    `Optional[X]` / `X | None` 取 X 的类型（可选性由 required 表达，不由 type 表达）；
-    无法识别的类型一律降级为 string（宁可宽松，也不让 schema 校验卡死 LLM）。
-    """
-    origin = get_origin(annotation)
-    if origin is Union or origin is types.UnionType:
-        non_none = [a for a in get_args(annotation) if a is not type(None)]
-        if len(non_none) == 1:
-            return _json_type_of(non_none[0])
-    return _PY_TO_JSON_TYPE.get(annotation, "string")
-
-
-def _build_parameters(fn: Callable) -> tuple[dict[str, dict], list[str]]:
-    """从函数签名推导 (parameters, required)。
-
-    处理 `from __future__ import annotations` 下的字符串注解：必须走
-    `get_type_hints(..., include_extras=True)` 才能拿到 Annotated 元数据。
-    """
-    try:
-        hints = get_type_hints(fn, include_extras=True)
-    except Exception:
-        # 解析失败（如闭包引用的局部类型）时退化为原始 __annotations__
-        hints = dict(getattr(fn, "__annotations__", {}) or {})
-
-    parameters: dict[str, dict] = {}
-    required: list[str] = []
-
-    for pname, p in inspect.signature(fn).parameters.items():
-        if pname in ("self", "cls"):
-            continue
-        if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
-            continue
-
-        hint = hints.get(pname, str)
-        description = ""
-        enum: list[Any] | None = None
-
-        if get_origin(hint) is Annotated:
-            meta_args = get_args(hint)
-            hint = meta_args[0]
-            for m in meta_args[1:]:
-                if isinstance(m, Param):
-                    description, enum = m.description, m.enum
-                elif isinstance(m, str):
-                    description = m  # 简写：直接给描述字符串
-
-        schema: dict[str, Any] = {"type": _json_type_of(hint)}
-        if enum:
-            schema["enum"] = list(enum)
-        if description:
-            schema["description"] = description
-        parameters[pname] = schema
-
-        if p.default is inspect.Parameter.empty:
-            required.append(pname)
-
-    return parameters, required
-
-
 def tool(
     *,
     name: str | None = None,
@@ -246,20 +168,34 @@ def tool(
     Returns:
         装饰器：接收工具函数，返回 ToolSpec（函数本身即 executor）。
 
-    Raises:
-        ValueError: 函数无任何参数且也未声明 name（防御性，实际不会触发）
+    D-M3-13：schema 推导交给 LangChain 的 `@tool`——经实测其行为与本项目
+    要求一致（docstring 作 description、`Annotated[X, "描述"]` 作参数描述、
+    无默认值即 required），随 LangChain 演进更新，无需自己维护一份。
+
+    ⚠️ 参数约束请用 **pydantic / LangChain 原生写法**表达，不要用本模块历史
+    上的 `Param` 类——LangChain 不认识它，会**静默丢弃**其中的 description
+    与 enum（实测确认），导致发给模型的 schema 缺少引导信息：
+
+        kind: Annotated[Literal["law", "case"], "文档类型"] = "law"
+        # 或带描述的枚举：
+        kind: Annotated[str, Field(description="文档类型", json_schema_extra={"enum": [...]})]
     """
+    from langchain_core.tools import tool as _lc_tool
+    from langchain_core.utils.function_calling import convert_to_openai_tool
 
     def decorator(fn: Callable[..., ToolResult]) -> ToolSpec:
-        tool_name = name or fn.__name__
-        parameters, required = _build_parameters(fn)
+        lc_tool = _lc_tool(name, description=description)(fn)
+        schema = convert_to_openai_tool(lc_tool)
+        function = schema.get("function", {})
+        parameters = function.get("parameters", {}) or {}
         return ToolSpec(
-            name=tool_name,
-            description=(description or inspect.getdoc(fn) or "").strip() or tool_name,
-            parameters=parameters,
-            required=required,
+            name=lc_tool.name,
+            description=function.get("description", "") or lc_tool.name,
+            parameters=parameters.get("properties", {}) or {},
+            required=list(parameters.get("required", []) or []),
             category=category,
             executor=fn,
+            langchain_tool=lc_tool,
         )
 
     return decorator

@@ -43,7 +43,7 @@ def cn_to_int(s: str) -> int:
         return 0
     if s.isdigit():
         return int(s)
-    total, section, num = 0, 0, 0
+    section, num = 0, 0
     for ch in s:
         if ch in CN_DIGITS:
             num = CN_DIGITS[ch]

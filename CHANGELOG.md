@@ -26,6 +26,10 @@
   - **重要实证（风险 R1）**：无 checkpointer 时 `interrupt()` **不报错**，图静默停住、答案为空，前端只收到挂起事件后永远等不到结果，后端日志无任何异常；`get_state` 才抛 `ValueError: No checkpointer set`、恢复时抛 `RuntimeError: Cannot use Command(resume=...) without checkpointer`。这个失效模式极隐蔽，若将来上逐步骤确认必须在图构建处加自检
   - 另：`ChatRequest.session_id` 已存在，可直接作为 `thread_id`（`f"{user_id}:{session_id}"`）；当前为单进程 uvicorn 部署，`MemorySaver` 可用但重启丢状态
 - **docs**：F13 结论为**仅文档收尾**（D-M3-11）——保留 `sub_agent` state 字段，不建规划节点扩展位。无具体多 Agent 需求时的预留大概率推翻，触发重新立项的条件已写入 `DECISIONS.md`
+- **docs**：SSE 断线重连继续生成方案定稿（D-M3-12，**代码待开发**）——**Redis 事件日志 + seq 游标重放**，不接 checkpointer：每个 SSE 事件带递增 seq 写入 Redis List（`stream:{request_id}:events`，TTL 10 分钟），重连时 `GET /api/chat/stream/resume?request_id=&after_seq=N` 先重放后订阅。
+  - **区分主动停止与被动断线**（关键设计）：用户点 `/chat/cancel` → 立即停（省 Token，现状不变）；网络断开（`http.disconnect`）→ 继续跑完并持续写 Redis（LLM 调用已发生、成本已沉没，跑完即可重连补发）。与现有 `/chat/cancel` 机制天然契合，改造集中在 watchdog
+  - **与 F12 人工确认正交，不要混为一谈**：一次确认是等人确认、发生在任何 LLM 调用之前；断线重连是网络断了接着看，属 SSE 层可靠性问题。checkpointer 保存的是**图状态**，解决不了「已流式输出的事件流怎么补给重连用户」——所以两个功能都不需要 checkpointer，PostgresSaver 不引入，零新增依赖
+  - 工作量估算：后端 ~100-120 行 + 前端 ~80-100 行，约 2-3 人日
 - **feat**：F14 预算熔断——新增 `src/observability/cost_budget.py`，监控外部付费 API 日用量并自动熔断。
   - 计数口径：LLM 按**逻辑调用次数**（埋点于 `LLMBackend` 公开入口，SDK 重试不重复计数）；Tavily 按次（按次计费，口径精确）。流式一次调用只计一次
   - 存储：Redis 原子 `INCR` + TTL 到次日零点自动失效；Redis 不可用时自动退化为进程内计数并告警，**不因监控组件故障拖垮主链路**

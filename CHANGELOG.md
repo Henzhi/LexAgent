@@ -4,6 +4,28 @@
 
 ## [Unreleased] — M3 分场景确认（进行中）
 
+- **refactor（重大）**：LLM 层与工具层迁移到 LangChain 标准生态（D-M3-13，推翻 D-M1-1「不用 bind_tools」）——目标为生态标准化、降低学习成本。
+  - **阶段① LLM 层**：`OpenAICompatibleBackend` / `OllamaBackend` 内部改用 `ChatOpenAI` / `ChatOllama`，经 `.chat_model` 暴露（`.model` 仍是模型名字符串，18 处调用点不动）；`agent_node` 改为标准写法 `chat_model.bind_tools(schemas).invoke(messages)`
+  - **阶段② 工具层**：`@tool` 装饰器底层改为委托 LangChain 的 `@tool`，**删除自研 schema 推导与 `Param` 类**（约 100 行）；`ToolSpec.langchain_tool` 持有 `BaseTool`，新增 `registry.langchain_tools()` 供 `bind_tools()` 直接消费
+  - **预算熔断埋点改 callback**：新增 `src/llm/budget_callback.py`，`LLMBudgetCallbackHandler` 在 LangChain 调用链路上 check + record——上层可绕过 `LLMBackend` 三个公开入口直接 `invoke()`，挂 callback 才不会漏计。原 `base.py` 的 `_budget_check` / `_budget_record` 已删除
+  - 重试策略**不变**：仍是自研 `is_retryable` + `wait_and_log`（D-M1-3），包在 LangChain 调用外层；`ChatOpenAI(max_retries=0)`
+  - 依赖：`langchain-core` 1.4.8→1.6.1、`ollama` SDK 0.4.9→0.6.2，新增 `langchain-openai` 1.6.0、`langchain-ollama` 1.1.0
+  - ⚠️ **迁移后确认的行为差异**（测试已同步）：① `str | None` → `anyOf [string, null]`（原扁平 string）② schema 带上 `default`（原不写，对 LLM 是有益引导）③ dataclass 类型展开为对象 schema（原降级 string）④ **枚举必须用 `Literal`**：历史上的 `Param` 类 LangChain 不认识，会**静默丢弃** description 与 enum（不报错，只是发给模型的 schema 少了引导信息，极难发现）
+  - 顺带清理：删除从未被生产代码使用的 `OllamaLangChainWrapper`（ChatOllama 直接替代）
+  - ⚠️ **遗留**：本机 Windows 安全策略拦截文件删除，`uv add` / `uv sync` / `uv lock` 在重建 jieba（只有 sdist、无 wheel）时静默失败，**`uv.lock` 尚未更新**（pyproject.toml 已正确声明）。需在能正常 lock 的环境补做
+
+- **feat**：F11 场景分类配置（D-M3-10）——新增 `src/rag/scenes.py`，将用户查询映射到 PRD §5.2 的 10 个业务场景并判定 A 类（全自动）/ B 类（需人工确认）。
+  - **场景清单是数据、分类逻辑是代码**：`SCENES` 元组即清单（id/名称/A\|B/关键词/工具），产品后续调整只改清单不动函数，「需产品定清单」因此不再阻塞开发
+  - 打分三级权重：正则 3.0 > 强特征词 2.0 > 普通关键词 1.0。三级是必需的——中文查询里「合同」这类通用词会同时命中起草/审查/检索多个场景，必须让「起草」「审查」等强特征词和「第X条」正则压过通用词
+  - 未命中任何场景时**保守回落**默认 A 类场景 `legal_qa`（`matched=False`），绝不因分类失败阻断回答（REQ-UW）
+  - `AgentState` 新增 `scene_id` / `scene_kind` / `scene_matched` 三个字段，`ask()` 与 `stream()` 两条路径在意图识别后、进入图之前完成分类（REQ-E1）；**不新增图节点，不改动图结构**
+  - 流式路径新增一条 `thinking` 事件展示场景识别结果（复用现有事件类型，前端无需改动）
+  - 新增 `tests/test_scene_classification.py`（55 项），含关键词冲突回归用例（查法条不能被误判为合同类 B 类场景）与 5 项 graph 集成测试（stream 产出场景事件 / ask 写入 state / 闲聊跳过分类）
+- **docs**：F12 人工确认节点技术底座 spike 结论——新增 `docs/M3-F12-人工确认技术方案.md` 与验证脚本 `scripts/f12_spike_demo.py`（5 项验证全过）。
+  - **核心结论：F12 v1 不需要 `interrupt()`、不需要 checkpointer、不改图结构**。确认点放在进入图之前时图还没开始执行，没有任何状态需要保存恢复，一个「已确认」标记就够了。F12 由此从「M3 唯一会动执行架构的改动」降级为「不碰图的小改动」，成本约为逐步骤方案的 1/4（~2 人日 vs ~6-7 人日）
+  - **重要实证（风险 R1）**：无 checkpointer 时 `interrupt()` **不报错**，图静默停住、答案为空，前端只收到挂起事件后永远等不到结果，后端日志无任何异常；`get_state` 才抛 `ValueError: No checkpointer set`、恢复时抛 `RuntimeError: Cannot use Command(resume=...) without checkpointer`。这个失效模式极隐蔽，若将来上逐步骤确认必须在图构建处加自检
+  - 另：`ChatRequest.session_id` 已存在，可直接作为 `thread_id`（`f"{user_id}:{session_id}"`）；当前为单进程 uvicorn 部署，`MemorySaver` 可用但重启丢状态
+- **docs**：F13 结论为**仅文档收尾**（D-M3-11）——保留 `sub_agent` state 字段，不建规划节点扩展位。无具体多 Agent 需求时的预留大概率推翻，触发重新立项的条件已写入 `DECISIONS.md`
 - **feat**：F14 预算熔断——新增 `src/observability/cost_budget.py`，监控外部付费 API 日用量并自动熔断。
   - 计数口径：LLM 按**逻辑调用次数**（埋点于 `LLMBackend` 公开入口，SDK 重试不重复计数）；Tavily 按次（按次计费，口径精确）。流式一次调用只计一次
   - 存储：Redis 原子 `INCR` + TTL 到次日零点自动失效；Redis 不可用时自动退化为进程内计数并告警，**不因监控组件故障拖垮主链路**

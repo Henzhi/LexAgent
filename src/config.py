@@ -149,7 +149,10 @@ ADJACENT_WINDOW = _safe_int("ADJACENT_WINDOW", 1)     # ±N 条
 # Hit@5 75.8%→86.1%、Hit@10 82.0%→91.7%（旧语义集 100 条上持平 69%）。
 HYBRID_ENABLED = os.getenv("HYBRID_ENABLED", "true").lower() == "true"
 HYBRID_RRF_K = _safe_int("HYBRID_RRF_K", 60)                  # RRF 常数
-HYBRID_BM25_WEIGHT = _safe_float("HYBRID_BM25_WEIGHT", 3.0)   # BM25 路权重（向量=1.0）
+# 0.5（2026-08-29 双集实测定值）：w=3.0 会让 BM25 词面排序在「法名+语义」
+# 查询上碾压向量排名（语义集净丢 6 条，见 docs/向量路质量排查-2026-08-29.md）；
+# w=0.5 时语义集 67% / 法条级 85.3%，两集最优平衡
+HYBRID_BM25_WEIGHT = _safe_float("HYBRID_BM25_WEIGHT", 0.5)   # BM25 路权重（向量=1.0）
 
 
 # ---------------------------------------------------------------------------

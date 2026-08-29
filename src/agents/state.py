@@ -22,6 +22,8 @@ class AgentState(TypedDict):
     M2 新增（F6-F8）：
       web_results / legal_results（双路证据累计，tools_node 写入）；
       fused_sources（融合后的统一来源列表，含 verification 验证状态）。
+    M3 新增（F11）：
+      scene_id / scene_kind / scene_matched（场景分类结果，F12 人工确认的判据）。
     """
     query: str                      # 原始用户查询
     messages: Annotated[list, add_messages]  # 当前会话对话历史（含工具回灌消息）
@@ -40,7 +42,13 @@ class AgentState(TypedDict):
     agent_turns: int                # ReAct 已执行轮数（agent 节点 +1，路由据此判断上限）
     tool_log: list                  # 全量工具调用轨迹（跨轮累积，供 SSE + M3 审计）
     sub_agent: dict | None          # M3 多 Agent 预留，本期恒为 None
+                                    # 不做规划节点扩展位（D-M3-11）：无具体需求时的预留易推翻，
+                                    # 重新立项条件见 DECISIONS.md D-M3-11
     # ---- M2 双路融合（F6-F8）----
     web_results: list               # 网络搜索证据累计（web_search 工具 results，仅作线索）
     legal_results: list             # 官方源证据累计（legal_source_search 工具 results）
     fused_sources: list             # 融合后统一来源（fusion.fuse_evidence 输出，F10 引用溯源）
+    # ---- M3 场景分类（F11）----
+    scene_id: str                   # 场景 id（src/rag/scenes.py 的 SCENES，未命中为 legal_qa）
+    scene_kind: str                 # 场景类型：A（全自动）/ B（需人工确认，F12 依据）
+    scene_matched: bool             # 是否命中场景清单（False 表示是保守回落的结果）

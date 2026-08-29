@@ -29,6 +29,7 @@ from src.agents.tools import ToolRegistry, build_default_tools
 from src.rag.retriever import BaseRetriever
 from src.rag.engine import RAG_PROMPT_TEMPLATE
 from src.rag.intent import classify_query_type, is_capability_query, get_capability_reply
+from src.rag.scenes import KIND_B, classify_scene
 from src.memory.hallucination_guard import HallucinationGuard
 from src.search.fusion import fuse_evidence
 
@@ -238,6 +239,10 @@ class LawAgentGraph:
                 trace.set_intent(query_type)
                 trace.stage("intent", int((time.time() - t0) * 1000))
 
+            # 场景分类（M3 / F11，REQ-E1）：A 类全自动 / B 类需人工确认（F12 判据）
+            # 纯字符串匹配，无外部依赖；未命中保守回落 A 类，不阻断回答（REQ-UW）
+            scene = classify_scene(query)
+
             # FAQ 缓存检查
             if self._faq_cache:
                 t1 = time.time()
@@ -277,6 +282,9 @@ class LawAgentGraph:
                 "web_results": [],
                 "legal_results": [],
                 "fused_sources": [],
+                "scene_id": scene.scene_id,
+                "scene_kind": scene.kind,
+                "scene_matched": scene.matched,
             }
             t2 = time.time()
             result = self._graph.invoke(initial)
@@ -357,6 +365,12 @@ class LawAgentGraph:
                     trace.finalize(faq_cache_hit=False, retrieved_count=0)
                 return
 
+            # 1.5 场景分类（M3 / F11，REQ-E1）：A 类全自动 / B 类需人工确认（F12 判据）
+            # 闲聊已在上一步 return，此处只需处理法律类查询
+            scene = classify_scene(query)
+            scene_label = "需确认" if scene.kind == KIND_B else "全自动"
+            yield {"type": "thinking", "content": f"📋 场景识别: {scene.name}（{scene.kind} 类 · {scene_label}）"}
+
             # 2. FAQ 缓存检查（命中则直接返回，未命中继续 RAG 流程）
             if self._faq_cache:
                 t1 = time.time()
@@ -384,6 +398,8 @@ class LawAgentGraph:
                 "tool_calls": [], "tool_results": [], "agent_turns": 0,
                 "tool_log": [], "sub_agent": None,
                 "web_results": [], "legal_results": [], "fused_sources": [],
+                "scene_id": scene.scene_id, "scene_kind": scene.kind,
+                "scene_matched": scene.matched,
             }
 
             # 3. 记忆检索

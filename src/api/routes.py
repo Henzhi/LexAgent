@@ -38,6 +38,7 @@ from .auth import get_current_user, require_registered_user, register_user, logi
 from src.config import AGENT_ENABLED, LLM_MAX_CONCURRENCY
 from src.memory.confirmation_store import get_confirmation_store
 from src.observability.cost_budget import get_budget
+from src.observability.stream_log import get_stream_log
 from src.rag.engine import needs_retrieval
 from src.rag.intent import sanitize_input, is_capability_query, get_capability_reply
 from src.rag.scenes import KIND_B, get_scene
@@ -307,6 +308,12 @@ _SENTINEL_END = ("__stream_end__", None)
 _CANCEL_FLAGS: dict[str, threading.Event] = {}
 _CANCEL_LOCK = threading.Lock()
 
+# D-M3-12：仍在生成中的流式请求（request_id → 开始时刻）。
+# worker 结束时自除；resume 接口据此判断「重放后是否需要跟进新事件」。
+# 单进程部署（Dockerfile 现状）下进程内注册表即可；重启后日志仍在 Redis，
+# 重连重放完即止（生成已不在进行）。
+_ACTIVE_STREAMS: dict[str, float] = {}
+
 
 @router.post("/chat/cancel")
 def cancel_chat(req: CancelRequest):
@@ -342,16 +349,71 @@ def confirm_chat(req: ConfirmRequest):
     return {"ok": True}
 
 
+@router.get("/chat/stream/resume")
+async def resume_stream(request: Request, request_id: str = "", after_seq: int = 0):
+    """D-M3-12 断线重连：重放 after_seq 之后的事件，再跟进新事件直到终局。
+
+    事件来自 Redis/内存日志（`lexagent:stream:{request_id}:events`，TTL 默认
+    10 分钟）。生成仍在进行（_ACTIVE_STREAMS 有登记）时轮询日志跟进新事件；
+    读到 `__stream_end__` 终局标记、生成已不在进行、连接再次断开或超过兜底
+    时限即结束。前端收到的事件与首次流完全一致（含 seq 游标）。
+    """
+    if not request_id:
+        raise HTTPException(400, "request_id 必填")
+    log = get_stream_log()
+    if not log.exists(request_id):
+        raise HTTPException(404, "无此流的事件日志（已过期或该请求未启用重连）")
+
+    async def _gen():
+        last = max(0, int(after_seq))
+        # 兜底时限与日志 TTL 同量级：防止对端半开连接把协程挂死
+        deadline = time.monotonic() + 600
+        while True:
+            ended = False
+            for ev in log.read_after(request_id, last):
+                last = int(ev.get("seq", last))
+                if ev.get("type") == "__stream_end__":
+                    ended = True
+                    break
+                yield _sse(ev)
+            if ended or request_id not in _ACTIVE_STREAMS:
+                break  # 终局；或生成已不在进行（取消/重启）——重放完即止
+            if time.monotonic() > deadline:
+                yield _sse({"type": "error", "content": "重连等待超时，请重新发起提问"})
+                break
+            if await _is_disconnected(request):
+                break
+            await asyncio.sleep(0.5)
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 async def _bridge_sync_stream(
     gen_factory: Callable[[], Iterator[dict]],
     request: Request,
     disconnect_event: asyncio.Event | None = None,
     cancel_event: threading.Event | None = None,
+    stream_id: str = "",
 ):
     """在后台线程迭代同步生成器，主协程逐步产出事件。
 
     - 不阻塞事件循环
-    - 客户端断开 / 主动取消 → 关闭底层生成器，立即停止 LLM 消耗
+
+    事件日志（D-M3-12 断线重连）：stream_id 非空时，每个事件先写入
+    StreamEventLog（带递增 seq）再投递在线队列——日志是重连补发的唯一真相源，
+    在线消费者丢弃事件无妨。
+
+    退出语义（D-M3-12 的关键设计）：
+    - **主动取消**（cancel_event，/chat/cancel）：立即关闭底层生成器，停止
+      LLM 消耗（现状不变）；
+    - **被动断线**（disconnect_event / 连接关闭）：worker 与生成器**继续跑完**
+      并持续写事件日志——LLM 成本已沉没，跑完重连用户才能补发完整事件流；
+      在线协程立即停止产出，不再等待 worker。
 
     disconnect_event: 由调用方监听 ASGI http.disconnect 设置的事件。
       request.is_disconnected() 实现依赖 CancelScope 立即取消，在连接
@@ -361,6 +423,7 @@ async def _bridge_sync_stream(
     cancel_event: 前端点击停止后通过 /chat/cancel 设置的取消标记，
       用于覆盖经反向代理时断开信号传不到后端的场景。
     """
+    event_log = get_stream_log() if stream_id else None
 
     async def _client_gone() -> bool:
         if disconnect_event is not None and disconnect_event.is_set():
@@ -376,31 +439,49 @@ async def _bridge_sync_stream(
     finished_normally = False
 
     def _run() -> None:
+        if stream_id:
+            _ACTIVE_STREAMS[stream_id] = time.monotonic()
         gen = None
         try:
             gen = gen_factory()
             gen_ref["gen"] = gen
             for item in gen:
                 if stop.is_set():
-                    # 断开：在当前（生成器执行）线程 close，GeneratorExit
+                    # 主动取消：在当前（生成器执行）线程 close，GeneratorExit
                     # 立即在挂起的 yield 点投递，底层 LLM 流的 finally
                     # 立即关闭连接，停止 Token 消耗。
                     gen.close()
                     break
+                # 先落日志再投递（D-M3-12）：写失败只告警，事件照常在线投递
+                if event_log is not None:
+                    try:
+                        item = {**item, "seq": event_log.append(stream_id, item)}
+                    except Exception as e:
+                        logger.warning(f"事件日志写入失败（不影响在线流）: {e}")
                 try:
                     q.put(item, timeout=1.0)
                 except _queue.Full:
-                    # 消费者已停止（断开场景）：同样 close 生成器
-                    gen.close()
-                    break
+                    # 消费者不再取事件：被动断线下丢弃在线投递、继续跑完写日志；
+                    # 主动取消则退出。
+                    if stop.is_set():
+                        gen.close()
+                        break
+                    continue
         except GeneratorExit:
             pass
         except Exception as e:
+            if event_log is not None:
+                event_log.append(stream_id, {"type": "error", "content": "处理失败，请稍后重试"})
             try:
                 q.put(("__stream_error__", e), timeout=1.0)
             except _queue.Full:
                 pass
         finally:
+            if event_log is not None:
+                # 终局标记：重连方读到即知流已结束（含取消场景），不会无限等待
+                event_log.append_end(stream_id)
+            if stream_id:
+                _ACTIVE_STREAMS.pop(stream_id, None)
             if gen is not None:
                 try:
                     gen.close()
@@ -420,7 +501,7 @@ async def _bridge_sync_stream(
                 item = await asyncio.to_thread(q.get, True, 1.0)
             except _queue.Empty:
                 if await _client_gone():
-                    stop.set()
+                    _on_exit_gone(stop, cancel_event, stream_id)
                     break
                 continue
 
@@ -433,14 +514,14 @@ async def _bridge_sync_stream(
 
             # 产出前检查断开
             if await _client_gone():
-                stop.set()
-                break
+                _on_exit_gone(stop, cancel_event, stream_id)
+                break  # 被动断线（有日志）：worker 继续跑完写日志（见 finally）
             yield item
     finally:
-        # 无论何种退出原因（客户端断开 / 上层 GeneratorExit / 异常），
-        # 只要后台生成器未自然结束，就强制关闭它，立即中断 LLM 调用、
-        # 停止 Token 消耗。
-        if not finished_normally:
+        # 终局语义（D-M3-12）：只有「带日志的被动断线」才让 worker 跑完补发；
+        # 主动取消、无日志（未带 request_id）一律立即停，省 Token。
+        persist = bool(stream_id) and not finished_normally and not stop.is_set()
+        if not persist:
             stop.set()
             gen = gen_ref.get("gen")
             if gen is not None:
@@ -450,10 +531,25 @@ async def _bridge_sync_stream(
                     await asyncio.to_thread(gen.close)
                 except Exception:
                     pass
-        try:
-            await asyncio.wait_for(worker, timeout=5.0)
-        except Exception:
-            pass  # 线程仍在清理时忽略，worker 最终会被线程池回收
+            try:
+                await asyncio.wait_for(worker, timeout=5.0)
+            except Exception:
+                pass  # 线程仍在清理时忽略，worker 最终会被线程池回收
+        # persist：不杀 worker、不等待——它后台跑完持续写日志，供重连补发
+
+
+def _on_exit_gone(stop: threading.Event, cancel_event: threading.Event | None, stream_id: str) -> None:
+    """在线协程检测到客户端离开时的处置（D-M3-12）。
+
+    - 主动取消（/chat/cancel）→ 置 stop：worker 立即停，省 Token（现状不变）；
+    - 被动断线但**无日志**（前端未带 request_id）→ 置 stop：无人能重连补发，
+      保持旧行为立即停；
+    - 被动断线且有日志 → 什么都不做：worker 继续跑完写日志，重连可补发。
+    """
+    if cancel_event is not None and cancel_event.is_set():
+        stop.set()
+    elif not stream_id:
+        stop.set()
 
 
 def _iter_engine_stream(engine, query: str, history: list) -> Iterator[dict]:
@@ -595,7 +691,9 @@ async def chat_stream(req: ChatRequest, request: Request):
         try:
             # 并发上限：排队等待，避免打爆供应商 / 显存
             async with _STREAM_SEMAPHORE:
-                async for event in _bridge_sync_stream(gen_factory, request, disconnect_event, cancel_event):
+                async for event in _bridge_sync_stream(
+                    gen_factory, request, disconnect_event, cancel_event, stream_id=req.request_id
+                ):
                     yield _sse(event)
         except Exception as e:
             elapsed = (time.perf_counter() - t_start) * 1000

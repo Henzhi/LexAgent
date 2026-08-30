@@ -4,6 +4,13 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **feat（A3 / D-M3-12 实现）**：SSE 断线重连继续生成——**事件日志 + seq 游标重放**，零新增依赖（不接 checkpointer）。
+  - 新增 `src/observability/stream_log.py::StreamEventLog`：每事件带递增 seq 写 Redis List（`lexagent:stream:{request_id}:events`，RPUSH+EXPIRE，TTL `STREAM_LOG_TTL_SECONDS` 默认 600s）；终局标记 `__stream_end__` 让重连方知悉流已结束（含取消场景）；Redis 不可用退化进程内、写失败告警后照常投递在线流（日志故障不阻断主链路）。
+  - **桥接退出语义重构**（`_bridge_sync_stream`）：事件**先写日志再投递在线队列**（日志=重连补发的唯一真相源）；**只有主动取消杀 worker**——被动断线（有日志）worker 继续跑完持续写日志，在线协程立即返回不等待；无 request_id（无人能重连）保持旧行为立即停。判定收敛在 `_on_exit_gone`。
+  - 新接口 `GET /api/chat/stream/resume?request_id=&after_seq=`：重放游标之后的事件 → 生成仍在进行则 0.5s 轮询跟进 → 终局标记/不活跃/再断开/兜底时限即止。**SSE 事件新增 `seq` 字段**（前端游标，向后兼容）。
+  - 前端：SSE 解析重构为共用 `consumeSSE`；`runStream` 对**非用户主动取消**的网络中断自动 resume 续流（最多 2 次，thinking 提示"连接中断，正在重连续流…"）；用户点停止不重连。
+  - 新增 `tests/test_stream_resume.py`（12 项：日志单元/被动断线跑完写全日志/取消立即停/无日志立即停/worker 注册注销/resume 400/404/重放+[DONE]）。全量 730 passed。
+
 - **fix（CI，Python 3.12/3.13 行为分叉）**：工具 description 在 Python 3.12 下带源码缩进发给 LLM——LangChain `StructuredTool.from_function` 在 `parse_docstring=False` 时直接取裸 `source_function.__doc__`，而 **3.13 起编译器自动去 docstring 缩进、3.12 保留**；本地 venv 是 3.13.5 所以测试全绿，CI 的 3.12 才暴露（`test_docstring_becomes_description` 失败）。修复：`@tool` 装饰器派生 description 时显式 `inspect.getdoc`（=cleandoc，全版本确定）再传给 LangChain，显式 `description=` 参数优先级不变。**影响面**：3.12 部署环境所有多行工具描述此前一直带缩进（LLM 路由引导信息受损，非崩溃）。Docker `python:3.12` 实测 18 项全过。教训入库 E-13。
 
 - **feat（F12 v1 完成 / D-M3-9a，M3 收官）**：B 类场景**进入图之前的一次人工确认**，路径 A 落地——确认发生在任何 LLM 调用之前（重跑零浪费），**零图改动、零新增依赖**（不接 `interrupt()`、不加 checkpointer，spike 结论兑现）。

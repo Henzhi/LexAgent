@@ -80,15 +80,9 @@ export const getDocumentChunks = (docId, limit = 50, offset = 0) =>
   fetch(`${BASE}/knowledge/documents/${docId}/chunks?limit=${limit}&offset=${offset}`, { headers: authHeaders() }).then(handleError)
 
 // Chat Stream
-export async function* streamChat(query, history, sessionId, { signal, requestId } = {}) {
-  const resp = await fetch(`${BASE}/chat/stream`, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ query, history, session_id: sessionId, request_id: requestId || '' }),
-    signal,
-  })
-  if (!resp.ok) throw new Error(`请求失败: ${resp.status}`)
-
+// SSE 解析：按事件边界（\n\n）切分，半条事件留 buffer 与下一数据包拼接，
+// 避免 TCP 分包把一条 data: 事件截断导致 JSON.parse 失败。
+async function* consumeSSE(resp) {
   const reader = resp.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
@@ -98,8 +92,6 @@ export async function* streamChat(query, history, sessionId, { signal, requestId
     if (done) break
     buffer += decoder.decode(value, { stream: true })
 
-    // 按 SSE 事件边界（\n\n）切分：半条事件留在 buffer 中与下一数据包拼接，
-    // 避免 TCP 分包把一条 data: 事件截断导致 JSON.parse 失败。
     let sep
     while ((sep = buffer.indexOf('\n\n')) !== -1) {
       const raw = buffer.slice(0, sep)
@@ -120,6 +112,29 @@ export async function* streamChat(query, history, sessionId, { signal, requestId
       }
     }
   }
+}
+
+export async function* streamChat(query, history, sessionId, { signal, requestId } = {}) {
+  const resp = await fetch(`${BASE}/chat/stream`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ query, history, session_id: sessionId, request_id: requestId || '' }),
+    signal,
+  })
+  if (!resp.ok) throw new Error(`请求失败: ${resp.status}`)
+  yield* consumeSSE(resp)
+}
+
+// D-M3-12 断线重连：按 seq 游标补发错过的的事件，再跟进新事件直到 [DONE]。
+// 仅用于"非用户主动取消的网络中断"——用户点停止不发此请求。
+export async function* resumeChat(requestId, afterSeq, { signal } = {}) {
+  if (!requestId) throw new Error('缺少 request_id，无法重连')
+  const resp = await fetch(
+    `${BASE}/chat/stream/resume?request_id=${encodeURIComponent(requestId)}&after_seq=${afterSeq}`,
+    { signal },
+  )
+  if (!resp.ok) throw new Error(resp.status === 404 ? '重连失败：事件日志已过期' : `重连失败: ${resp.status}`)
+  yield* consumeSSE(resp)
 }
 
 // Query rewrite（智能改写 / 案情分析模式）

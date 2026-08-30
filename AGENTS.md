@@ -93,6 +93,8 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - **预算熔断**：北大法宝按积分计费，新增 `KIND_PKULAW`（kind=`pkulaw`，`BUDGET_MAX_PKULAW_CALLS_PER_DAY` 默认 200），每次成功调用 `cost_budget` 先 check 后 record；超限工具层返回「法宝额度已用尽」、不阻断主链路（与 Tavily 同级降级语义）。
    - **配置只在 `.env`**：`PKULAW_MCP_URL` / `PKULAW_MCP_TOKEN`（聚合端点 Bearer），**严禁入库**（`.env` 已 gitignore）。
 
+12. **SSE 断线重连（D-M3-12，已实现）**：事件日志是重连补发的唯一真相源——`_bridge_sync_stream` 的 worker **先把事件写入 `StreamEventLog`（带 seq）再投递在线队列**，在线丢弃无妨。**只有主动取消（/chat/cancel）杀 worker**；被动断线（有日志）worker 继续跑完持续写日志，无 `request_id` 立即停。判定收敛在 `_on_exit_gone`，重放/跟进语义在 `resume_stream`。改桥接前必读：在线协程退出与 worker 生命周期是两条独立线，别把「杀 worker」挂在断开信号上（那正是本设计废除的旧行为）。
+
 ## 代码规范
 
 - Python：类型注解（`from __future__ import annotations`）、模块级 docstring 说明"哪个需求/决策"、中文注释

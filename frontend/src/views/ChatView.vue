@@ -142,7 +142,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
-import { loadHistory, listConversations, saveSession, streamChat, rewriteQuery, deleteConversation, cancelChat, confirmScene } from '../api'
+import { loadHistory, listConversations, saveSession, streamChat, resumeChat, rewriteQuery, deleteConversation, cancelChat, confirmScene } from '../api'
 import Sidebar from '../components/Sidebar.vue'
 import ChatMessage from '../components/ChatMessage.vue'
 import ChatInput from '../components/ChatInput.vue'
@@ -318,50 +318,71 @@ async function runStream(query, recent) {
   try {
     let answer = ''
     let sources = []
-    for await (const msg of streamChat(query, recent, chat.sessionId, { signal: ctrl?.signal, requestId: currentRequestId.value })) {
-      if (msg.type === 'thinking') {
-        thinkingTraces.value.push({ text: msg.content, kind: 'thinking' })
-      } else if (msg.type === 'tool_call') {
-        // F4 过程透明化：记录工具调用
-        thinkingTraces.value.push({ text: `正在调用 ${msg.tool}`, kind: 'tool_call' })
-      } else if (msg.type === 'tool_result') {
-        // F4 过程透明化：记录工具结果摘要；ok=false 用告警样式区分
-        thinkingTraces.value.push({
-          text: msg.summary || '',
-          kind: msg.ok === false ? 'tool_result_error' : 'tool_result',
-        })
-      } else if (msg.type === 'clear') {
-        // 校验未通过，清掉最后一条 assistant 消息重新生成
-        while (chat.messages.length > 0 && chat.messages[chat.messages.length - 1].role === 'assistant') {
-          chat.messages.pop()
+    let lastSeq = 0   // D-M3-12：已收到的最大 seq，重连时作为续流游标
+    let attempt = 0
+    while (true) {
+      try {
+        const iter = attempt === 0
+          ? streamChat(query, recent, chat.sessionId, { signal: ctrl?.signal, requestId: currentRequestId.value })
+          : resumeChat(currentRequestId.value, lastSeq, { signal: ctrl?.signal })
+        if (attempt > 0) {
+          // D-M3-12 断线重连：后端在断线后继续跑完写事件日志，这里按游标补发续流
+          thinkingTraces.value.push({ text: `连接中断，正在重连续流…（第 ${attempt} 次）`, kind: 'thinking' })
         }
-        answer = ''
-      } else if (msg.type === 'meta') {
-        if (msg.sources?.length) sources = msg.sources
-      } else if (msg.type === 'confirmation_required') {
-        // F12：B 类场景需人工确认，本次流到此结束，等待用户决策后重新发起
-        confirmState.value = {
-          open: true,
-          scene: msg.scene || '',
-          sceneName: msg.scene_name || '',
-          prompt: msg.prompt || '该流程需要您确认后继续。',
-          confirmId: msg.confirm_id || '',
-          query,
+        for await (const msg of iter) {
+          if (typeof msg.seq === 'number') lastSeq = msg.seq
+          if (msg.type === 'thinking') {
+            thinkingTraces.value.push({ text: msg.content, kind: 'thinking' })
+          } else if (msg.type === 'tool_call') {
+            // F4 过程透明化：记录工具调用
+            thinkingTraces.value.push({ text: `正在调用 ${msg.tool}`, kind: 'tool_call' })
+          } else if (msg.type === 'tool_result') {
+            // F4 过程透明化：记录工具结果摘要；ok=false 用告警样式区分
+            thinkingTraces.value.push({
+              text: msg.summary || '',
+              kind: msg.ok === false ? 'tool_result_error' : 'tool_result',
+            })
+          } else if (msg.type === 'clear') {
+            // 校验未通过，清掉最后一条 assistant 消息重新生成
+            while (chat.messages.length > 0 && chat.messages[chat.messages.length - 1].role === 'assistant') {
+              chat.messages.pop()
+            }
+            answer = ''
+          } else if (msg.type === 'meta') {
+            if (msg.sources?.length) sources = msg.sources
+          } else if (msg.type === 'confirmation_required') {
+            // F12：B 类场景需人工确认，本次流到此结束，等待用户决策后重新发起
+            confirmState.value = {
+              open: true,
+              scene: msg.scene || '',
+              sceneName: msg.scene_name || '',
+              prompt: msg.prompt || '该流程需要您确认后继续。',
+              confirmId: msg.confirm_id || '',
+              query,
+            }
+          } else if (msg.type === 'token') {
+            if (!answered.value) {
+              answered.value = true
+              thinkingOpen.value = false  // 思考结束，折叠
+            }
+            answer += msg.content
+            const last = chat.messages[chat.messages.length - 1]
+            if (last?.role === 'assistant') {
+              last.content = answer
+            } else {
+              chat.messages.push({ role: 'assistant', content: answer })
+            }
+            await nextTick()
+            scrollBottom()
+          }
         }
-      } else if (msg.type === 'token') {
-        if (!answered.value) {
-          answered.value = true
-          thinkingOpen.value = false  // 思考结束，折叠
-        }
-        answer += msg.content
-        const last = chat.messages[chat.messages.length - 1]
-        if (last?.role === 'assistant') {
-          last.content = answer
-        } else {
-          chat.messages.push({ role: 'assistant', content: answer })
-        }
-        await nextTick()
-        scrollBottom()
+        break
+      } catch (e) {
+        // D-M3-12：仅"非用户主动取消的网络中断"自动重连续流（最多 2 次）；
+        // 用户点停止（AbortError）、无游标可续、无 request_id → 交外层处理
+        const cancelled = e?.name === 'AbortError' || ctrl?.signal?.aborted
+        if (cancelled || !currentRequestId.value || lastSeq === 0 || attempt >= 2) throw e
+        attempt += 1
       }
     }
     if (confirmState.value.open) {

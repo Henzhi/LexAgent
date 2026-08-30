@@ -197,6 +197,10 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 # 超时行为 = 取消（不自动按默认参数继续执行，B 类多为文书/合同，擅自代答有法律风险）
 CONFIRMATION_TTL_SECONDS = _safe_int("CONFIRMATION_TTL_SECONDS", 600)
 
+# D-M3-12 断线重连：SSE 事件日志保留时长（秒）。被动断线后生成继续跑完并写入，
+# 重连在此时限内可补发；过期后重连接口返回 404
+STREAM_LOG_TTL_SECONDS = _safe_int("STREAM_LOG_TTL_SECONDS", 600)
+
 # ---------------------------------------------------------------------------
 # 网络搜索（F3 / Tavily）
 # ---------------------------------------------------------------------------

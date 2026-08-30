@@ -17,7 +17,7 @@ pkulaw_search / pkulaw_verify 内置工具（M3+ / F9 扩展，决策 D-PKULAW�
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from src.agents.tools.base import (
     CATEGORY_LEGAL,

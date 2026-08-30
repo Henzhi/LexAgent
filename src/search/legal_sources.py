@@ -27,6 +27,7 @@ from src.config import (
     XBG_API_KEY,
     XBG_API_URL,
 )
+from src.observability.cost_budget import BudgetExceededError
 from src.search.pkulaw_mcp import PkulawMCPClient
 
 logger = logging.getLogger(__name__)
@@ -252,6 +253,10 @@ class PkulawLegalClient:
             raise RuntimeError("北大法宝 MCP 未配置（URL/Token 缺失或 SDK 未安装）")
         try:
             items = self._client.search_article(keyword, lib="中央", max_results=max_results)
+        except BudgetExceededError:
+            # 额度用尽原样上抛（门面按「法宝额度已用尽」语义归入 errors），
+            # 不与普通故障混同包装成 RuntimeError（丢失熔断语义）
+            raise
         except Exception as e:
             raise RuntimeError(f"北大法宝法条检索失败: {e}") from e
         return [
@@ -272,6 +277,8 @@ class PkulawLegalClient:
             raise RuntimeError("北大法宝 MCP 未配置（URL/Token 缺失或 SDK 未安装）")
         try:
             items = self._client.search_case(keyword, max_results=max_results)
+        except BudgetExceededError:
+            raise
         except Exception as e:
             raise RuntimeError(f"北大法宝类案检索失败: {e}") from e
         return [

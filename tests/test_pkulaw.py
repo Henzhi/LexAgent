@@ -14,7 +14,6 @@ import pytest
 from src.agents.tools import build_default_tools
 from src.agents.tools.base import SOURCE_LEGAL
 from src.agents.tools.pkulaw_search import build_pkulaw_search_spec, build_pkulaw_verify_spec
-from src.observability.cost_budget import BudgetExceededError
 from src.search.fusion import VERIFIED_OFFICIAL, fuse_evidence
 from src.search.legal_sources import (
     SOURCE_PKULAW,
@@ -195,6 +194,26 @@ class TestPkulawLegalClient:
         assert client.is_available() is False
         with pytest.raises(RuntimeError):
             client.search_law("测试")
+
+    @pytest.mark.parametrize("method", ["search_law", "search_case"])
+    def test_budget_exceeded_not_wrapped(self, method):
+        """额度用尽必须原样上抛 BudgetExceededError，不得包装成 RuntimeError。
+
+        包装会让门面把它当普通子源故障归入 errors，丢失「法宝额度已用尽」
+        熔断语义（AGENTS.md 规则 8：与 Tavily 同级降级语义）。
+        """
+        from src.observability.cost_budget import BudgetExceededError
+
+        class _BudgetExhaustedClient(FakePkulawClient):
+            def search_article(self, query, lib="中央", max_results=5):
+                raise BudgetExceededError("pkulaw", 200, 200)
+
+            def search_case(self, query, max_results=5):
+                raise BudgetExceededError("pkulaw", 200, 200)
+
+        client = PkulawLegalClient(_BudgetExhaustedClient())
+        with pytest.raises(BudgetExceededError):
+            getattr(client, method)("测试")
 
 
 # ---------------------------------------------------------------------------

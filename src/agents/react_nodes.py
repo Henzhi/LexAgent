@@ -13,6 +13,7 @@ ReAct 循环节点（M1 / F2，架构师 D1：手动 StateGraph + 自研 chat_wi
 工具回灌消息格式（共享约定 §8.4）：
   {"role":"assistant","tool_calls":[...]} + {"role":"tool","tool_call_id":"...","content":"..."}
 """
+
 from __future__ import annotations
 
 import json
@@ -32,9 +33,7 @@ logger = logging.getLogger(__name__)
 
 # DeepSeek 在无 tools 参数时仍可能以纯文本输出 DSML 工具调用语法
 # （达到轮数上限被强制作答时），兜底清除保证最终答案是自然语言。
-_DSML_TOOL_CALLS_RE = re.compile(
-    r"<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>", re.DOTALL
-)
+_DSML_TOOL_CALLS_RE = re.compile(r"<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>", re.DOTALL)
 
 
 def _strip_dsml_tool_calls(text: str) -> str:
@@ -48,34 +47,42 @@ def _strip_dsml_tool_calls(text: str) -> str:
 # 消息转换工具
 # ---------------------------------------------------------------------------
 
-def _tool_calls_to_openai(tool_calls: list[Any]) -> list[dict]:
-    """LangChain / ToolCall 对象 → OpenAI 格式 tool_calls（供 assistant 消息回灌）。"""
+
+def _tool_calls_to_openai(tool_calls: list[ToolCall | dict]) -> list[dict]:
+    """tool_call → OpenAI 格式（assistant 消息回灌，共享约定 §8.4）。
+
+    两种**活**形态（删改前先追数据流，勿凭调用点推断）：
+    ① ToolCall dataclass —— agent_node 处理本轮 LLM 决策结果；
+    ② LangChain dict {"name","args","id","type"} —— state.messages 经
+       add_messages reducer 转成 AIMessage 后，_messages_to_dicts 重建
+       历史消息时读出的 tool_calls 即此形态。
+    （OpenAI 原始 {"function": ...} dict 形态无生产路径：dict 消息在
+    _messages_to_dicts 里原样透传，不会进本函数。）
+    """
     result: list[dict] = []
     for tc in tool_calls or []:
         if isinstance(tc, dict):
-            if "function" in tc:
-                # 已是 OpenAI 原始格式
-                result.append(tc)
-            else:
-                # LangChain dict 格式 {"name","args","id","type"}
-                result.append({
+            result.append(
+                {
                     "id": tc.get("id", ""),
                     "type": "function",
                     "function": {
                         "name": tc.get("name", ""),
-                        "arguments": json.dumps(tc.get("args", {}), ensure_ascii=False),
+                        "arguments": json.dumps(tc.get("args", tc.get("arguments", {})), ensure_ascii=False),
                     },
-                })
+                }
+            )
         else:
-            # ToolCall dataclass / langchain ToolCall 对象
-            result.append({
-                "id": getattr(tc, "id", ""),
-                "type": "function",
-                "function": {
-                    "name": getattr(tc, "name", ""),
-                    "arguments": json.dumps(getattr(tc, "arguments", getattr(tc, "args", {})), ensure_ascii=False),
-                },
-            })
+            result.append(
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                    },
+                }
+            )
     return result
 
 
@@ -118,10 +125,7 @@ def _build_react_messages(state: AgentState, system_prompt: str) -> list[dict]:
 
 def _merge_docs(existing: list[dict], new_docs: list[dict]) -> list[dict]:
     """合并检索文档并去重（按 法名+条号+内容前缀）。"""
-    seen = {
-        (d.get("law_name", ""), d.get("article_range", ""), (d.get("content") or "")[:60])
-        for d in existing
-    }
+    seen = {(d.get("law_name", ""), d.get("article_range", ""), (d.get("content") or "")[:60]) for d in existing}
     result = list(existing)
     for d in new_docs:
         key = (d.get("law_name", ""), d.get("article_range", ""), (d.get("content") or "")[:60])
@@ -137,7 +141,7 @@ def _merge_by_url(existing: list[dict], new_items: list[dict]) -> list[dict]:
     seen = {(r.get("url") or r.get("title") or "") for r in existing}
     result = list(existing)
     for r in new_items:
-        key = (r.get("url") or r.get("title") or "")
+        key = r.get("url") or r.get("title") or ""
         if not key or key in seen:
             continue
         seen.add(key)
@@ -148,6 +152,7 @@ def _merge_by_url(existing: list[dict], new_items: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # ReAct 节点工厂
 # ---------------------------------------------------------------------------
+
 
 def make_react_nodes(
     llm,
@@ -179,13 +184,15 @@ def make_react_nodes(
         if not schemas:
             # 明确告知模型不能再调工具，否则 DeepSeek 会在纯文本里
             # 输出 DSML 工具调用语法而非自然语言答案
-            messages.append({
-                "role": "system",
-                "content": (
-                    "你已达到工具调用轮数上限。请立即基于已获取的工具结果直接回答用户问题，"
-                    "禁止再输出任何工具调用语法。"
-                ),
-            })
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "你已达到工具调用轮数上限。请立即基于已获取的工具结果直接回答用户问题，"
+                        "禁止再输出任何工具调用语法。"
+                    ),
+                }
+            )
         update: dict[str, Any] = {
             "agent_turns": turns + 1,
             "tool_results": [],
@@ -207,16 +214,16 @@ def make_react_nodes(
 
         # 防御性兜底：过滤 name 为空的 ToolCall（DeepSeek V4 想直接回答时
         # 可能返回函数名为空的占位 tool_call，不应路由到 tools）。
-        calls: list[ToolCall] = [
-            tc for tc in (resp.tool_calls or []) if getattr(tc, "name", "")
-        ]
+        calls: list[ToolCall] = [tc for tc in (resp.tool_calls or []) if getattr(tc, "name", "")]
         if calls and schemas:
             update["tool_calls"] = calls
-            update["messages"] = [{
-                "role": "assistant",
-                "content": resp.content or "",
-                "tool_calls": _tool_calls_to_openai(calls),
-            }]
+            update["messages"] = [
+                {
+                    "role": "assistant",
+                    "content": resp.content or "",
+                    "tool_calls": _tool_calls_to_openai(calls),
+                }
+            ]
         else:
             # 无工具可用 / 模型未返回工具调用 → content 即最终答案
             answer = _strip_dsml_tool_calls((resp.content or "").strip()) or "抱歉，暂时无法回答该问题。"
@@ -241,29 +248,21 @@ def make_react_nodes(
 
         for tc in calls:
             t0 = time.time()
-            if getattr(tc, "parse_error", ""):
-                # 参数 JSON 解析失败（R1）：不执行，直接回灌错误消息提示 LLM 修正
-                result = ToolResult(
-                    tool=tc.name,
-                    call_id=tc.id,
-                    ok=False,
-                    summary=f"参数解析失败: {tc.parse_error}",
-                    data={},
-                )
-            else:
-                result = registry.execute(tc.name, tc.arguments or {}, call_id=tc.id)
+            result = registry.execute(tc.name, tc.arguments or {}, call_id=tc.id)
 
             tool_results.append(result)
             tool_messages.append(result.to_tool_message())
-            log_entries.append({
-                "tool": tc.name,
-                "arguments": tc.arguments or {},
-                "ok": result.ok,
-                "summary": result.summary,
-                "source": result.source,
-                "elapsed_ms": int((time.time() - t0) * 1000),
-                "turn": state.get("agent_turns", 0) or 0,
-            })
+            log_entries.append(
+                {
+                    "tool": tc.name,
+                    "arguments": tc.arguments or {},
+                    "ok": result.ok,
+                    "summary": result.summary,
+                    "source": result.source,
+                    "elapsed_ms": int((time.time() - t0) * 1000),
+                    "turn": state.get("agent_turns", 0) or 0,
+                }
+            )
             if not result.ok:
                 continue
             if result.source == SOURCE_INTERNAL_KB and result.data.get("docs"):
@@ -274,7 +273,7 @@ def make_react_nodes(
                 legal_items = _merge_by_url(legal_items, result.data["results"])
 
         return {
-            "tool_calls": [],                 # 消费后清空
+            "tool_calls": [],  # 消费后清空
             "tool_results": tool_results,
             "tool_log": list(state.get("tool_log", []) or []) + log_entries,
             "messages": tool_messages,

@@ -7,47 +7,16 @@ M1 新增：ToolCall / ToolCallResponse 数据结构 + chat_with_tools()（F2 �
 D-M3-13：内部实现改为 LangChain 的 BaseChatModel，预算埋点移到
 `src/llm/budget_callback.py`（原 _budget_check / _budget_record 已删除）。
 """
+
 from __future__ import annotations
 
 import json
 import logging
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
-
-
-def parse_tool_arguments(args_raw: str) -> tuple[dict[str, Any], str]:
-    """解析 LLM 返回的 function.arguments JSON 字符串。
-
-    Args:
-        args_raw: function.arguments 原文（通常是 JSON 字符串）
-
-    Returns:
-        (arguments, error)：解析成功时 error 为空；失败时返回 ({}, 错误描述)。
-        容错：先尝试完整 JSON 解析；失败时尝试提取第一个 {...} 片段（模型可能夹带说明文字）。
-    """
-    if not args_raw or not str(args_raw).strip():
-        return {}, ""
-    text = str(args_raw).strip()
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed, ""
-        return {}, "参数不是 JSON 对象"
-    except (ValueError, TypeError):
-        pass
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match:
-        try:
-            parsed = json.loads(match.group(0))
-            if isinstance(parsed, dict):
-                return parsed, ""
-        except (ValueError, TypeError):
-            pass
-    return {}, f"参数 JSON 解析失败: {text[:80]}"
 
 
 @dataclass
@@ -58,15 +27,13 @@ class ToolCall:
         id: 工具调用 ID（回填 tool 消息时对应 tool_call_id）
         name: 工具名；空 name 一律视为无效占位（如 DeepSeek V4 想直接回答时
               返回的函数名为空的 tool_call），解析层与 agent 节点均应跳过。
-        arguments: 已解析的 JSON 参数
-        parse_error: arguments JSON 解析失败时的错误信息（空 = 解析成功）。
-                     解析失败时 tools 节点不回灌错误消息前不执行工具（R1 容错）。
+        arguments: 已解析的参数 dict（D-M3-13 后 LangChain tool_calls 为已解析
+                   dict，不存在「JSON 字符串解析失败」路径）。
     """
 
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
-    parse_error: str = ""
 
     def to_message(self) -> dict:
         """构造 assistant tool_calls 消息（OpenAI/DeepSeek/Ollama 兼容形态）。"""
@@ -127,8 +94,7 @@ def tool_calls_from_langchain(message: Any) -> list[ToolCall]:
     parallel_tool_calls 恒启用，模型想直接回答时会返回函数名为空的占位调用。
 
     注意：LangChain 的 tool_call 里参数是**已解析的 dict**（`args`），
-    不像 OpenAI 原始响应那样是 JSON 字符串，因此不存在解析失败的情况，
-    parse_error 恒为空。
+    不像 OpenAI 原始响应那样是 JSON 字符串，因此不存在解析失败的情况。
     """
     result: list[ToolCall] = []
     for tc in getattr(message, "tool_calls", None) or []:
@@ -193,9 +159,7 @@ class LLMBackend(ABC):
         18 处调用点与多处配置都在读 `llm.model` 取模型名）。
         """
         if self._model is None:
-            raise NotImplementedError(
-                f"{type(self).__name__} 未初始化 LangChain ChatModel"
-            )
+            raise NotImplementedError(f"{type(self).__name__} 未初始化 LangChain ChatModel")
         return self._model
 
     # ------------------------------------------------------------------

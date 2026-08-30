@@ -16,6 +16,7 @@ OpenAI 兼容 API LLM 后端实现。
   - 流式请求已产出内容后失败不再重试（避免重复 token / 重复计费），
     并在 finally 中关闭底层流以尽快释放连接
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,18 +38,18 @@ logger = logging.getLogger(__name__)
 
 # 上下文窗口映射
 _OPENAI_CONTEXT_WINDOWS = {
-    "gpt-4o":                120000,
-    "gpt-4o-mini":           120000,
-    "gpt-4-turbo":           120000,
-    "gpt-3.5-turbo":          16000,
-    "deepseek-chat":          60000,
-    "deepseek-v4-flash":      32000,
-    "deepseek-reasoner":      60000,
-    "qwen-turbo":             32000,
-    "qwen-plus":             32000,
-    "qwen-max":              32000,
-    "qwen2.5:7b":            28000,
-    "qwen2.5:14b":           60000,
+    "gpt-4o": 120000,
+    "gpt-4o-mini": 120000,
+    "gpt-4-turbo": 120000,
+    "gpt-3.5-turbo": 16000,
+    "deepseek-chat": 60000,
+    "deepseek-v4-flash": 32000,
+    "deepseek-reasoner": 60000,
+    "qwen-turbo": 32000,
+    "qwen-plus": 32000,
+    "qwen-max": 32000,
+    "qwen2.5:7b": 28000,
+    "qwen2.5:14b": 60000,
 }
 
 
@@ -135,15 +136,11 @@ class OpenAICompatibleBackend(LLMBackend):
             except Exception as e:
                 last_error = e
                 if not is_retryable(e):
-                    logger.warning(
-                        f"OpenAI API 调用失败（不可重试）: {e}"
-                    )
+                    logger.warning(f"OpenAI API 调用失败（不可重试）: {e}")
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(
-            f"OpenAI API 调用失败，已重试 {self.max_retries} 次: {last_error}"
-        )
+        raise RuntimeError(f"OpenAI API 调用失败，已重试 {self.max_retries} 次: {last_error}")
 
     def _stream_impl(self, messages: list[dict[str, str]]) -> Iterator[str]:
         lc_messages = to_langchain_messages(messages)
@@ -166,20 +163,14 @@ class OpenAICompatibleBackend(LLMBackend):
                 if yielded_any:
                     # 已向用户输出过内容，不能从头重试（会重复 / 重复计费），
                     # 直接抛给上层处理。
-                    logger.warning(
-                        f"OpenAI API 流式中途失败（已输出内容，不重试）: {e}"
-                    )
+                    logger.warning(f"OpenAI API 流式中途失败（已输出内容，不重试）: {e}")
                     raise
                 if not is_retryable(e):
-                    logger.warning(
-                        f"OpenAI API 流式调用失败（不可重试）: {e}"
-                    )
+                    logger.warning(f"OpenAI API 流式调用失败（不可重试）: {e}")
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(
-            f"OpenAI API 流式调用失败，已重试 {self.max_retries} 次: {last_error}"
-        )
+        raise RuntimeError(f"OpenAI API 流式调用失败，已重试 {self.max_retries} 次: {last_error}")
 
     # ------------------------------------------------------------------
     # 工具调用实现（M1 / F2，D-M3-13 改为 LangChain bind_tools）
@@ -199,18 +190,13 @@ class OpenAICompatibleBackend(LLMBackend):
         - 重试策略与普通调用一致：仅可重试异常（429/5xx/网络/超时）重试。
 
         与迁移前的行为差异：LangChain 的 tool_calls 参数是**已解析的 dict**，
-        不像 OpenAI 原始响应那样是 JSON 字符串，因此不再需要
-        `parse_tool_arguments` 容错，`ToolCall.parse_error` 恒为空。
+        不像 OpenAI 原始响应那样是 JSON 字符串，无需参数 JSON 容错层。
         """
         lc_messages = to_langchain_messages(messages)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             try:
-                model = (
-                    self._model.bind_tools(tools, tool_choice=tool_choice)
-                    if tools
-                    else self._model
-                )
+                model = self._model.bind_tools(tools, tool_choice=tool_choice) if tools else self._model
                 resp = model.invoke(lc_messages)
                 raw = resp.model_dump() if hasattr(resp, "model_dump") else {}
                 return ToolCallResponse(
@@ -225,6 +211,4 @@ class OpenAICompatibleBackend(LLMBackend):
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(
-            f"OpenAI API 工具调用失败，已重试 {self.max_retries} 次: {last_error}"
-        )
+        raise RuntimeError(f"OpenAI API 工具调用失败，已重试 {self.max_retries} 次: {last_error}")

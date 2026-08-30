@@ -138,6 +138,7 @@ def main():
         "--mode", choices=["vector", "bm25"], default="vector",
         help="vector=向量路（可配 --bare 关精排）；bm25=BM25 关键词路（分词方案评测用）",
     )
+    ap.add_argument("--tag", default="", help="报告文件名后缀（换评测集时必填，防覆盖：retrieval_prod_<tag>.txt）", )
     args = ap.parse_args()
 
     qpath = Path(args.queries)
@@ -251,6 +252,8 @@ def main():
     else:
         from src.config import HYBRID_ENABLED
         tag = "prod" if HYBRID_ENABLED else "prod_nohybrid"
+    if args.tag:
+        tag = f"{tag}_{args.tag}"
     report_path = out_dir / f"retrieval_{tag}.txt"
     report_path.write_text(report + "\n", encoding="utf-8")
     detail_path = out_dir / f"retrieval_{tag}.jsonl"

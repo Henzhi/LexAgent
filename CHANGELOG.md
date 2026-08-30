@@ -4,6 +4,13 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **feat（B1 评测集补强）**：多标注 + LLM 口语集，修正评测标尺（真实 DeepSeek API，冒烟→全量）。
+  - **多标注**（`evaluation/scripts/annotate_multi_label.py`）：语义集 100 条单标注 → LLM 辅助扩为 2~5 条（候选=向量top10+BM25 top10 并集，从严判定「能直接作为回答依据」，**原标注永远保留**）；57/100 条被扩充，新增 130 条标注。**实测验证审计结论：Hit@5 67%（单标注口径）→ 92%（多标注口径）**——旧绝对值确实被系统性低估了 25 个点，MRR 0.489→0.738。人工抽审样本 25 条已输出（`evaluation/data/lexeval/multi_label_review_sample.md`，样例质量高：高空抛物→民法典1254条+侵权责任编解释第24条）。
+  - **LLM 口语集**（`evaluation/scripts/generate_colloquial_llm.py`）：148 条**禁止出现法名与条号**的自然口语（规则模板做不到的最难场景），覆盖 148 部法律，硬校验零病句入库。
+  - ⭐ **重要认知修正**：无 法名口语查询 PROD Hit@5 = **73.0%**（MRR 0.598，Hit@1 49.3%），远高于 8/30 规则集测出的 6.7%（n=15）——6.7% 那批是规则模板的病句级查询（"电梯有什么规定"），**系统对"无 法名但表述清晰"的真实口语能力比预想好得多**；B2 法名推断的价值定位据此修正：不是"救 6.7%"，而是"把 73% 推向 precise 的 97.5% 水平"（法名仍是最强信号，缺失时 Hit@1 掉 14 个点）。BM25 单路在无 法名集仅 34.5%，词面路对语义查询贡献有限（与 8/29「常开不划算」结论互洽）。
+  - eval_retrieval.py 新增 `--tag`（换评测集必须带，防报告覆盖——E-02 制度化）；新报告 `retrieval_{prod,bm25}_{multi100,colloq148}.txt`。
+  - 冒烟抓 bug：多标注去重 key 须归一化法名（原标注带 "(2025修订)" 后缀 vs 检索返回不带）。
+
 - **feat（A3 / D-M3-12 实现）**：SSE 断线重连继续生成——**事件日志 + seq 游标重放**，零新增依赖（不接 checkpointer）。
   - 新增 `src/observability/stream_log.py::StreamEventLog`：每事件带递增 seq 写 Redis List（`lexagent:stream:{request_id}:events`，RPUSH+EXPIRE，TTL `STREAM_LOG_TTL_SECONDS` 默认 600s）；终局标记 `__stream_end__` 让重连方知悉流已结束（含取消场景）；Redis 不可用退化进程内、写失败告警后照常投递在线流（日志故障不阻断主链路）。
   - **桥接退出语义重构**（`_bridge_sync_stream`）：事件**先写日志再投递在线队列**（日志=重连补发的唯一真相源）；**只有主动取消杀 worker**——被动断线（有日志）worker 继续跑完持续写日志，在线协程立即返回不等待；无 request_id（无人能重连）保持旧行为立即停。判定收敛在 `_on_exit_gone`。

@@ -21,7 +21,7 @@ LexAgent 是一套**法律 RAG 智能问答系统**，正从固定管线 RAG 重
 | LLM | 自研 `LLMBackend.chat_with_tools()`；DeepSeek `deepseek-v4-flash`（主）+ Ollama qwen2.5（降级） |
 | 检索 | pgvector(halfvec+HNSW) + BM25 条件混合（RRF）+ bge-reranker 精排 + 相邻扩展 |
 | 存储 | PostgreSQL/pgvector + Redis（FAQ 语义缓存） |
-| 搜索 | Tavily（通用）；官方法律源（国家法律法规数据库 flk.npc.gov.cn、人民法院案例库 anli.court.gov.cn） |
+| 搜索 | Tavily（通用）；官方法律源（国家法律法规数据库 flk.npc.gov.cn、人民法院案例库 anli.court.gov.cn、**北大法宝 MCP** pkulaw.com，M3+ / F9 扩展） |
 
 ## 目录结构
 
@@ -81,6 +81,15 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - **重试仍用自研的 `is_retryable` + `wait_and_log`**（D-M1-3），包在 LangChain 调用外层；**不要**改用 `ChatOpenAI(max_retries=)`——它的判定标准与 D-M1-3（4xx 不重试交由 Failover 降级、429/5xx 重试）不一致。
    - 消息转换统一走 `src/llm/base.py` 的 `to_langchain_messages()` / `tool_calls_from_langchain()`；后者已内置 D-M1-6 的空 name 过滤。
    - LangChain 的 tool_calls 参数是**已解析的 dict**（不像 OpenAI 原始响应是 JSON 字符串），因此不存在 `parse_error`，工具的容错改为「参数校验失败」路径。
+
+9. **北大法宝 MCP 官方法律源（M3+ / F9 扩展，决策 D-PKULAW）**：接入 pkulaw.com 高权威源（法条原文 + 类案全文 + 核验 + 超链），优先级与现有官方源同级（`verified_official`）。
+   - **懒加载 `mcp` SDK**：`src/search/pkulaw_mcp.py` 仅在真正调用时才 `import mcp`，未安装不影响模块导入与单测（单测一律用 `tests/fakes.FakePkulawClient`）。
+   - **运行时按用途解析工具名**：pkulaw 聚合端点（默认 `mcp-law-agg`）把 10 个工具挂在一个 URL 下、名字带服务前缀且会变；客户端 `tools/list` 后按「用途关键词」匹配 name+description 建 purpose→name 映射，不硬编码工具名（SKILL 同款原则）。
+     - 真端点已联调确认：10 个工具、8 个用途全部运行时命中零兜底；另有 `mcp-case.get_case_list`、`mcp-fatiao.get_law_item_content` 两个暂未映射用途，需要时再加进 `_PURPOSE_KEYWORDS`。
+   - **参数平铺 + 结果按语义提取**：北大法宝工具 inputSchema 常声明包装体但后端只认平铺，一律传平铺；返回体形态不统一（裸数组/包裹体 `Data`/纯字符串），按字段语义而非名字取值，并清理链接锚点 `.0` 坏后缀。
+   - **两条接入路径**：① 后端源——`PkulawLegalClient` 注册进 `LegalSourceClient` 门面，`legal_source_search` 自动融合（与既有国家库/案例库/小包公并列）；② ReAct 工具——`pkulaw_search`（检索）/ `pkulaw_verify`（核验+加链）按 `PKULAW_ENABLED` 与客户端可用性注册。
+   - **预算熔断**：北大法宝按积分计费，新增 `KIND_PKULAW`（kind=`pkulaw`，`BUDGET_MAX_PKULAW_CALLS_PER_DAY` 默认 200），每次成功调用 `cost_budget` 先 check 后 record；超限工具层返回「法宝额度已用尽」、不阻断主链路（与 Tavily 同级降级语义）。
+   - **配置只在 `.env`**：`PKULAW_MCP_URL` / `PKULAW_MCP_TOKEN`（聚合端点 Bearer），**严禁入库**（`.env` 已 gitignore）。
 
 ## 代码规范
 

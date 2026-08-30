@@ -108,3 +108,69 @@ class _FakeChatModel:
                 for tc in (resp.tool_calls or [])
             ],
         )
+
+
+class FakePkulawClient:
+    """北大法宝 MCP 客户端替身（不触达真实端点 / Key，供 pkulaw 相关单测）。
+
+    实现 PkulawMCPClient 的同名公开方法，返回 canned 数据；is_available 可配置。
+    返回条目含 `#tiao_1077.0` 锚点以覆盖 _strip_dotzero 归一化路径。
+    """
+
+    def __init__(self, available: bool = True):
+        self._available = available
+        self.article = [
+            {
+                "title": "中华人民共和国民法典",
+                "url": "https://pkulaw.com/lawext?tid=1#tiao_1077.0",
+                "content": "第一条 为了保护民事主体的合法权益……",
+                "law_status": "现行有效",
+                "effectiveness": "法律",
+            }
+        ]
+        self.case = [
+            {
+                "title": "张三诉李四买卖合同纠纷案",
+                "url": "https://pkulaw.com/case/1",
+                "content": "本院查明……本院认为……裁判结果……",
+                "case_number": "(2024)京01民终123号",
+                "court": "北京市第一中级人民法院",
+            }
+        ]
+        self.law_list = [
+            {
+                "title": "数据安全法",
+                "url": "https://pkulaw.com/l/2",
+                "content": "",
+                "law_status": "现行有效",
+            }
+        ]
+        self.verify = [{"title": "民法典", "original": "中华人民共和国民法典"}]
+        self.linked = "[《民法典》第1077条](https://pkulaw.com/lawext?tid=1#tiao_1077)"
+
+    def is_available(self) -> bool:
+        return self._available
+
+    def search_article(self, query, lib="中央", max_results=5):
+        return list(self.article)
+
+    def get_article(self, title, number):
+        return list(self.article)
+
+    def search_case(self, query, max_results=5):
+        return list(self.case)
+
+    def get_law_list(self, title, effectiveness=None, max_results=5):
+        return list(self.law_list)
+
+    def verify_law(self, text):
+        return list(self.verify)
+
+    def verify_case(self, text):
+        return list(self.verify)
+
+    def verify_provision(self, userlaw, answerlaw, prompt=""):
+        return {"compared": True, "match": True}
+
+    def add_links(self, text):
+        return self.linked

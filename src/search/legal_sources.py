@@ -27,6 +27,7 @@ from src.config import (
     XBG_API_KEY,
     XBG_API_URL,
 )
+from src.search.pkulaw_mcp import PkulawMCPClient
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 SOURCE_NATIONAL_LAW_DB = "national_law_db"      # 国家法律法规数据库
 SOURCE_COURT_CASE_LIB = "court_case_lib"        # 人民法院案例库（官方域线索）
 SOURCE_XBG = "xiaobaogong"                      # 小包公（第三方）
+SOURCE_PKULAW = "pkulaw"                        # 北大法宝 MCP（高权威官方法律源）
 
 # 法规状态码（flk.npc.gov.cn 返回的 sxx 字段）→ 中文说明
 # 来源：前端 JS L4e=[{label:"尚未生效",key:4},{label:"有效",key:3},{label:"已修改",key:2},{label:"已废止",key:1}]
@@ -230,6 +232,61 @@ class XiaobaogongClient:
         ]
 
 
+class PkulawLegalClient:
+    """北大法宝 MCP 适配为 LegalSourceClient 子源（M3+ / F9 扩展）。
+
+    将 PkulawMCPClient 的语义检索结果归一化为 legal_sources 统一条目结构
+    （_norm_item），source 固定为 SOURCE_PKULAW。失败抛 RuntimeError，
+    由门面 LegalSourceClient 归入 errors，不阻断其他子源。
+    """
+
+    def __init__(self, client: PkulawMCPClient | None = None):
+        self._client = client or PkulawMCPClient()
+
+    def is_available(self) -> bool:
+        return self._client.is_available()
+
+    def search_law(self, keyword: str, max_results: int = LEGAL_SOURCE_MAX_RESULTS) -> list[dict]:
+        """法条语义检索（带 lib='中央'，避免地方文件挤占）。"""
+        if not self.is_available():
+            raise RuntimeError("北大法宝 MCP 未配置（URL/Token 缺失或 SDK 未安装）")
+        try:
+            items = self._client.search_article(keyword, lib="中央", max_results=max_results)
+        except Exception as e:
+            raise RuntimeError(f"北大法宝法条检索失败: {e}") from e
+        return [
+            _norm_item(
+                title=it.get("title") or "",
+                url=it.get("url") or "",
+                content=it.get("content") or "",
+                source=SOURCE_PKULAW,
+                law_status=it.get("law_status") or "",
+                effectiveness=it.get("effectiveness") or "",
+            )
+            for it in items
+        ]
+
+    def search_case(self, keyword: str, max_results: int = LEGAL_SOURCE_MAX_RESULTS) -> list[dict]:
+        """类案语义检索（带回查明/认为/结果全文）。"""
+        if not self.is_available():
+            raise RuntimeError("北大法宝 MCP 未配置（URL/Token 缺失或 SDK 未安装）")
+        try:
+            items = self._client.search_case(keyword, max_results=max_results)
+        except Exception as e:
+            raise RuntimeError(f"北大法宝类案检索失败: {e}") from e
+        return [
+            _norm_item(
+                title=it.get("title") or "",
+                url=it.get("url") or "",
+                content=it.get("content") or "",
+                source=SOURCE_PKULAW,
+                case_number=it.get("case_number") or "",
+                court=it.get("court") or "",
+            )
+            for it in items
+        ]
+
+
 class LegalSourceClient:
     """官方法律源统一门面（legal_source_search 工具的执行后端）。
 
@@ -245,10 +302,12 @@ class LegalSourceClient:
         national_law: NationalLawClient | None = None,
         court_case: CourtCaseLibraryClient | None = None,
         xbg: XiaobaogongClient | None = None,
+        pkulaw: PkulawLegalClient | None = None,
     ):
         self.national_law = national_law or NationalLawClient()
         self.court_case = court_case or CourtCaseLibraryClient()
         self.xbg = xbg or XiaobaogongClient()
+        self.pkulaw = pkulaw or PkulawLegalClient()
 
     def is_available(self) -> bool:
         """任一子源配置级可用即视为可用。"""
@@ -256,6 +315,7 @@ class LegalSourceClient:
             self.national_law.is_available()
             or self.court_case.is_available()
             or self.xbg.is_available()
+            or self.pkulaw.is_available()
         )
 
     def search(
@@ -294,9 +354,17 @@ class LegalSourceClient:
             except RuntimeError as e:
                 logger.warning(f"国家法律法规数据库检索失败: {e}")
                 errors.append(str(e))
+            # 北大法宝：高权威法条原文（D-PKULAW），与法规目录互补
+            if self.pkulaw.is_available():
+                tried += 1
+                try:
+                    results.extend(self.pkulaw.search_law(query, max_results))
+                except RuntimeError as e:
+                    logger.warning(f"北大法宝法条检索失败: {e}")
+                    errors.append(str(e))
 
         if source_type in ("case", "all"):
-            # 官方案例库线索（Tavily 域限定）优先，小包公补充
+            # 官方案例库线索（Tavily 域限定）优先，小包公与北大法宝补充
             if self.court_case.is_available():
                 tried += 1
                 try:
@@ -310,6 +378,13 @@ class LegalSourceClient:
                     results.extend(self.xbg.search_case(query, max_results))
                 except RuntimeError as e:
                     logger.warning(f"小包公案例检索失败: {e}")
+                    errors.append(str(e))
+            if self.pkulaw.is_available():
+                tried += 1
+                try:
+                    results.extend(self.pkulaw.search_case(query, max_results))
+                except RuntimeError as e:
+                    logger.warning(f"北大法宝类案检索失败: {e}")
                     errors.append(str(e))
 
         if tried == 0:

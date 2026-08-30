@@ -204,11 +204,16 @@ class TestRealToolsUseDecorator:
         assert schema["parameters"]["required"] == ["query"]
 
     def test_default_tools_still_register_three(self, monkeypatch):
-        """build_default_tools 注册数量与名称不变（集成回归）。"""
+        """build_default_tools 注册数量与名称不变（集成回归）。
+
+        注：北大法宝 MCP 接入后默认工具集扩展为 5 个（新增 pkulaw_search /
+        pkulaw_verify），故此处隔离 PKULAW_ENABLED，聚焦原有三件套。
+        """
         from src.agents.tools import build_default_tools
         from tests.fakes import FakeRetriever
 
         monkeypatch.setattr("src.agents.tools.LEGAL_SOURCE_ENABLED", True)
+        monkeypatch.setattr("src.agents.tools.PKULAW_ENABLED", False)
         registry = build_default_tools(FakeRetriever())
         names = [t.name for t in registry.list_tools()]
         assert names == ["retrieve_knowledge", "web_search", "legal_source_search"]

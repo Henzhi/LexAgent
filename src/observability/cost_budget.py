@@ -32,8 +32,9 @@ logger = logging.getLogger(__name__)
 # 用量种类
 KIND_LLM = "llm"
 KIND_TAVILY = "tavily"
+KIND_PKULAW = "pkulaw"          # 北大法宝 MCP（按次计费，M3+ / F9 扩展）
 
-_KINDS = (KIND_LLM, KIND_TAVILY)
+_KINDS = (KIND_LLM, KIND_TAVILY, KIND_PKULAW)
 
 # Redis key 前缀（与 FAQ 缓存共用同一 Redis 实例，前缀区分命名空间）
 _KEY_PREFIX = "lexagent:budget"
@@ -52,7 +53,11 @@ class BudgetExceededError(RuntimeError):
         self.kind = kind
         self.used = used
         self.limit = limit
-        label = "LLM 调用" if kind == KIND_LLM else "网络搜索"
+        label = (
+            "LLM 调用" if kind == KIND_LLM
+            else "网络搜索" if kind == KIND_TAVILY
+            else "北大法宝检索"
+        )
         super().__init__(
             f"{label}当日预算已用尽（{used}/{limit}），已暂停该能力；"
             f"预算于次日零点自动重置。"
@@ -260,6 +265,7 @@ def get_budget() -> CostBudget:
                     BUDGET_ENABLED,
                     BUDGET_ENFORCE,
                     BUDGET_MAX_LLM_CALLS_PER_DAY,
+                    BUDGET_MAX_PKULAW_CALLS_PER_DAY,
                     BUDGET_MAX_TAVILY_CALLS_PER_DAY,
                     REDIS_URL,
                 )
@@ -269,6 +275,7 @@ def get_budget() -> CostBudget:
                     limits = {
                         KIND_LLM: BUDGET_MAX_LLM_CALLS_PER_DAY,
                         KIND_TAVILY: BUDGET_MAX_TAVILY_CALLS_PER_DAY,
+                        KIND_PKULAW: BUDGET_MAX_PKULAW_CALLS_PER_DAY,
                     }
                 _budget = CostBudget(
                     redis_url=REDIS_URL if BUDGET_ENABLED else "",

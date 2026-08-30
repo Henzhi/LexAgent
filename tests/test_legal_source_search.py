@@ -143,6 +143,9 @@ class TestLegalSourceClientAggregate:
         client.court_case.search_case.return_value = case_results or []
         client.xbg = MagicMock()
         client.xbg.is_available.return_value = False
+        # 北大法宝子源默认不可用（不影响本组用例的 law/case 断言）
+        client.pkulaw = MagicMock()
+        client.pkulaw.is_available.return_value = False
         return client
 
     def test_law_only_search(self):
@@ -239,6 +242,8 @@ class TestRegistryIntegration:
     def test_legal_source_registered_by_default(self, monkeypatch):
         """默认注册三个工具：retrieve_knowledge + web_search + legal_source_search。"""
         monkeypatch.setattr("src.agents.tools.LEGAL_SOURCE_ENABLED", True)
+        # 隔离北大法宝（其注册取决于 PKULAW_ENABLED 与运行时可用性），聚焦本用例
+        monkeypatch.setattr("src.agents.tools.PKULAW_ENABLED", False)
         registry = build_default_tools(FakeRetriever())
         names = [t.name for t in registry.list_tools()]
         assert "legal_source_search" in names
@@ -247,6 +252,7 @@ class TestRegistryIntegration:
     def test_legal_source_disabled(self, monkeypatch):
         """LEGAL_SOURCE_ENABLED=false → 不注册（回退 M1 行为）。"""
         monkeypatch.setattr("src.agents.tools.LEGAL_SOURCE_ENABLED", False)
+        monkeypatch.setattr("src.agents.tools.PKULAW_ENABLED", False)
         registry = build_default_tools(FakeRetriever())
         names = [t.name for t in registry.list_tools()]
         assert "legal_source_search" not in names

@@ -222,6 +222,22 @@ LEGAL_SOURCE_MAX_RESULTS = _safe_int("LEGAL_SOURCE_MAX_RESULTS", 5)
 XBG_API_KEY = os.getenv("XBG_API_KEY", "")
 XBG_API_URL = os.getenv("XBG_API_URL", "")
 
+# 北大法宝 MCP（M3+ / 官方法律源增强，F9 扩展）：
+# 默认连聚合服务 mcp-law-agg（一个端点暴露全部 10 个工具）；
+# 若聚合端点不可用，可改 PKULAW_MCP_URL 指向单个服务端点。
+# URL 与 Bearer Token 均由宿主机 .env 提供，经 docker-compose 注入容器。
+PKULAW_ENABLED = os.getenv("PKULAW_ENABLED", "true").lower() == "true"
+# 聚合端点（含全部工具，工具名带服务前缀，运行时按用途解析）
+PKULAW_MCP_URL = os.getenv(
+    "PKULAW_MCP_URL",
+    "https://apim-gateway.pkulaw.com/mcp-law-agg/mcp",
+)
+PKULAW_MCP_TOKEN = os.getenv("PKULAW_MCP_TOKEN", "")
+# MCP 调用超时（秒）：北大法宝按积分计费，单次类案返回体极大，超时放宽
+PKULAW_TIMEOUT = _safe_float("PKULAW_TIMEOUT", 30.0)
+# 单次检索返回条数上限（经客户端约束，默认 5，避免案例体撑爆上下文）
+PKULAW_MAX_RESULTS = _safe_int("PKULAW_MAX_RESULTS", 5)
+
 # ---------------------------------------------------------------------------
 # 双路融合（M2 / F6-F8）
 # ---------------------------------------------------------------------------
@@ -248,6 +264,8 @@ BUDGET_ENABLED = os.getenv("BUDGET_ENABLED", "true").lower() == "true"
 BUDGET_MAX_LLM_CALLS_PER_DAY = _safe_int("BUDGET_MAX_LLM_CALLS_PER_DAY", 5000)
 # 每日 Tavily 搜索次数上限（0 = 不限制）。Tavily 按次计费，口径精确。
 BUDGET_MAX_TAVILY_CALLS_PER_DAY = _safe_int("BUDGET_MAX_TAVILY_CALLS_PER_DAY", 500)
+# 每日北大法宝 MCP 调用次数上限（0 = 不限制）。北大法宝按积分计费，精确按次计。
+BUDGET_MAX_PKULAW_CALLS_PER_DAY = _safe_int("BUDGET_MAX_PKULAW_CALLS_PER_DAY", 200)
 # 超限是否真的拦截：true = 抛 BudgetExceededError 熔断；false = 仅告警不阻断
 # （上线观察期可先设 false，确认阈值合理后再打开）
 BUDGET_ENFORCE = os.getenv("BUDGET_ENFORCE", "true").lower() == "true"

@@ -44,6 +44,7 @@ dependencies = [
     "redis>=5.0",                # FAQ 语义缓存 Redis Stack 后端（向量检索 + 原生 TTL）
     "openai>=2.47.0",
     "tavily-python>=0.7.0",      # 通用网络搜索（F3，M1 唯一新增运行时依赖）
+    "mcp>=1.2.0",                # 北大法宝 MCP 客户端（M3+ / F9 扩展，D-PKULAW；懒加载，未装不影响导入）
     "pymupdf>=1.28.0",
     "python-docx>=1.2.0",
     "python-multipart>=0.0.20",

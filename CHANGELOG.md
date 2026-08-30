@@ -4,6 +4,17 @@
 
 ## [Unreleased] — M3 分场景确认（进行中）
 
+- **feat（F9 扩展 / D-PKULAW）**：接入**北大法宝 MCP** 官方法律源（`src/search/pkulaw_mcp.py`）。
+  - 高权威：法条原文 + 类案全文 + 核验 + 超链，融合验证状态 `verified_official`（与现有官方源同级），补齐国家法律法规数据库「仅目录无正文」、Tavily 域限定「仅线索」的短板。
+  - 两条路径：① 后端源 `PkulawLegalClient` 注册进 `LegalSourceClient` 门面，`legal_source_search` 自动融合；② ReAct 工具 `pkulaw_search`（检索）/ `pkulaw_verify`（核验+加链），按 `PKULAW_ENABLED` 与可用性注册。
+  - 懒加载 `mcp` SDK（未装不影响导入/单测）；运行时 `tools/list` 按用途关键词解析工具名（不硬编码，适配聚合端点前缀漂移）；参数平铺、结果按语义提取、清理 `.0` 锚点坏链。
+  - 预算熔断：新增 `KIND_PKULAW`（`BUDGET_MAX_PKULAW_CALLS_PER_DAY` 默认 200），调用前 check / 后 record；超限工具层返回「法宝额度已用尽」不阻断主链路。
+  - 配置仅 `.env`（`PKULAW_MCP_URL` / `PKULAW_MCP_TOKEN`），新增 `tests/test_pkulaw.py`（23 项：归一化/工具名解析/门面/融合/工具/预算/注册）。
+  - 决策记录：用户给的 10 个独立端点经聚合 `mcp-law-agg` 一个 URL 暴露全部工具，故默认直连该聚合端点；按积分计费需预算兜底（AGENTS.md 规则 8）。
+  - **真端点已联调通过**：`tools/list` 返回 10 个工具，8 个用途全部运行时命中零兜底；`get_article('中华人民共和国民法典','1077')` 返回正确条文原文 + `pkulaw.com` 官方链接 + `law_status=现行有效`。
+    - 真实工具名为**点分隔**（`mcp-law-search-service.search_article`），与 SKILL 快照的下划线兜底名不同——运行时解析是必需的，不是优化。
+    - 另有 `mcp-case.get_case_list`、`mcp-fatiao.get_law_item_content` 两个工具暂未映射用途，需要时加进 `_PURPOSE_KEYWORDS`。
+
 - **fix**：HybridRetriever 权重重定（w=3.0 → 0.5）——向量路排查（`docs/向量路质量排查-2026-08-29.md`）实证 w=3.0 的 BM25 词面排序在「法名+语义」查询上碾压向量排名，语义集净丢 6 条（"盗窃罪的立案标准"向量 top1 命中、生产链路丢失），恰好抵消 ArticleRouter 的全部收益。
   - 双集实验定值：语义集 Hit@5 62%→**67%**、MRR 0.469→**0.489**；法条级集（339 条）86.1%→**85.3%** 仅让 0.8 点——两集最优平衡
   - **"收紧激活条件"不可行**：受损查询与受益查询结构完全相同（法名+主题词），正则无法区分；激活本身合理，问题在权重

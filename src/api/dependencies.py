@@ -33,6 +33,9 @@ from src.config import (
     HYBRID_RRF_K,
     HYBRID_BM25_WEIGHT,
     HYBRID_ALWAYS_ON,
+    LAW_NAME_BOOST_ENABLED,
+    LAW_NAME_BOOST,
+    LAW_NAME_BOOST_TOP_LAWS,
     FAQ_CACHE_BACKEND,
     REDIS_URL,
 )
@@ -130,6 +133,21 @@ def _create_retriever(embedder):
             base_retriever=retriever, reranker=reranker, recall_k=RERANK_RECALL_K, top_k=RERANK_TOP_K
         )
         logger.info(f"Reranker 就绪: 粗排{RERANK_RECALL_K} → 精排{RERANK_TOP_K}")
+
+    # 法名推断软信号加权（B2 二阶段）：质心最近邻 top3 候选法名，仅无 法名查询激活。
+    # 接入点在 Rerank 之后、Adjacent 之前——邻居扩展应跟随加权后的核心排序
+    if LAW_NAME_BOOST_ENABLED:
+        from src.rag.law_centroids import get_law_centroids
+        from src.rag.law_name_boost import LawNameBoostRetriever
+
+        retriever = LawNameBoostRetriever(
+            base_retriever=retriever,
+            embedder=embedder,
+            centroids=get_law_centroids(),
+            boost=LAW_NAME_BOOST,
+            top_laws=LAW_NAME_BOOST_TOP_LAWS,
+        )
+        logger.info(f"法名加权就绪: top{LAW_NAME_BOOST_TOP_LAWS} 候选法名 boost={LAW_NAME_BOOST}")
 
     # 相邻扩展（article_map 缺失时自动降级为空转）
     if ADJACENT_ENABLED:

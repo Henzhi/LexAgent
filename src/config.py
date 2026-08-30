@@ -202,6 +202,16 @@ CONFIRMATION_TTL_SECONDS = _safe_int("CONFIRMATION_TTL_SECONDS", 600)
 STREAM_LOG_TTL_SECONDS = _safe_int("STREAM_LOG_TTL_SECONDS", 600)
 
 # ---------------------------------------------------------------------------
+# B2 二阶段：法名推断软信号（docs/B2-法名推断spike报告-2026-08-30.md）
+# ---------------------------------------------------------------------------
+
+# 质心最近邻 top3 候选法名重排加权，仅无 法名/条号查询激活（软信号，不硬过滤）。
+# 验证判据：colloq148 Hit@5 73%→≥80%，multi100 92% 不回归
+LAW_NAME_BOOST_ENABLED = os.getenv("LAW_NAME_BOOST_ENABLED", "false").lower() == "true"
+LAW_NAME_BOOST = _safe_float("LAW_NAME_BOOST", 0.1)
+LAW_NAME_BOOST_TOP_LAWS = _safe_int("LAW_NAME_BOOST_TOP_LAWS", 3)
+
+# ---------------------------------------------------------------------------
 # 网络搜索（F3 / Tavily）
 # ---------------------------------------------------------------------------
 

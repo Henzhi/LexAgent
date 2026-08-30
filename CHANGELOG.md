@@ -4,6 +4,11 @@
 
 ## [Unreleased] — M3 分场景确认（进行中）
 
+- **docs（M4 立项 / D-M4-1）**：多 Agent 演进路线图定稿——D-M3-11 重启条件因产品方向（多 Agent 多场景、意图识别中的规划）正式满足。两条核心原则：**生长式迁移**（新 Agent 用生态标准件长成编译子图，主 Agent 自有循环不重写）、**按场景拆出口不按工具拆内脏**（检索/搜索/核验保持为工具）。阶段 0=M3 收尾 → 1=plan 对象+场景白名单（搭车切 BaseTool 绑定）→ 2=审核子图+类案子图 → 3=supervisor 定型。新增 `docs/M4-多Agent路线图.md`；前置条件：eval_answer_quality 基线先于阶段 2。
+- **docs**：新增 `docs/常见错误清单.md`——复发错误知识库（症状→根因→预防），收录规则：同类错误第二次或高危静默故障。首发 13 条（E-00~E-12），含当日新教训 E-12「删兼容分支前必须追运行时数据流，grep 调用点证明不了数据形态」。
+- **chore**：`ruff format` 进 CI 门禁（`format --check`，line-length=120 对齐存量风格），全量格式化一次（102 文件，独立 style 提交 `206550e`，`.git-blame-ignore-revs` 已收录）；提交前固定动作 = ruff check + format check（E-07 复发两次后制度化）。
+- **refactor**：清理 D-M3-13 迁移遗留——删 `tools_node` 的 `parse_error` 死分支（LangChain tool_calls 已是解析后 dict）、删零调用的 `parse_tool_arguments`、`_tool_calls_to_openai` 三形态收敛为两种活形态（ToolCall + LangChain dict；OpenAI 原始 dict 形态无生产路径）。⚠️ 过程中曾误删 LangChain dict 分支（18 测试失败暴露 `_messages_to_dicts` 的运行时形态），教训入库 E-12。
+
 - **fix（D-M3-14，高危回归）**：ReAct 决策调用绕过 `chat_with_tools` 入口，丢失重试与降级语义——D-M3-13 迁移时 `agent_node` 改为直接 `chat_model.bind_tools().invoke()`，同时绕过了该入口链路上的两层既有语义：**D-M1-3 重试**（瞬时 429/5xx/网络错误不再重试，一次抖动直接让整轮 ReAct 给出"模型调用失败"答案）与 **FailoverLLMBackend 4xx 运行期降级**（主后端 400/401 不再切 Ollama，AC-7/REQ-U1 语义在主路径失效）。修复为回到 `llm.chat_with_tools()` 公开入口（后端内部仍是 bind_tools + invoke，D-M3-13 成果不变）；预算 callback 挂在 ChatModel 上不受影响。新增 `TestAgentNodeCallSemantics` 3 项回归（4xx 降级 / 429 不降级 / 正常路径走公开入口）。
 - **fix（D-PKULAW）**：`PkulawLegalClient` 把 `BudgetExceededError` 包装成普通 RuntimeError，丢失「法宝额度已用尽」熔断语义（legal_source_search 路径下额度用尽被混同于普通子源故障）。改为原样上抛，门面 `errors` 里保留完整熔断文案；参数化测试守两条路径（search_law / search_case）。
 - **chore（CI）**：清理 2 处未使用 import（`pkulaw_search.py` 的 `Any`、`test_pkulaw.py` 的 `BudgetExceededError`）——8a58fa8/b526f6c 两个提交未本地跑 ruff，推送即会卡 CI（重演 8/27 教训：提交前必跑 `uv run ruff check src/ tests/`）。

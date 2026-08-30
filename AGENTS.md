@@ -6,7 +6,7 @@
 
 LexAgent 是一套**法律 RAG 智能问答系统**，正从固定管线 RAG 重构为**工具调用型自主 Agent**（详见 `docs/自主Agent重构PRD.md`）。
 
-- 里程碑：M1 工具调用型 Agent（已完成）→ M2 双路融合（已完成，2026-08-28）→ M3 分场景人工确认 + 多 Agent 预留（进行中：F14 预算熔断已完成、F11 场景分类已完成、F12 已出技术方案待 Q5 决策、F13 结论为仅文档收尾）
+- 里程碑：M1 工具调用型 Agent（已完成）→ M2 双路融合（已完成，2026-08-28）→ M3 分场景人工确认（进行中：F14 预算熔断已完成、F11 场景分类已完成、F12 方案已定稿待开发、F13 已收尾）→ M4 多 Agent 演进（**已立项 D-M4-1**，路线见 `docs/M4-多Agent路线图.md`，先完成 M3 收尾再启动）
 - 双 LLM 后端：外接 API（DeepSeek，OpenAI 兼容）为主，Ollama 本地为降级
 - 双路检索：内部 pgvector 知识库（最高优先级法律依据）+ 网络搜索（Tavily，仅作线索）+ 官方法律源二次验证
 - 姊妹仓库 `Law-RAG-Agent` 为干净上游，**所有新代码只写在 LexAgent**
@@ -46,6 +46,7 @@ docs/                # PRD、架构设计、ADR、评测报告
 uv sync                                     # 安装依赖
 uv run pytest tests/ -x -q                  # 全量测试（注意：需 TAVILY_API_KEY= 清空，见下）
 uv run uvicorn src.api.main:app --reload    # 启动后端
+uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/   # lint + 格式门禁（CI 同款，提交前必跑）
 docker compose up -d                        # pgvector / redis（本机已有旧容器 lawrag-db/lawrag-redis 时直接复用）
 ```
 
@@ -95,6 +96,7 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 ## 代码规范
 
 - Python：类型注解（`from __future__ import annotations`）、模块级 docstring 说明"哪个需求/决策"、中文注释
+- **复发错误先查 `docs/常见错误清单.md`**（绕过入口丢横切语义 / 漏 await / Fake 抹平差异 / 只看聚合指标等）；犯错的瞬间对照清单，修完回填新条目
 - **新工具用 `@tool` 装饰器**（D-M3-3 语法 + D-M3-13 底层改为 LangChain），依赖经闭包注入，在 `tools/__init__.build_default_tools()` 注册：
 
   ```python
@@ -143,5 +145,7 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 | `docs/自主Agent重构PRD.md` | 重构总需求（EARS 原则、验收标准） |
 | `docs/M1-架构设计.md` | M1 详细设计（D1~D7 决策、共享约定 §8） |
 | `docs/M2联调结论-2026-08-28.md` | M2 验收结论：双路径口径、配额策略、前端渲染约定（前端/测试必读） |
+| `docs/M4-多Agent路线图.md` | 多 Agent 演进唯一权威路线：两条核心原则、Agent 三问、目标拓扑、阶段与退出判据（**M4 开发必读**） |
+| `docs/常见错误清单.md` | 复发错误知识库：症状→根因→预防，收录规则在内（**改代码前扫一眼**） |
 | `docs/M3-F12-人工确认技术方案.md` | F12 spike 结论：前置确认方案、checkpointer 选型、两种确认粒度成本对比、风险清单（**F12 开发必读**） |
 | `docs/adr-*.md` | 历史检索配置 ADR |

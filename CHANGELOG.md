@@ -4,6 +4,10 @@
 
 ## [Unreleased] — M3 分场景确认（进行中）
 
+- **fix（D-M3-14，高危回归）**：ReAct 决策调用绕过 `chat_with_tools` 入口，丢失重试与降级语义——D-M3-13 迁移时 `agent_node` 改为直接 `chat_model.bind_tools().invoke()`，同时绕过了该入口链路上的两层既有语义：**D-M1-3 重试**（瞬时 429/5xx/网络错误不再重试，一次抖动直接让整轮 ReAct 给出"模型调用失败"答案）与 **FailoverLLMBackend 4xx 运行期降级**（主后端 400/401 不再切 Ollama，AC-7/REQ-U1 语义在主路径失效）。修复为回到 `llm.chat_with_tools()` 公开入口（后端内部仍是 bind_tools + invoke，D-M3-13 成果不变）；预算 callback 挂在 ChatModel 上不受影响。新增 `TestAgentNodeCallSemantics` 3 项回归（4xx 降级 / 429 不降级 / 正常路径走公开入口）。
+- **fix（D-PKULAW）**：`PkulawLegalClient` 把 `BudgetExceededError` 包装成普通 RuntimeError，丢失「法宝额度已用尽」熔断语义（legal_source_search 路径下额度用尽被混同于普通子源故障）。改为原样上抛，门面 `errors` 里保留完整熔断文案；参数化测试守两条路径（search_law / search_case）。
+- **chore（CI）**：清理 2 处未使用 import（`pkulaw_search.py` 的 `Any`、`test_pkulaw.py` 的 `BudgetExceededError`）——8a58fa8/b526f6c 两个提交未本地跑 ruff，推送即会卡 CI（重演 8/27 教训：提交前必跑 `uv run ruff check src/ tests/`）。
+
 - **feat（F9 扩展 / D-PKULAW）**：接入**北大法宝 MCP** 官方法律源（`src/search/pkulaw_mcp.py`）。
   - 高权威：法条原文 + 类案全文 + 核验 + 超链，融合验证状态 `verified_official`（与现有官方源同级），补齐国家法律法规数据库「仅目录无正文」、Tavily 域限定「仅线索」的短板。
   - 两条路径：① 后端源 `PkulawLegalClient` 注册进 `LegalSourceClient` 门面，`legal_source_search` 自动融合；② ReAct 工具 `pkulaw_search`（检索）/ `pkulaw_verify`（核验+加链），按 `PKULAW_ENABLED` 与可用性注册。

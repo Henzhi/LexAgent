@@ -76,13 +76,13 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - 未命中场景时**保守回落 A 类**（`matched=False`），绝不因分类失败阻断回答。
 10. **LangChain 标准生态（D-M3-13）**：
    - LLM 层内部用 `BaseChatModel`（`ChatOpenAI` / `ChatOllama`），经 `.chat_model` 暴露。⚠️ `.model` **仍是模型名字符串**（历史字段，18 处调用点在读），两者别混淆。
-   - 标准调用写法：`llm.chat_model.bind_tools(registry.langchain_tools()).invoke(messages)`；agent_node 已按此实现。
+   - **多轮决策调用必须走 `llm.chat_with_tools()` 公开入口**（D-M3-14）：重试（D-M1-3）与 Failover 4xx 降级都实现于该入口链路，直接 `chat_model.bind_tools().invoke()` 会同时绕过两层——D-M3-13 迁移时踩过（瞬时 429/5xx 一次抖动整轮失败、主后端 4xx 不再降级 Ollama），已由 `TestAgentNodeCallSemantics` 守回归。`chat_model` 保留给标准生态互操作（挂 callback、运维脚本直调）。
    - **新增 LLM 后端必须挂 `callbacks=budget_callbacks()`**：漏挂不会报错，只是预算不再计数，熔断形同虚设（测试 `test_callback_mounted_on_real_backends` 守着）。
-   - **重试仍用自研的 `is_retryable` + `wait_and_log`**（D-M1-3），包在 LangChain 调用外层；**不要**改用 `ChatOpenAI(max_retries=)`——它的判定标准与 D-M1-3（4xx 不重试交由 Failover 降级、429/5xx 重试）不一致。
+   - **重试仍用自研的 `is_retryable` + `wait_and_log`**（D-M1-3），实现于后端 `_chat_with_tools_impl` 等入口内部（LangChain 调用外层）；**不要**改用 `ChatOpenAI(max_retries=)`——它的判定标准与 D-M1-3（4xx 不重试交由 Failover 降级、429/5xx 重试）不一致。
    - 消息转换统一走 `src/llm/base.py` 的 `to_langchain_messages()` / `tool_calls_from_langchain()`；后者已内置 D-M1-6 的空 name 过滤。
    - LangChain 的 tool_calls 参数是**已解析的 dict**（不像 OpenAI 原始响应是 JSON 字符串），因此不存在 `parse_error`，工具的容错改为「参数校验失败」路径。
 
-9. **北大法宝 MCP 官方法律源（M3+ / F9 扩展，决策 D-PKULAW）**：接入 pkulaw.com 高权威源（法条原文 + 类案全文 + 核验 + 超链），优先级与现有官方源同级（`verified_official`）。
+11. **北大法宝 MCP 官方法律源（M3+ / F9 扩展，决策 D-PKULAW）**：接入 pkulaw.com 高权威源（法条原文 + 类案全文 + 核验 + 超链），优先级与现有官方源同级（`verified_official`）。
    - **懒加载 `mcp` SDK**：`src/search/pkulaw_mcp.py` 仅在真正调用时才 `import mcp`，未安装不影响模块导入与单测（单测一律用 `tests/fakes.FakePkulawClient`）。
    - **运行时按用途解析工具名**：pkulaw 聚合端点（默认 `mcp-law-agg`）把 10 个工具挂在一个 URL 下、名字带服务前缀且会变；客户端 `tools/list` 后按「用途关键词」匹配 name+description 建 purpose→name 映射，不硬编码工具名（SKILL 同款原则）。
      - ⚠️ **`_discover` 是协程，调用处必须 `await`**（历史 Bug）：漏 `await` **不报错**，只是 `_tool_map` 永远为空、静默退化为 `_FALLBACK_TOOL_NAMES`。而真端点实际工具名是**点分隔**（`mcp-law-search-service.search_article`），兜底快照是**下划线分隔**，一退化则**所有真实调用全部失败**且单测（Fake 绕过 `_a_call`）抓不到。回归测试见 `tests/test_pkulaw.py::TestPkulawToolDiscovery`。

@@ -80,3 +80,9 @@
 | D-M3-12 | **断线重连继续生成**用 **Redis 事件日志 + seq 游标重放**，**不接 checkpointer**：每个 SSE 事件写入 Redis List（`stream:{request_id}:events`，带 TTL），被动断线后生成任务**继续跑完**并持续写入；重连带 `after_seq` 先重放后订阅新事件。**主动 cancel 仍立即停** | ① 接 checkpointer 保存图状态后从断点续跑；② 断开即停、重连时重新生成 | checkpointer 保存的是**图状态**，解决不了「已流式输出的文本怎么补给重连的用户」——重连要补的是 SSE 事件流，不是图状态。把这两件事混为一谈就会误以为「要重连就得上 checkpointer」，这是本次最大的认知纠偏。Redis 事件日志天然支持重放与游标，且**零新增依赖**（Redis 已在用）。区分主动 cancel（立即停，省 Token）与被动断线（继续跑完，可重连）与现有 `/chat/cancel` 机制天然契合：`/chat/cancel` 走立即停，`http.disconnect` 走宽限期继续跑完 |
 | D-M3-10 | F11 场景清单做成**配置数据**：`src/rag/scenes.py` 中 `SCENES` 元组是数据（id/名称/A\|B/关键词/工具），`classify_scene()` 是逻辑；打分用三级权重（正则 3.0 > 强特征词 2.0 > 普通关键词 1.0） | ① 场景判定写死在代码分支里；② 接 LLM 做场景分类 | 配置化让「需产品定场景清单」从阻塞项降级为配置项——产品后续改清单只改 `SCENES`，不动任何函数。三级权重是必需的：中文查询里「合同」这类通用词会同时命中起草/审查/检索多个场景，必须让「起草」「审查」等强特征词和「第X条」正则压过通用词（单测 `test_law_article_query_not_mistaken_for_contract_scene` 守着这条）。LLM 分类要额外一次调用且不可预测，纯字符串匹配零延迟零成本、结果可解释 |
 | D-M3-11 | F13 本期**只保留 `sub_agent` state 字段**，不建规划节点扩展位 | 按 PRD 原文建「规划节点扩展位」 | 项目目前没有任何具体多 Agent 需求，此时设计的扩展位大概率在未来被推翻（典型过度设计）。F13 号称工作量最小，但最小是因为价值也最小，省下的工作量给 F12。已在 `state.py` 注释与本文档记录重新立项的触发条件（出现第二个 Agent 角色 / `AGENT_MAX_TOOL_TURNS` 成瓶颈 / 需并行子任务编排） |
+
+## M3 决策（2026-08-30）
+
+| # | 决策 | 否决的备选 | 原因 |
+| :--- | :--- | :--- | :--- |
+| D-M3-14 | ReAct 决策调用（`agent_node`）**必须经 `LLMBackend.chat_with_tools()` 公开入口**，不得直接 `chat_model.bind_tools().invoke()` | 直接 `chat_model.invoke()`（D-M3-13 迁移时的写法） | 重试（D-M1-3 的 `is_retryable`+`wait_and_log`）与 FailoverLLMBackend 的 4xx 运行期降级**都实现于 `chat_with_tools` 入口链路**——迁移时绕过该入口，两层语义在 ReAct 主路径同时静默失效（瞬时抖动一次即整轮失败、主后端 4xx 不再切 Ollama），测试全绿所以没被发现（FakeToolLLM 两条路径等价）。修复后后端内部仍是 bind_tools+invoke（D-M3-13 成果不变），预算 callback 挂在 ChatModel 上不受影响。**教训：LangChain 标准化迁移时，"标准写法"不能替代项目自建的横切语义层；凡绕过公开入口的写法都要逐项核对该入口承载的横切职责**（本例：重试、降级、预算三件事里预算挂在 model 上幸存，另两个丢了） |

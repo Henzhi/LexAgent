@@ -17,6 +17,7 @@ clean_expired / close，可通过 FAQ_CACHE_BACKEND 切换，pgvector 版作为�
     cache.store(query, answer, sources, related_laws)
     cache.invalidate_by_law(law_id)
 """
+
 from __future__ import annotations
 
 import json
@@ -38,7 +39,7 @@ DEFAULT_TTL_SECONDS = max(1, _FAQ_TTL_HOURS) * 3600
 
 # Redis key 前缀
 _FAQ_KEY_PREFIX = "faq:"
-_LAW_INDEX_PREFIX = "faq:law:"   # Set: 法律ID → 关联缓存条目ID
+_LAW_INDEX_PREFIX = "faq:law:"  # Set: 法律ID → 关联缓存条目ID
 _INDEX_NAME = "idx:faq"
 
 
@@ -70,9 +71,7 @@ class FAQCacheRedis:
     def ensure_index(self) -> None:
         """创建 HNSW 向量索引（已存在则跳过）"""
         if self._dim is None:
-            raise ValueError(
-                "无法确定向量维度，请传入 dim 参数或提供带 get_embedding_dim 的 embedder"
-            )
+            raise ValueError("无法确定向量维度，请传入 dim 参数或提供带 get_embedding_dim 的 embedder")
         try:
             from redis.commands.search.field import VectorField
             from redis.commands.search.index_definition import (
@@ -93,9 +92,7 @@ class FAQCacheRedis:
             )
             self._client.ft(_INDEX_NAME).create_index(
                 schema,
-                definition=IndexDefinition(
-                    prefix=[_FAQ_KEY_PREFIX], index_type=IndexType.HASH
-                ),
+                definition=IndexDefinition(prefix=[_FAQ_KEY_PREFIX], index_type=IndexType.HASH),
             )
             logger.info(f"FAQ 向量索引就绪: {_INDEX_NAME} (dim={self._dim})")
         except redis.ResponseError as e:
@@ -136,8 +133,14 @@ class FAQCacheRedis:
                 Query("*=>[KNN 1 @question_embed $vec AS score]")
                 .sort_by("score")
                 .return_fields(
-                    "id", "question", "answer", "sources",
-                    "related_laws", "confidence", "hit_count", "score",
+                    "id",
+                    "question",
+                    "answer",
+                    "sources",
+                    "related_laws",
+                    "confidence",
+                    "hit_count",
+                    "score",
                 )
                 .dialect(2),
                 query_params={"vec": self._pack_vector(vec)},

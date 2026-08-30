@@ -14,6 +14,7 @@
 2. `get_retry_after_seconds(exc)`：优先读取供应商返回的 Retry-After 头。
 3. `backoff_delay(...)`：指数退避 + 全抖动（jitter），避免惊群。
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,7 +57,6 @@ def _is_network_error(exc: BaseException) -> bool:
     if any(k in name for k in ("timeout", "connection", "connecterror", "network")):
         return True
 
-
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         # OSError 可能是磁盘/权限等，但连接相关大概率可重试；保守放行
         return True
@@ -92,8 +92,12 @@ def is_retryable(exc: BaseException) -> bool:
 
     # 兜底：显式标注可重试的异常类型（如自定义 RateLimitedError）
     return type(exc).__name__ in (
-        "RateLimitError", "RateLimitedError", "TooManyRequests",
-        "APIConnectionError", "APITimeoutError", "InternalServerError",
+        "RateLimitError",
+        "RateLimitedError",
+        "TooManyRequests",
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
     )
 
 
@@ -167,6 +171,9 @@ def wait_and_log(exc: BaseException, attempt: int, max_retries: int, logger_name
     log = logging.getLogger(logger_name)
     log.warning(
         "调用失败 (尝试 %d/%d)，%.1fs 后重试: %s",
-        attempt, max_retries, delay, exc,
+        attempt,
+        max_retries,
+        delay,
+        exc,
     )
     time.sleep(delay)

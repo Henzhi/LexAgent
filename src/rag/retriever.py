@@ -3,6 +3,7 @@
 
 v0.6: 移除 FAISS 后端，检索层统一走 pgvector（纯 PG 架构）。
 """
+
 from __future__ import annotations
 
 import logging
@@ -18,9 +19,11 @@ logger = logging.getLogger(__name__)
 # 检索结果模型
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RetrievedDoc:
     """单条检索结果"""
+
     content: str
     score: float
     law_name: str = ""
@@ -62,6 +65,7 @@ def doc_to_retrieved(doc, score: float) -> RetrievedDoc:
 # 抽象检索器
 # ---------------------------------------------------------------------------
 
+
 class BaseRetriever(ABC):
     """检索器抽象基类"""
 
@@ -80,6 +84,7 @@ class BaseRetriever(ABC):
 # pgvector v2 检索器（基于 PgvectorStore，纯 PG 默认）
 # ---------------------------------------------------------------------------
 
+
 class PgvectorStoreRetriever(BaseRetriever):
     """基于 PgvectorStore 的检索器（v0.5 企业级）
 
@@ -88,8 +93,8 @@ class PgvectorStoreRetriever(BaseRetriever):
 
     def __init__(
         self,
-        store,          # PgvectorStore 实例
-        embedder,       # EmbeddingAdapter 或 LawEmbedder
+        store,  # PgvectorStore 实例
+        embedder,  # EmbeddingAdapter 或 LawEmbedder
         embedding_model: str | None = None,
     ):
         self._store = store
@@ -128,6 +133,7 @@ class PgvectorStoreRetriever(BaseRetriever):
 # pgvector v1 检索器（旧表 law_chunks，兼容过渡期）
 # ---------------------------------------------------------------------------
 
+
 class PgvectorRetriever(BaseRetriever):
     """基于 PostgreSQL + pgvector 的检索器
 
@@ -139,7 +145,7 @@ class PgvectorRetriever(BaseRetriever):
 
     def __init__(
         self,
-        embedder,       # LawEmbedder 实例
+        embedder,  # LawEmbedder 实例
         conn_string: str = "",
         table_name: str = "law_chunks",
     ):
@@ -161,6 +167,7 @@ class PgvectorRetriever(BaseRetriever):
         except Exception:
             import psycopg2
             from pgvector.psycopg2 import register_vector
+
             logger.warning("PG 连接已断开，尝试重连...")
             try:
                 self._conn.close()
@@ -196,7 +203,7 @@ class PgvectorRetriever(BaseRetriever):
         """从 LangChain Document 列表构建 pgvector 索引"""
         total = len(documents)
         for i in range(0, total, batch_size):
-            batch = documents[i:i + batch_size]
+            batch = documents[i : i + batch_size]
             texts = [d.page_content for d in batch]
             embeddings = self._embedder.embed_documents(texts)
 
@@ -237,15 +244,17 @@ class PgvectorRetriever(BaseRetriever):
         results = []
         for row in rows:
             content, law, ch, sec, article, ctype, score = row
-            results.append(RetrievedDoc(
-                content=content,
-                score=round(float(score), 4),
-                law_name=law or "",
-                chapter=ch or "",
-                section=sec or "",
-                article_range=article or "",
-                chunk_type=ctype or "",
-            ))
+            results.append(
+                RetrievedDoc(
+                    content=content,
+                    score=round(float(score), 4),
+                    law_name=law or "",
+                    chapter=ch or "",
+                    section=sec or "",
+                    article_range=article or "",
+                    chunk_type=ctype or "",
+                )
+            )
         return results
 
     def search_by_law(self, query: str, law_name: str, top_k: int = 5) -> list[RetrievedDoc]:
@@ -265,15 +274,17 @@ class PgvectorRetriever(BaseRetriever):
         results = []
         for row in rows:
             content, law, ch, sec, article, ctype, score = row
-            results.append(RetrievedDoc(
-                content=content,
-                score=round(float(score), 4),
-                law_name=law or "",
-                chapter=ch or "",
-                section=sec or "",
-                article_range=article or "",
-                chunk_type=ctype or "",
-            ))
+            results.append(
+                RetrievedDoc(
+                    content=content,
+                    score=round(float(score), 4),
+                    law_name=law or "",
+                    chapter=ch or "",
+                    section=sec or "",
+                    article_range=article or "",
+                    chunk_type=ctype or "",
+                )
+            )
         return results
 
     def is_ready(self) -> bool:

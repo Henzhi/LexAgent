@@ -7,6 +7,7 @@
 - 本模块不写入 LangGraph（因确认需要人机往返），而是作为前端开关控制
   的前置步骤（/api/rewrite）独立调用。
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,7 +42,7 @@ def rewrite_query(llm, query: str) -> str:
     # 去掉模型可能加的前缀（如 "改写："、"回答："）
     for prefix in ("改写：", "改写:", "改写", "回答：", "回答:", "结果：", "结果:"):
         if out.startswith(prefix):
-            out = out[len(prefix):].strip()
+            out = out[len(prefix) :].strip()
             break
     # 去掉残留换行 / 多余空白
     out = " ".join(out.split())

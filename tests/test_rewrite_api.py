@@ -3,6 +3,7 @@
 不依赖 PostgreSQL / 主应用 lifespan（那部分需要 PG 才能启动），
 只验证路由绑定、Pydantic 解析与改写链路（LLM 以 mock 代替，避免依赖外部服务）。
 """
+
 from unittest.mock import patch
 
 from fastapi import FastAPI

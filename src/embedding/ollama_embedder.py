@@ -4,6 +4,7 @@ Ollama Embedding 后端实现。
 通过 ollama Python SDK 调用本地 Ollama 服务的 Embedding API。
 实现 LangChain Embeddings 兼容接口，可直接用于 LangChain 兼容的向量库。
 """
+
 from __future__ import annotations
 
 import logging

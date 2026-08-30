@@ -7,6 +7,7 @@ LLM 后端工厂函数。
 M1（F5）：`create_llm_backend(failover=True)` 构建 FailoverLLMBackend
 （主 openai + 备 ollama），主后端创建失败或运行期不可重试异常时自动降级。
 """
+
 from __future__ import annotations
 
 import logging
@@ -63,10 +64,7 @@ def create_llm_backend(
     elif backend_type in ("openai", "openai_compatible"):
         return _create_openai(**kwargs)
     else:
-        raise ValueError(
-            f"不支持的 LLM 后端类型: '{backend_type}'。"
-            f"支持的类型: ollama, openai"
-        )
+        raise ValueError(f"不支持的 LLM 后端类型: '{backend_type}'。支持的类型: ollama, openai")
 
 
 def _create_failover(**kwargs) -> FailoverLLMBackend:
@@ -78,8 +76,13 @@ def _create_failover(**kwargs) -> FailoverLLMBackend:
     - 备用后端类型由 LLM_FALLBACK_BACKEND 控制（默认 ollama）。
     """
     from src.config import (
-        LLM_FALLBACK_BACKEND, LLM_FALLBACK_MODEL, LLM_FALLBACK_BASE_URL,
-        LLM_MAX_TOKENS, LLM_MAX_RETRIES, LLM_TEMPERATURE, LLM_TOP_P,
+        LLM_FALLBACK_BACKEND,
+        LLM_FALLBACK_MODEL,
+        LLM_FALLBACK_BASE_URL,
+        LLM_MAX_TOKENS,
+        LLM_MAX_RETRIES,
+        LLM_TEMPERATURE,
+        LLM_TOP_P,
     )
 
     primary: OpenAICompatibleBackend | None = None
@@ -109,9 +112,7 @@ def _create_failover(**kwargs) -> FailoverLLMBackend:
         if primary is not None:
             logger.warning(f"[failover] 备用后端创建失败，仅使用主后端: {e}")
             return primary
-        raise RuntimeError(
-            f"主备 LLM 后端均创建失败: primary={primary_error}, fallback={e}"
-        )
+        raise RuntimeError(f"主备 LLM 后端均创建失败: primary={primary_error}, fallback={e}")
 
     failover = FailoverLLMBackend(primary=primary, fallback=fallback)
     if primary is None:
@@ -151,9 +152,7 @@ def _create_openai(**kwargs) -> OpenAICompatibleBackend:
     max_retries = kwargs.get("max_retries", int(os.getenv("LLM_MAX_RETRIES", "3")))
 
     if not api_key:
-        raise ValueError(
-            "使用 OpenAI 兼容后端必须设置 OPENAI_API_KEY 环境变量"
-        )
+        raise ValueError("使用 OpenAI 兼容后端必须设置 OPENAI_API_KEY 环境变量")
 
     safe_key = api_key[:8] + "..." if len(api_key) > 8 else "***"
     logger.info(f"创建 OpenAI 兼容后端: model={model}, base_url={base_url}, api_key={safe_key}")

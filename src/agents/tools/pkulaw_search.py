@@ -14,6 +14,7 @@ pkulaw_search / pkulaw_verify 内置工具（M3+ / F9 扩展，决策 D-PKULAW�
 - 预算额度用尽 → ToolResult(ok=False)，summary 首词"法宝额度已用尽"（内部库与
   网络仍可用，回答照常生成，符合 REQ-UW1 语义）。
 """
+
 from __future__ import annotations
 
 import logging
@@ -75,9 +76,12 @@ def build_pkulaw_search_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
         """
         if not pk.is_available():
             return ToolResult(
-                tool="pkulaw_search", call_id="", ok=False,
+                tool="pkulaw_search",
+                call_id="",
+                ok=False,
                 summary="法宝检索失败：北大法宝未配置（URL/Token 缺失或 SDK 未安装）",
-                data={}, source=SOURCE_LEGAL,
+                data={},
+                source=SOURCE_LEGAL,
             )
         try:
             if mode == "article_search":
@@ -90,11 +94,17 @@ def build_pkulaw_search_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
                 items = pk.get_law_list(title, effectiveness=effectiveness or None, max_results=top_k)
             else:
                 return ToolResult(
-                    tool="pkulaw_search", call_id="", ok=False,
-                    summary=f"参数校验失败: 未知 mode={mode}", data={}, source=SOURCE_LEGAL,
+                    tool="pkulaw_search",
+                    call_id="",
+                    ok=False,
+                    summary=f"参数校验失败: 未知 mode={mode}",
+                    data={},
+                    source=SOURCE_LEGAL,
                 )
             return ToolResult(
-                tool="pkulaw_search", call_id="", ok=True,
+                tool="pkulaw_search",
+                call_id="",
+                ok=True,
                 summary=_build_search_summary(items),
                 data={"results": items, "count": len(items), "mode": mode},
                 source=SOURCE_LEGAL,
@@ -102,14 +112,22 @@ def build_pkulaw_search_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
         except BudgetExceededError as e:
             logger.warning(f"pkulaw_search 当日预算已用尽: {e}")
             return ToolResult(
-                tool="pkulaw_search", call_id="", ok=False,
-                summary=f"法宝额度已用尽: {e}", data={}, source=SOURCE_LEGAL,
+                tool="pkulaw_search",
+                call_id="",
+                ok=False,
+                summary=f"法宝额度已用尽: {e}",
+                data={},
+                source=SOURCE_LEGAL,
             )
         except Exception as e:
             logger.warning(f"pkulaw_search 检索失败（法宝检索失败）: {e}")
             return ToolResult(
-                tool="pkulaw_search", call_id="", ok=False,
-                summary=f"法宝检索失败: {e}", data={}, source=SOURCE_LEGAL,
+                tool="pkulaw_search",
+                call_id="",
+                ok=False,
+                summary=f"法宝检索失败: {e}",
+                data={},
+                source=SOURCE_LEGAL,
             )
 
     return pkulaw_search
@@ -129,7 +147,9 @@ def build_pkulaw_verify_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
         ],
         text: Annotated[str, "待核验/待处理的整段文本（law_name/case_number/add_links 用）"] = "",
         userlaw: Annotated[list[dict], "法条核验-待核对条文，每项 {title, article_number, text}（provision 用）"] = [],
-        answerlaw: Annotated[list[dict], "法条核验-AI 自写条文，每项 {title, article_number, text}（provision 用）"] = [],
+        answerlaw: Annotated[
+            list[dict], "法条核验-AI 自写条文，每项 {title, article_number, text}（provision 用）"
+        ] = [],
         prompt: Annotated[str, "法条核验补充说明（可选）"] = "",
     ) -> ToolResult:
         """核验法律引用真伪与加可点击链接（反幻觉闭环）。
@@ -142,9 +162,12 @@ def build_pkulaw_verify_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
         """
         if not pk.is_available():
             return ToolResult(
-                tool="pkulaw_verify", call_id="", ok=False,
+                tool="pkulaw_verify",
+                call_id="",
+                ok=False,
                 summary="法宝核验失败：北大法宝未配置（URL/Token 缺失或 SDK 未安装）",
-                data={}, source=SOURCE_LEGAL,
+                data={},
+                source=SOURCE_LEGAL,
             )
         try:
             if mode == "law_name":
@@ -156,31 +179,49 @@ def build_pkulaw_verify_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
             elif mode == "add_links":
                 linked = pk.add_links(text)
                 return ToolResult(
-                    tool="pkulaw_verify", call_id="", ok=True,
+                    tool="pkulaw_verify",
+                    call_id="",
+                    ok=True,
                     summary=truncate_summary(f"已加链（{len(linked)} 字）"),
-                    data={"linked": linked, "mode": mode}, source=SOURCE_LEGAL,
+                    data={"linked": linked, "mode": mode},
+                    source=SOURCE_LEGAL,
                 )
             else:
                 return ToolResult(
-                    tool="pkulaw_verify", call_id="", ok=False,
-                    summary=f"参数校验失败: 未知 mode={mode}", data={}, source=SOURCE_LEGAL,
+                    tool="pkulaw_verify",
+                    call_id="",
+                    ok=False,
+                    summary=f"参数校验失败: 未知 mode={mode}",
+                    data={},
+                    source=SOURCE_LEGAL,
                 )
             return ToolResult(
-                tool="pkulaw_verify", call_id="", ok=True,
+                tool="pkulaw_verify",
+                call_id="",
+                ok=True,
                 summary=truncate_summary(f"北大法宝核验完成（{mode}）"),
-                data={"result": raw, "mode": mode}, source=SOURCE_LEGAL,
+                data={"result": raw, "mode": mode},
+                source=SOURCE_LEGAL,
             )
         except BudgetExceededError as e:
             logger.warning(f"pkulaw_verify 当日预算已用尽: {e}")
             return ToolResult(
-                tool="pkulaw_verify", call_id="", ok=False,
-                summary=f"法宝额度已用尽: {e}", data={}, source=SOURCE_LEGAL,
+                tool="pkulaw_verify",
+                call_id="",
+                ok=False,
+                summary=f"法宝额度已用尽: {e}",
+                data={},
+                source=SOURCE_LEGAL,
             )
         except Exception as e:
             logger.warning(f"pkulaw_verify 核验失败（法宝核验失败）: {e}")
             return ToolResult(
-                tool="pkulaw_verify", call_id="", ok=False,
-                summary=f"法宝核验失败: {e}", data={}, source=SOURCE_LEGAL,
+                tool="pkulaw_verify",
+                call_id="",
+                ok=False,
+                summary=f"法宝核验失败: {e}",
+                data={},
+                source=SOURCE_LEGAL,
             )
 
     return pkulaw_verify

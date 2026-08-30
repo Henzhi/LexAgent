@@ -5,6 +5,7 @@
   - 双栏排版：按阅读顺序合并
   - 加密 PDF：检测并报错
 """
+
 from __future__ import annotations
 
 import logging

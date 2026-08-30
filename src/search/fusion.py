@@ -18,6 +18,7 @@
   superseded=True（内部库优先），并在返回值 notes 中汇总冲突法名，
   供上层提示用户"该信息以内部库为准/未经官方验证"。
 """
+
 from __future__ import annotations
 
 import re
@@ -63,11 +64,7 @@ def _extract_law_names(text: str) -> set[str]:
     """从文本中提取《XX法》形式的法名并归一化（冲突检测用，宽松匹配）。"""
     if not text:
         return set()
-    return {
-        _norm_law_name(m)
-        for m in re.findall(r"[《〈]([^《》〉]{2,30})[》〉]", str(text))
-        if m.strip()
-    }
+    return {_norm_law_name(m) for m in re.findall(r"[《〈]([^《》〉]{2,30})[》〉]", str(text)) if m.strip()}
 
 
 def _internal_key(doc: dict) -> tuple:
@@ -148,18 +145,20 @@ def fuse_evidence(
         law_name = (d.get("law_name") or "").strip()
         if law_name:
             internal_law_names.add(_norm_law_name(law_name))
-        items.append({
-            "law_name": law_name,
-            "chapter": d.get("chapter", ""),
-            "section": d.get("section", ""),
-            "article_range": d.get("article_range", ""),
-            "citation": d.get("citation", ""),
-            "content": d.get("content", ""),
-            "score": float(d.get("score", 0.0) or 0.0),
-            "source": "internal_kb",
-            "verification": VERIFIED_INTERNAL,
-            "fused_score": FUSION_WEIGHT_INTERNAL * (0.5 + 0.5 * float(d.get("score", 0.0) or 0.0)),
-        })
+        items.append(
+            {
+                "law_name": law_name,
+                "chapter": d.get("chapter", ""),
+                "section": d.get("section", ""),
+                "article_range": d.get("article_range", ""),
+                "citation": d.get("citation", ""),
+                "content": d.get("content", ""),
+                "score": float(d.get("score", 0.0) or 0.0),
+                "source": "internal_kb",
+                "verification": VERIFIED_INTERNAL,
+                "fused_score": FUSION_WEIGHT_INTERNAL * (0.5 + 0.5 * float(d.get("score", 0.0) or 0.0)),
+            }
+        )
 
     # ---- 2. 官方源（验证状态按子来源）----
     for r in legal_results or []:
@@ -169,21 +168,23 @@ def fuse_evidence(
                 continue
             seen_url.add(url)
         sub = r.get("source") or SOURCE_NATIONAL_LAW_DB
-        items.append({
-            "law_name": (r.get("title") or "").strip(),
-            "chapter": "",
-            "section": "",
-            "article_range": "",
-            "citation": (r.get("title") or "").strip(),
-            "content": r.get("content", ""),
-            "score": float(r.get("score", 0.0) or 0.0),
-            "source": "legal_source",
-            "sub_source": sub,
-            "verification": _LEGAL_SUBSOURCE_VERIFICATION.get(sub, VERIFIED_OFFICIAL),
-            "law_status": r.get("law_status", ""),
-            "url": url,
-            "fused_score": FUSION_WEIGHT_LEGAL,
-        })
+        items.append(
+            {
+                "law_name": (r.get("title") or "").strip(),
+                "chapter": "",
+                "section": "",
+                "article_range": "",
+                "citation": (r.get("title") or "").strip(),
+                "content": r.get("content", ""),
+                "score": float(r.get("score", 0.0) or 0.0),
+                "source": "legal_source",
+                "sub_source": sub,
+                "verification": _LEGAL_SUBSOURCE_VERIFICATION.get(sub, VERIFIED_OFFICIAL),
+                "law_status": r.get("law_status", ""),
+                "url": url,
+                "fused_score": FUSION_WEIGHT_LEGAL,
+            }
+        )
 
     # ---- 3. 网络结果（仅线索；与内部库法名重合 → 冲突标记，内部库优先）----
     conflict_laws: set[str] = set()
@@ -203,20 +204,22 @@ def fuse_evidence(
             web_conflicts += 1
             conflict_laws.update(mentioned)
         tavily_score = max(0.0, min(float(r.get("score", 0.0) or 0.0), 1.0))
-        items.append({
-            "law_name": title,
-            "chapter": "",
-            "section": "",
-            "article_range": "",
-            "citation": title,
-            "content": content,
-            "score": tavily_score,
-            "source": "web",
-            "verification": WEB_UNVERIFIED,
-            "url": url,
-            "superseded": superseded,          # True = 内部库已有该法，以内部库为准
-            "fused_score": FUSION_WEIGHT_WEB * tavily_score,
-        })
+        items.append(
+            {
+                "law_name": title,
+                "chapter": "",
+                "section": "",
+                "article_range": "",
+                "citation": title,
+                "content": content,
+                "score": tavily_score,
+                "source": "web",
+                "verification": WEB_UNVERIFIED,
+                "url": url,
+                "superseded": superseded,  # True = 内部库已有该法，以内部库为准
+                "fused_score": FUSION_WEIGHT_WEB * tavily_score,
+            }
+        )
 
     # ---- 4. 排序（fused_score 降序；内部库天然权重最高）+ 配额截断 ----
     items.sort(key=lambda x: x["fused_score"], reverse=True)

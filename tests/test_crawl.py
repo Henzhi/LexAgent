@@ -5,6 +5,7 @@
   - 文件落地格式（首行为标题）与 manifest 增量记录往返
   - FastAPI 路由: /api/crawl/types 与 /api/crawl 任务提交 + 状态轮询
 """
+
 from __future__ import annotations
 
 import time
@@ -22,11 +23,16 @@ from src.knowledge.crawler.npc_crawler import CrawlResult
 # 1. 类型映射 / 校验
 # ---------------------------------------------------------------------------
 
+
 def test_type_map_keys():
     # flk 顶级分类规范值（v0.6 对齐国家法律法规数据库分类）
     assert set(TYPE_MAP.keys()) >= {
-        "constitution", "law", "regulation", "supervision",
-        "judicial_interpretation", "local_regulation"
+        "constitution",
+        "law",
+        "regulation",
+        "supervision",
+        "judicial_interpretation",
+        "local_regulation",
     }
     # 每个类型都有 (flfg_code_ids, subdir) 二元组
     for codes, subdir in TYPE_MAP.values():
@@ -37,26 +43,29 @@ def test_type_map_keys():
 def test_doc_type_normalize():
     """历史旧值归一到规范 doc_type"""
     from src.knowledge.doc_types import normalize_doc_type
+
     assert normalize_doc_type("judicial") == "judicial_interpretation"
     assert normalize_doc_type("interpretation") == "judicial_interpretation"
     assert normalize_doc_type("local") == "local_regulation"
-    assert normalize_doc_type("law") == "law"          # 已是规范值
+    assert normalize_doc_type("law") == "law"  # 已是规范值
     assert normalize_doc_type("  REGULATION ") == "regulation"  # 大小写/空白容忍
 
 
 def test_status_from_sxx():
     """flk 效力状态码映射：1废止/2已修改/3有效/4未生效"""
     from src.knowledge.doc_types import status_from_sxx
+
     assert status_from_sxx("1") == "repealed"
     assert status_from_sxx("2") == "revised"
     assert status_from_sxx("3") == "active"
     assert status_from_sxx("4") == "pending"
-    assert status_from_sxx(None) == "active"     # 未知/缺失兜底为有效
-    assert status_from_sxx(1) == "repealed"      # 数字形式兼容
+    assert status_from_sxx(None) == "active"  # 未知/缺失兜底为有效
+    assert status_from_sxx(1) == "repealed"  # 数字形式兼容
 
 
 def test_status_label():
     from src.knowledge.doc_types import status_label
+
     assert status_label("active") == "现行有效"
     assert status_label("repealed") == "已废止"
     assert status_label("pending") == "尚未生效"
@@ -65,6 +74,7 @@ def test_status_label():
 def test_doc_type_from_flxz():
     """flk 法律形式 flxz 自动分类映射"""
     from src.knowledge.doc_types import doc_type_from_flxz
+
     assert doc_type_from_flxz("宪法") == "constitution"
     assert doc_type_from_flxz("法律") == "law"
     assert doc_type_from_flxz("行政法规") == "regulation"
@@ -81,6 +91,7 @@ def test_doc_type_from_flxz():
 def test_crawl_auto_accepted():
     """auto 自动分类模式被 crawl() 接受且不被判为不支持"""
     from src.knowledge.crawler.npc_crawler import UNSUPPORTED_TYPES
+
     assert "auto" not in UNSUPPORTED_TYPES
 
 
@@ -113,7 +124,9 @@ def test_crawl_auto_skip_existing_by_status():
         def __init__(self, store):
             self.store = store
 
-        def ingest_text(self, title, text, doc_type="law", source="", effective_date=None, force=False, status="active"):
+        def ingest_text(
+            self, title, text, doc_type="law", source="", effective_date=None, force=False, status="active"
+        ):
             self.store.writes.append((title, status, doc_type))
             self.store.known[(title, status)] = "doc-exists"
             return 5
@@ -124,8 +137,8 @@ def test_crawl_auto_skip_existing_by_status():
 
     # 列表命中 3 条：同标题不同效力 + 一个完全不同标题
     items = [
-        {"bbbs": "b1", "title": "刑法", "flxz": "法律", "sxx": "3"},   # active
-        {"bbbs": "b2", "title": "刑法", "flxz": "法律", "sxx": "1"},   # repealed（同标题不同状态）
+        {"bbbs": "b1", "title": "刑法", "flxz": "法律", "sxx": "3"},  # active
+        {"bbbs": "b2", "title": "刑法", "flxz": "法律", "sxx": "1"},  # repealed（同标题不同状态）
         {"bbbs": "b3", "title": "某司法解释", "flxz": "司法解释", "sxx": "3"},
     ]
     crawler._fetch_list = mock.Mock(return_value=items)
@@ -154,6 +167,7 @@ def test_unsupported_case_raises():
 # ---------------------------------------------------------------------------
 # 2. 落地格式 + manifest 往返（临时目录，不联网）
 # ---------------------------------------------------------------------------
+
 
 def test_save_format_and_manifest_roundtrip(tmp_path: Path):
     crawler = NpcLawCrawler(law_data_dir=tmp_path)
@@ -184,10 +198,12 @@ def test_save_format_and_manifest_roundtrip(tmp_path: Path):
 # 3. API 路由（最小 app，避免触发主 lifespan 加载引擎）
 # ---------------------------------------------------------------------------
 
+
 def _make_client() -> TestClient:
     app = FastAPI()
     from src.api.routes import router as api_router
     from src.api.auth import require_registered_user
+
     # 管理接口已要求登录（审计修复），测试中覆写依赖以离线通过
     app.dependency_overrides[require_registered_user] = lambda: "test-user"
     app.include_router(api_router, prefix="/api")
@@ -212,8 +228,7 @@ def test_crawl_submit_and_status(monkeypatch):
         def crawl(self, **kwargs):
             # 校验参数确实传到了爬虫
             assert kwargs["doc_type"] == "law"
-            return CrawlResult(total=1, added=1, updated=0, skipped=0, failed=0,
-                               files=["laws/test.txt"], errors=[])
+            return CrawlResult(total=1, added=1, updated=0, skipped=0, failed=0, files=["laws/test.txt"], errors=[])
 
     monkeypatch.setattr("src.knowledge.crawler.NpcLawCrawler", FakeCrawler)
 

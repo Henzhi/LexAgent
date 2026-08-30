@@ -14,6 +14,7 @@ F14 预算熔断的 LangChain callback 埋点（D-M3-13）。
 **为什么不用 LangChain 的 on_llm_new_token 计数**：流式一次调用会产生成百上千个
 token 回调，而预算口径是「逻辑调用次数」，必须每次调用只计一次。
 """
+
 from __future__ import annotations
 
 import logging

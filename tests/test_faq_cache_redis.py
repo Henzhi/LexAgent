@@ -9,6 +9,7 @@ FAQ 缓存 Redis Stack 后端单元测试。
   5. invalidate_by_law 级联删除
   6. clean_expired 为 no-op（TTL 自动过期）
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -46,6 +47,7 @@ class TestInterface:
     def test_hit_threshold_shared(self):
         from src.memory.faq_cache import HIT_THRESHOLD as pg_th
         from src.memory.faq_cache_redis import HIT_THRESHOLD as redis_th
+
         assert pg_th == redis_th == 0.95
 
 
@@ -81,9 +83,7 @@ class TestEnsureIndex:
 
     def test_index_exists_is_idempotent(self):
         cache, client = _make_cache(dim=1024)
-        client.ft.return_value.create_index.side_effect = redis.ResponseError(
-            "Index already exists"
-        )
+        client.ft.return_value.create_index.side_effect = redis.ResponseError("Index already exists")
         cache.ensure_index()  # 不应抛异常
 
 
@@ -187,7 +187,8 @@ class TestStore:
         cache, client = _make_cache(dim=1024)
         cache._embedder.embed_query.return_value = [0.2] * 1024
         cache.store(
-            "问题", "答案",
+            "问题",
+            "答案",
             sources=[{"law_name": "民法典"}],
             related_laws=["law1", "law2"],
             confidence=0.9,
@@ -204,7 +205,10 @@ class TestStore:
         cache, client = _make_cache(dim=1024)
         cache._embedder.embed_query.return_value = [0.2] * 1024
         cache.store(
-            "问题", "答案", related_laws=["law1"], confidence=0.9,
+            "问题",
+            "答案",
+            related_laws=["law1"],
+            confidence=0.9,
         )
         # 对 faq:law:law1 也设置了 TTL（与 faq key 相同）
         expire_keys = [c[0][0] for c in client.expire.call_args_list]

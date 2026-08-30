@@ -21,6 +21,7 @@ def mock_ollama_embed():
         mock_client.embed.side_effect = fake_embed
 
         from src.embedding.embedder import LawEmbedder
+
         embedder = LawEmbedder(model="bge-m3", base_url="http://localhost:11434", batch_size=8)
         yield embedder
 
@@ -75,9 +76,12 @@ class TestLawEmbedder:
             mock_client.embed.side_effect = fake_embed_with_retry
 
             from src.embedding.embedder import LawEmbedder
+
             embedder = LawEmbedder(
-                model="bge-m3", base_url="http://localhost:11434",
-                max_retries=3, retry_delay=0.01,
+                model="bge-m3",
+                base_url="http://localhost:11434",
+                max_retries=3,
+                retry_delay=0.01,
             )
             embeddings = embedder.embed_documents(["测试"])
             assert len(embeddings) == 1

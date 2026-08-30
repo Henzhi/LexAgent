@@ -6,6 +6,7 @@ Reranker 二次精排模块。
 使用 BAAI/bge-reranker-v2-m3 Cross-Encoder,
 对中文法律文本重排序效果显著。
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,7 +31,10 @@ class Reranker:
         logger.info("Reranker 就绪")
 
     def rerank(
-        self, query: str, docs: list[RetrievedDoc], top_k: int = 5,
+        self,
+        query: str,
+        docs: list[RetrievedDoc],
+        top_k: int = 5,
     ) -> list[RetrievedDoc]:
         """精排候选文档，返回 top_k"""
         if len(docs) <= top_k:

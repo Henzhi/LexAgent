@@ -17,6 +17,7 @@
 但具体码→部门法的精确映射未获官方权威来源确认，故本层仍以顶级分类为
 存储单位，不冒进拆分；部门法细分留作后续增强。
 """
+
 from __future__ import annotations
 
 # flk 分类码 -> 规范 doc_type（爬虫用）
@@ -24,8 +25,13 @@ from __future__ import annotations
 # 行政法规 210；监察法规 220；地方法规 230；司法解释 320/340
 FLK_CODE_TO_DOC_TYPE: dict[int, str] = {
     100: "constitution",
-    110: "law", 120: "law", 130: "law", 140: "law",
-    150: "law", 160: "law", 180: "law",
+    110: "law",
+    120: "law",
+    130: "law",
+    140: "law",
+    150: "law",
+    160: "law",
+    180: "law",
     210: "regulation",
     220: "supervision",
     230: "local_regulation",
@@ -123,10 +129,10 @@ def crawlable_types() -> dict[str, str]:
 # 映射到 documents.status 存储值 + 中文名。效力状态独立于 doc_type，
 # 用于识别"有效/废止/未生效"法律。
 SXX_TO_STATUS: dict[str, str] = {
-    "1": "repealed",    # 已废止
-    "2": "revised",     # 已修改（存在新版本）
-    "3": "active",      # 现行有效
-    "4": "pending",     # 尚未生效（已公布未生效）
+    "1": "repealed",  # 已废止
+    "2": "revised",  # 已修改（存在新版本）
+    "3": "active",  # 现行有效
+    "4": "pending",  # 尚未生效（已公布未生效）
 }
 
 # 文档状态 -> 中文名 / 前端标签

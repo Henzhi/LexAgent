@@ -10,6 +10,7 @@
 
 线程安全：降级切换用锁保护，多线程并发首败时只降级一次。
 """
+
 from __future__ import annotations
 
 import logging
@@ -121,9 +122,7 @@ class FailoverLLMBackend(LLMBackend):
             if self._degraded:
                 return
             self._degraded = True
-            logger.warning(
-                f"[failover] 主后端调用失败（不可重试），切换到备用后端 {self.active_backend}: {exc}"
-            )
+            logger.warning(f"[failover] 主后端调用失败（不可重试），切换到备用后端 {self.active_backend}: {exc}")
 
     # ------------------------------------------------------------------
     # LLMBackend 接口实现

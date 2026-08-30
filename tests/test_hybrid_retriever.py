@@ -5,6 +5,7 @@
 在两集上均不如条件激活（语义 -6、法条级 -1.2），故 always_on 默认关闭。
 这些结论依赖激活判据与融合公式的行为稳定，必须有测试守住。
 """
+
 from __future__ import annotations
 
 import pytest

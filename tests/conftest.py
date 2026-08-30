@@ -1,4 +1,5 @@
 """pytest fixtures — mock LLM/Ollama，避免依赖外部服务"""
+
 from __future__ import annotations
 
 import pytest
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 def client() -> TestClient:
     """返回 FastAPI TestClient，直接测试路由"""
     from src.api.main import app
+
     return TestClient(app)
 
 
@@ -25,6 +27,7 @@ def mock_env(monkeypatch):
 def fake_retriever():
     """返回 FakeRetriever 实例（tests/fakes.py）"""
     from tests.fakes import FakeRetriever
+
     return FakeRetriever()
 
 
@@ -32,4 +35,5 @@ def fake_retriever():
 def fake_tool_llm():
     """返回 FakeToolLLM 实例（tests/fakes.py）"""
     from tests.fakes import FakeToolLLM
+
     return FakeToolLLM()

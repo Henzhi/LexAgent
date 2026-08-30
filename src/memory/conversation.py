@@ -12,6 +12,7 @@
     mgr.save_memory(user_id, session_id, messages)   # 对话结束时调用
     summaries = mgr.retrieve(user_id, query)          # 新问题时调用
 """
+
 from __future__ import annotations
 
 import json
@@ -31,6 +32,7 @@ def _locked(method):
     流式桥接改造后，记忆检索可能在多个请求的线程池 worker 中并发执行，
     必须保护共享连接。
     """
+
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         lock = getattr(self, "_lock", None)
@@ -40,7 +42,9 @@ def _locked(method):
             self._lock = lock
         with lock:
             return method(self, *args, **kwargs)
+
     return wrapper
+
 
 # 摘要生成 Prompt
 _SUMMARY_PROMPT = """请将以下法律咨询对话总结为一段结构化摘要，用于后续记忆检索。
@@ -65,9 +69,9 @@ TIME_DECAY_DAYS = 7  # 半衰期：记忆权重每 7 天衰减一半（指数衰
 
 # importance 预筛（写入链路规则预筛，避免低价值对话产生噪音记忆）：
 # 简单规则分档，后续可用离线任务做更细粒度的冲突检测与合并。
-IMPORTANCE_LOW_MSGS = 6      # ≥6 轮（触发线）：基础重要度
-IMPORTANCE_MID_MSGS = 10     # ≥10 轮：中
-IMPORTANCE_HIGH_MSGS = 15    # ≥15 轮：高
+IMPORTANCE_LOW_MSGS = 6  # ≥6 轮（触发线）：基础重要度
+IMPORTANCE_MID_MSGS = 10  # ≥10 轮：中
+IMPORTANCE_HIGH_MSGS = 15  # ≥15 轮：高
 
 # 记忆 TTL（天）：与 init.sql 默认值保持一致
 MEMORY_TTL_DAYS = 30
@@ -83,7 +87,7 @@ class ConversationMemoryManager:
         self,
         conn_string: str,
         embedder=None,  # EmbeddingAdapter | None（清理路径可传 None）
-        llm=None,       # LLMAdapter | None（清理路径可传 None）
+        llm=None,  # LLMAdapter | None（清理路径可传 None）
     ):
         """记忆管理器。
 
@@ -112,10 +116,7 @@ class ConversationMemoryManager:
         self._ensure_connection()
         try:
             with self._conn.cursor() as cur:
-                cur.execute(
-                    "ALTER TABLE conversation_memories "
-                    "ADD COLUMN IF NOT EXISTS importance REAL DEFAULT 0.6"
-                )
+                cur.execute("ALTER TABLE conversation_memories ADD COLUMN IF NOT EXISTS importance REAL DEFAULT 0.6")
                 cur.execute(
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_user_session "
                     "ON conversation_memories(user_id, session_id)"
@@ -156,9 +157,7 @@ class ConversationMemoryManager:
         """
         self._ensure_connection()
         with self._conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM conversation_memories WHERE expires_at < NOW()"
-            )
+            cur.execute("DELETE FROM conversation_memories WHERE expires_at < NOW()")
             count = cur.rowcount
         self._conn.commit()
         if count:
@@ -221,15 +220,13 @@ class ConversationMemoryManager:
         # 前端可能多次整体保存同一会话，不幂等会反复插摘要导致记忆污染。
         with self._conn.cursor() as cur:
             cur.execute(
-                "SELECT message_count FROM conversation_memories "
-                "WHERE user_id = %s AND session_id = %s",
+                "SELECT message_count FROM conversation_memories WHERE user_id = %s AND session_id = %s",
                 (user_id, session_id),
             )
             row = cur.fetchone()
         if row is not None and row[0] is not None and row[0] >= len(messages):
             logger.debug(
-                f"记忆已存在且对话未增长，跳过写入: session={session_id[:8]}... "
-                f"(stored={row[0]}, now={len(messages)})"
+                f"记忆已存在且对话未增长，跳过写入: session={session_id[:8]}... (stored={row[0]}, now={len(messages)})"
             )
             return None
 
@@ -343,14 +340,16 @@ class ConversationMemoryManager:
             imp_norm = 0.5 + 0.5 * imp
             score = score * imp_norm
 
-            results.append({
-                "summary": summary,
-                "entities": entities or {},
-                "score": round(float(score), 4),
-                "importance": round(float(imp), 4),
-                "message_count": msg_count,
-                "created_at": created_at.isoformat() if created_at else None,
-            })
+            results.append(
+                {
+                    "summary": summary,
+                    "entities": entities or {},
+                    "score": round(float(score), 4),
+                    "importance": round(float(imp), 4),
+                    "message_count": msg_count,
+                    "created_at": created_at.isoformat() if created_at else None,
+                }
+            )
 
         # 按衰减后分数重排
         results.sort(key=lambda x: x["score"], reverse=True)

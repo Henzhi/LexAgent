@@ -4,6 +4,7 @@
 从 .env 文件和环境变量加载所有可配参数，提供一站式配置入口。
 模块级变量可直接 from src.config import xxx 使用。
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,9 +40,7 @@ def _safe_float(key: str, default: float) -> float:
     try:
         return float(val)
     except (ValueError, TypeError):
-        logging.getLogger(__name__).warning(
-            f"环境变量 {key}='{val}' 不是合法浮点数，使用默认值 {default}"
-        )
+        logging.getLogger(__name__).warning(f"环境变量 {key}='{val}' 不是合法浮点数，使用默认值 {default}")
         return default
 
 
@@ -53,9 +52,7 @@ def _safe_int(key: str, default: int) -> int:
     try:
         return int(val)
     except (ValueError, TypeError):
-        logging.getLogger(__name__).warning(
-            f"环境变量 {key}='{val}' 不是合法整数，使用默认值 {default}"
-        )
+        logging.getLogger(__name__).warning(f"环境变量 {key}='{val}' 不是合法整数，使用默认值 {default}")
         return default
 
 
@@ -133,13 +130,13 @@ RETRIEVAL_SIM_THRESHOLD = _safe_float("RETRIEVAL_SIM_THRESHOLD", 0.0)
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANK_RECALL_K = _safe_int("RERANK_RECALL_K", 15)  # 粗排召回数
-RERANK_TOP_K = _safe_int("RERANK_TOP_K", 15)          # 精排后返回数
+RERANK_TOP_K = _safe_int("RERANK_TOP_K", 15)  # 精排后返回数
 
 # 连续片段扩展：检索后自动拉取相邻 ±N 条条文
 ADJACENT_ENABLED = os.getenv("ADJACENT_ENABLED", "true").lower() == "true"
 # 相邻扩展窗口：原默认 ±3 会把每条命中扩展成 7 条，引用列表被大量
 # "相邻但不相关"的条文污染；±1 仅保留紧邻上下文（引用仍以检索命中为主）
-ADJACENT_WINDOW = _safe_int("ADJACENT_WINDOW", 1)     # ±N 条
+ADJACENT_WINDOW = _safe_int("ADJACENT_WINDOW", 1)  # ±N 条
 
 # BM25 关键词检索（rank-based 混合，条件激活）
 # 设计：BM25 只用"返回顺序（排名）"参与加权 RRF 融合，不碰向量分数——
@@ -148,11 +145,11 @@ ADJACENT_WINDOW = _safe_int("ADJACENT_WINDOW", 1)     # ±N 条
 # 法条级评测验证：条件混合(w=3.0) 在 339 条"法名+条号/法名+关键词"查询上
 # Hit@5 75.8%→86.1%、Hit@10 82.0%→91.7%（旧语义集 100 条上持平 69%）。
 HYBRID_ENABLED = os.getenv("HYBRID_ENABLED", "true").lower() == "true"
-HYBRID_RRF_K = _safe_int("HYBRID_RRF_K", 60)                  # RRF 常数
+HYBRID_RRF_K = _safe_int("HYBRID_RRF_K", 60)  # RRF 常数
 # 0.5（2026-08-29 双集实测定值）：w=3.0 会让 BM25 词面排序在「法名+语义」
 # 查询上碾压向量排名（语义集净丢 6 条，见 docs/向量路质量排查-2026-08-29.md）；
 # w=0.5 时语义集 67% / 法条级 85.3%，两集最优平衡
-HYBRID_BM25_WEIGHT = _safe_float("HYBRID_BM25_WEIGHT", 0.5)   # BM25 路权重（向量=1.0）
+HYBRID_BM25_WEIGHT = _safe_float("HYBRID_BM25_WEIGHT", 0.5)  # BM25 路权重（向量=1.0）
 # True = BM25 无条件参与融合（跳过法名/条款号识别）。默认 False（条件激活）：
 # 是否常开需双集评测决定，见 docs/向量路质量排查-2026-08-29.md §5.4
 HYBRID_ALWAYS_ON = os.getenv("HYBRID_ALWAYS_ON", "false").lower() == "true"
@@ -161,8 +158,6 @@ HYBRID_ALWAYS_ON = os.getenv("HYBRID_ALWAYS_ON", "false").lower() == "true"
 # ---------------------------------------------------------------------------
 # 向量索引
 # ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------

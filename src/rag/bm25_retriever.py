@@ -12,6 +12,7 @@
   bm25.load_index()          # 首次构建（51348 chunks 约 10-20s）
   docs = bm25.search("刑法第二十条", top_k=10)
 """
+
 from __future__ import annotations
 
 import logging
@@ -38,10 +39,32 @@ logger = logging.getLogger(__name__)
 #        里「不得」就是核心语义；是否过滤应由评测数据决定，不在拍脑袋之列
 _STOPWORDS = {
     # 结构助词与连词（无实义）
-    "的", "了", "和", "是", "在", "与", "及", "或", "等", "对", "为",
-    "由", "之", "其", "该", "并", "也", "而", "但", "以及",
+    "的",
+    "了",
+    "和",
+    "是",
+    "在",
+    "与",
+    "及",
+    "或",
+    "等",
+    "对",
+    "为",
+    "由",
+    "之",
+    "其",
+    "该",
+    "并",
+    "也",
+    "而",
+    "但",
+    "以及",
     # 法律文本高频引导词（法条中几乎句句出现，无区分度）
-    "按照", "根据", "依照", "本条", "第一款",
+    "按照",
+    "根据",
+    "依照",
+    "本条",
+    "第一款",
     # 法名前缀：归一化，让「中华人民共和国劳动合同法」与「劳动合同法」等价
     "中华人民共和国",
 }
@@ -74,9 +97,7 @@ def _tokenize(text: str) -> list[str]:
 # 保留的是「第一百四十九条　生产、销售本节」这类长条文切片的真实片段。
 # 若放到 10 会误杀「正当防卫不负刑事责任」这类短而完整的表述。
 # 只在检索层过滤（不动 DB、可回退）；入库侧过滤与 DB 清理另行评估。
-_FRAGMENT_PATTERN = re.compile(
-    r"[第零一二三四五六七八九十百千条款项章节但书0-9、，。；：（）()．.\s—\-「」『』《》]"
-)
+_FRAGMENT_PATTERN = re.compile(r"[第零一二三四五六七八九十百千条款项章节但书0-9、，。；：（）()．.\s—\-「」『』《》]")
 _FRAGMENT_THRESHOLD = 6
 
 
@@ -182,15 +203,17 @@ class Bm25Retriever:
                     if key in seen:
                         continue
                     seen.add(key)
-                docs.append(RetrievedDoc(
-                    content=self._chunks[idx]["content"],
-                    score=1.0 / rank,  # 排名倒数，仅占位
-                    law_name=law_name,
-                    chapter=meta.get("chapter", ""),
-                    section=meta.get("section", ""),
-                    article_range=article_range,
-                    chunk_type=meta.get("chunk_type", ""),
-                ))
+                docs.append(
+                    RetrievedDoc(
+                        content=self._chunks[idx]["content"],
+                        score=1.0 / rank,  # 排名倒数，仅占位
+                        law_name=law_name,
+                        chapter=meta.get("chapter", ""),
+                        section=meta.get("section", ""),
+                        article_range=article_range,
+                        chunk_type=meta.get("chunk_type", ""),
+                    )
+                )
                 if len(docs) >= top_k:
                     break
             return docs

@@ -1,6 +1,7 @@
 """
 API 请求/响应模型。
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -8,6 +9,7 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     """单次问答请求"""
+
     query: str = Field(..., min_length=1, max_length=2000, description="用户问题")
     top_k: int = Field(default=5, ge=1, le=20, description="检索条文数")
     history: list[dict] = Field(default_factory=list, description="多轮对话历史 [{role, content}]")
@@ -17,11 +19,13 @@ class ChatRequest(BaseModel):
 
 class CancelRequest(BaseModel):
     """取消生成请求：前端点击停止后通知后端立即中断对应 LLM 流"""
+
     request_id: str = Field(..., min_length=1, max_length=64, description="要取消的请求 ID")
 
 
 class RewriteRequest(BaseModel):
     """查询改写请求：把口语化问题规范化为法律检索查询"""
+
     query: str = Field(..., min_length=1, max_length=2000, description="用户原始提问")
 
 
@@ -34,6 +38,7 @@ def _source_field(source, key: str, default=""):
 
 class ChatResponse(BaseModel):
     """单次问答响应"""
+
     query: str
     answer: str
     sources: list[dict] = Field(default_factory=list)
@@ -54,7 +59,7 @@ class ChatResponse(BaseModel):
                 "article_range": _source_field(s, "article_range"),
                 "citation": _source_field(s, "citation"),
                 "score": float(_source_field(s, "score", 0.0) or 0.0),  # pgvector 返回 float，统一转 Python float
-                "content": _source_field(s, "content"),                 # 条文原文，供前端查看
+                "content": _source_field(s, "content"),  # 条文原文，供前端查看
             }
             # M2 / F10 引用溯源字段（仅融合结果具备）
             for key in ("source", "verification", "url", "law_status", "superseded"):
@@ -67,6 +72,7 @@ class ChatResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """健康检查响应"""
+
     status: str
     version: str
     index_ready: bool
@@ -76,18 +82,21 @@ class HealthResponse(BaseModel):
 
 class RegisterRequest(BaseModel):
     """用户注册请求"""
+
     username: str = Field(..., min_length=2, max_length=64, description="用户名")
     password: str = Field(..., min_length=6, max_length=128, description="密码，至少 6 位")
 
 
 class LoginRequest(BaseModel):
     """用户登录请求"""
+
     username: str = Field(..., min_length=1, max_length=64, description="用户名")
     password: str = Field(..., min_length=1, max_length=128, description="密码")
 
 
 class AuthResponse(BaseModel):
     """认证响应（注册/登录共用）"""
+
     user_id: str
     token: str
     username: str
@@ -95,6 +104,7 @@ class AuthResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     """统一错误响应"""
+
     error: str
     detail: str = ""
     code: str = "INTERNAL_ERROR"
@@ -102,6 +112,7 @@ class ErrorResponse(BaseModel):
 
 class CrawlRequest(BaseModel):
     """爬取请求（数据源: 国家法律法规数据库）"""
+
     source: str = Field(default="npc", description="数据源，目前仅支持 npc(国家法律法规数据库)")
     doc_type: str = Field(
         default="law",
@@ -120,6 +131,7 @@ class CrawlRequest(BaseModel):
 
 class CrawlTaskResponse(BaseModel):
     """爬取任务提交响应"""
+
     task_id: str
     status: str
     message: str
@@ -127,6 +139,7 @@ class CrawlTaskResponse(BaseModel):
 
 class CrawlStatusResponse(BaseModel):
     """爬取任务状态 / 结果"""
+
     task_id: str
     status: str
     progress: dict

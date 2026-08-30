@@ -12,6 +12,7 @@
   - 含《书名号》法名（如《民法典》）
   - 含"X法/X条例/X规定/X办法/X细则/X规则"等法律后缀词
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,9 +24,7 @@ logger = logging.getLogger(__name__)
 
 _ARTICLE_RE = re.compile(r"第[零一二两三四五六七八九十百千]+条")
 _BOOK_RE = re.compile(r"《[^》]+》")
-_LAW_SUFFIX_RE = re.compile(
-    r"[\u4e00-\u9fff]{1,24}?(?:法|条例|规定|办法|细则|规则|公约|决定|章程|标准|通则)"
-)
+_LAW_SUFFIX_RE = re.compile(r"[\u4e00-\u9fff]{1,24}?(?:法|条例|规定|办法|细则|规则|公约|决定|章程|标准|通则)")
 
 
 class HybridRetriever(BaseRetriever):

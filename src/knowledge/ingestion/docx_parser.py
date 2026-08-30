@@ -2,6 +2,7 @@
 
 基于 python-docx，提取段落文本。
 """
+
 from __future__ import annotations
 
 import io
@@ -48,6 +49,7 @@ class DocxParser:
     def parse_bytes(self, content: bytes) -> str:
         """从字节流解析 DOCX"""
         from docx import Document
+
         doc = Document(io.BytesIO(content))
         paragraphs = []
         for para in doc.paragraphs:

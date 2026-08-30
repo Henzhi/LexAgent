@@ -6,6 +6,7 @@ Embedding 后端抽象基类。
 
 同时提供 LangChain Embeddings 兼容包装器，用于 LangChain 兼容的向量库集成。
 """
+
 from __future__ import annotations
 
 import logging
@@ -58,7 +59,7 @@ class EmbeddingBackend(ABC):
         total = len(texts)
 
         for i in range(0, total, self.batch_size):
-            batch = texts[i:i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
             batch_embs = self._embed_batch_with_retry(batch)
             all_embeddings.extend(batch_embs)
 
@@ -82,13 +83,13 @@ class EmbeddingBackend(ABC):
         total = len(texts)
 
         for i in range(0, total, self.batch_size):
-            batch = texts[i:i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
             batch_embs = self._embed_batch_with_retry(batch)
             all_embeddings.extend(batch_embs)
 
             if show_progress:
                 done = min(i + self.batch_size, total)
-                logger.info(f'Embedding 进度: {done}/{total}')
+                logger.info(f"Embedding 进度: {done}/{total}")
 
         return all_embeddings
 
@@ -128,10 +129,8 @@ class EmbeddingBackend(ABC):
             except Exception as e:
                 last_error = e
                 if not is_retryable(e):
-                    logger.warning(f'Embedding 调用失败（不可重试）: {e}')
+                    logger.warning(f"Embedding 调用失败（不可重试）: {e}")
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(
-            f'Embedding 调用失败，已重试 {self.max_retries} 次: {last_error}'
-        )
+        raise RuntimeError(f"Embedding 调用失败，已重试 {self.max_retries} 次: {last_error}")

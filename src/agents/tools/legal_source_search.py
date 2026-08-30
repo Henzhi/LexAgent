@@ -7,6 +7,7 @@ legal_source_search 内置工具（M2 / F9）。
 - 官方源不可达 → ToolResult(ok=False)，summary 首词"权威源检索失败"，
   不静默回退 Tavily（D-M2-4：让 LLM 知道验证不可用，REQ-UW1 语义）。
 """
+
 from __future__ import annotations
 
 import logging
@@ -85,8 +86,7 @@ def build_legal_source_search_spec(client: LegalSourceClient) -> ToolSpec:
                 call_id="",
                 ok=True,
                 summary=_build_summary(data),
-                data={"results": data["results"], "count": data["count"],
-                      "sources": data["sources"]},
+                data={"results": data["results"], "count": data["count"], "sources": data["sources"]},
                 source=SOURCE_LEGAL,
             )
         except Exception as e:

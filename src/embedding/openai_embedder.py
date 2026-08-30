@@ -6,6 +6,7 @@ OpenAI 兼容 API Embedding 后端实现。
   - 本地 vLLM / Ollama OpenAI 兼容端点
   - 其他兼容服务
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 # 已知模型的向量维度
 _OPENAI_EMBED_DIMENSIONS = {
-    "text-embedding-3-small":   1536,
-    "text-embedding-3-large":   3072,
-    "text-embedding-ada-002":   1536,
-    "bge-m3":                   1024,
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+    "bge-m3": 1024,
 }
 
 

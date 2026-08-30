@@ -21,6 +21,7 @@
     budget.record("llm")         # 成功后计数
     budget.status()              # 供健康检查/运维接口查询
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 # 用量种类
 KIND_LLM = "llm"
 KIND_TAVILY = "tavily"
-KIND_PKULAW = "pkulaw"          # 北大法宝 MCP（按次计费，M3+ / F9 扩展）
+KIND_PKULAW = "pkulaw"  # 北大法宝 MCP（按次计费，M3+ / F9 扩展）
 
 _KINDS = (KIND_LLM, KIND_TAVILY, KIND_PKULAW)
 
@@ -53,15 +54,8 @@ class BudgetExceededError(RuntimeError):
         self.kind = kind
         self.used = used
         self.limit = limit
-        label = (
-            "LLM 调用" if kind == KIND_LLM
-            else "网络搜索" if kind == KIND_TAVILY
-            else "北大法宝检索"
-        )
-        super().__init__(
-            f"{label}当日预算已用尽（{used}/{limit}），已暂停该能力；"
-            f"预算于次日零点自动重置。"
-        )
+        label = "LLM 调用" if kind == KIND_LLM else "网络搜索" if kind == KIND_TAVILY else "北大法宝检索"
+        super().__init__(f"{label}当日预算已用尽（{used}/{limit}），已暂停该能力；预算于次日零点自动重置。")
 
 
 class CostBudget:
@@ -79,9 +73,7 @@ class CostBudget:
         limits: dict[str, int] | None = None,
         enforce: bool = True,
     ):
-        self._limits: dict[str, int] = {
-            k: max(0, int(v or 0)) for k, v in (limits or {}).items() if k in _KINDS
-        }
+        self._limits: dict[str, int] = {k: max(0, int(v or 0)) for k, v in (limits or {}).items() if k in _KINDS}
         self._enforce = bool(enforce)
         self._client = None
         self._lock = threading.Lock()
@@ -115,9 +107,7 @@ class CostBudget:
     def _seconds_until_tomorrow() -> int:
         """距次日零点的秒数（Redis TTL，跨天自动失效）。"""
         now = datetime.now()
-        tomorrow = (now + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
         return max(60, int((tomorrow - now).total_seconds()))
 
     def _key(self, day: str, kind: str) -> str:
@@ -180,7 +170,9 @@ class CostBudget:
             self._alerted.add((day, kind))
             logger.error(
                 "[预算熔断] %s 当日用量已达上限 %d/%d，后续调用将%s",
-                kind, used, limit,
+                kind,
+                used,
+                limit,
                 "被拦截" if self._enforce else "被放行（BUDGET_ENFORCE=false）",
             )
         if self._enforce:
@@ -212,7 +204,7 @@ class CostBudget:
     def reset(self, kind: str | None = None) -> None:
         """手动清零当日用量（运维用；自然重置靠 Redis TTL 跨天失效）。"""
         day = self._today()
-        for k in ((kind,) if kind else _KINDS):
+        for k in (kind,) if kind else _KINDS:
             with self._lock:
                 self._memory_for(day).pop(k, None)
             if self._client is not None:

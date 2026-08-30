@@ -3,6 +3,7 @@ RAG 问答引擎。
 
 串联完整管线：查询分类 → 闲聊直回 / 检索 → 构建 Prompt → LLM 回答
 """
+
 from __future__ import annotations
 
 import time
@@ -55,9 +56,11 @@ CASUAL_SYSTEM_PROMPT = """你是一位友好的法律问答助手，同时也能
 # 问答结果
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RAGAnswer:
     """一次 RAG 问答的完整结果"""
+
     query: str
     answer: str
     sources: list[RetrievedDoc] = field(default_factory=list)
@@ -122,6 +125,7 @@ RAG_PROMPT_TEMPLATE = """你是一位精通中国法律的专业法律助手。�
 # RAG 引擎
 # ---------------------------------------------------------------------------
 
+
 class RAGEngine:
     """RAG 问答引擎：检索 + LLM 回答"""
 
@@ -154,7 +158,7 @@ class RAGEngine:
     def ask(self, query: str) -> RAGAnswer:
         """单次问答，LLM 自省路由：闲聊直回 / 法律RAG"""
         qlog = self._qlog
-        with (qlog.trace("", query) if qlog else nullcontext()) as trace:
+        with qlog.trace("", query) if qlog else nullcontext() as trace:
             t0 = time.time()
             need_retrieval = needs_retrieval(query, self.llm)
             if trace is not None:
@@ -184,7 +188,7 @@ class RAGEngine:
     def ask_stream(self, query: str) -> Iterator[str]:
         """流式问答，LLM 自省路由"""
         qlog = self._qlog
-        with (qlog.trace("", query) if qlog else nullcontext()) as trace:
+        with qlog.trace("", query) if qlog else nullcontext() as trace:
             t0 = time.time()
             need_retrieval = needs_retrieval(query, self.llm)
             if trace is not None:
@@ -224,7 +228,7 @@ class RAGEngine:
             RAGAnswer
         """
         qlog = self._qlog
-        with (qlog.trace("", query) if qlog else nullcontext()) as trace:
+        with qlog.trace("", query) if qlog else nullcontext() as trace:
             t0 = time.time()
             docs = self.retriever.search(query, top_k=self.top_k)
             if trace is not None:
@@ -248,7 +252,7 @@ class RAGEngine:
     ) -> Iterator[str]:
         """多轮流式对话"""
         qlog = self._qlog
-        with (qlog.trace("", query) if qlog else nullcontext()) as trace:
+        with qlog.trace("", query) if qlog else nullcontext() as trace:
             t0 = time.time()
             docs = self.retriever.search(query, top_k=self.top_k)
             if trace is not None:

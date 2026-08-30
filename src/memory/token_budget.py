@@ -10,6 +10,7 @@ Token 预算管理器 (v0.5)。
     budget.consume("retrieval", docs_text, max_tokens=8000)
     prompt = budget.build(history, memory_ctx, query)
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,10 +24,10 @@ _ENCODING = tiktoken.get_encoding("cl100k_base")
 
 # 默认分配（28K 窗口）
 DEFAULT_ALLOCATION = {
-    "system_prompt":  {"tokens": 800,   "priority": "required", "compressible": False},
-    "memory_context": {"tokens": 1500,  "priority": "high",     "compressible": True},
-    "retrieval_docs": {"tokens": 8000,  "priority": "highest",  "compressible": True},
-    "chat_history":   {"tokens": 3000,  "priority": "medium",   "compressible": True},
+    "system_prompt": {"tokens": 800, "priority": "required", "compressible": False},
+    "memory_context": {"tokens": 1500, "priority": "high", "compressible": True},
+    "retrieval_docs": {"tokens": 8000, "priority": "highest", "compressible": True},
+    "chat_history": {"tokens": 3000, "priority": "medium", "compressible": True},
     "output_reserve": {"tokens": 12000, "priority": "required", "compressible": False},
 }
 

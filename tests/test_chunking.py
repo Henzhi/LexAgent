@@ -16,33 +16,37 @@ from langchain_core.documents import Document
 # _cn_to_int — 中文数字转整数
 # ============================================================
 
-@pytest.mark.parametrize("cn,expected", [
-    ("一", 1),
-    ("二", 2),
-    ("三", 3),
-    ("四", 4),
-    ("五", 5),
-    ("六", 6),
-    ("七", 7),
-    ("八", 8),
-    ("九", 9),
-    ("十", 10),
-    ("十一", 11),
-    ("十二", 12),
-    ("二十", 20),
-    ("二十一", 21),
-    ("三十", 30),
-    ("九十九", 99),
-    ("一百", 100),
-    ("一百零一", 101),
-    ("一百一十", 110),
-    ("一百二十三", 123),
-    ("二百", 200),
-    ("九百九十九", 999),
-    ("一千", 1000),
-    ("一千零一", 1001),
-    ("一千二百三十四", 1234),
-])
+
+@pytest.mark.parametrize(
+    "cn,expected",
+    [
+        ("一", 1),
+        ("二", 2),
+        ("三", 3),
+        ("四", 4),
+        ("五", 5),
+        ("六", 6),
+        ("七", 7),
+        ("八", 8),
+        ("九", 9),
+        ("十", 10),
+        ("十一", 11),
+        ("十二", 12),
+        ("二十", 20),
+        ("二十一", 21),
+        ("三十", 30),
+        ("九十九", 99),
+        ("一百", 100),
+        ("一百零一", 101),
+        ("一百一十", 110),
+        ("一百二十三", 123),
+        ("二百", 200),
+        ("九百九十九", 999),
+        ("一千", 1000),
+        ("一千零一", 1001),
+        ("一千二百三十四", 1234),
+    ],
+)
 def test_cn_to_int_valid(cn, expected):
     assert _cn_to_int(cn) == expected
 
@@ -59,6 +63,7 @@ def test_cn_to_int_empty():
 # LawDocument 数据模型
 # ============================================================
 
+
 def test_law_document_basic():
     doc = LawDocument(file_path="test.txt", title="测试法")
     assert doc.title == "测试法"
@@ -73,9 +78,12 @@ def test_law_document_with_hierarchy():
     chapter = Chapter(title="第一章", sections=[section], articles=[article])
     part = Part(title="第一编", chapters=[chapter])
     doc = LawDocument(
-        file_path="test.txt", title="测试法",
-        preamble="序言", parts=[part],
-        chapters=[chapter], articles=[article],
+        file_path="test.txt",
+        title="测试法",
+        preamble="序言",
+        parts=[part],
+        chapters=[chapter],
+        articles=[article],
     )
     assert len(doc.parts) == 1
     assert len(doc.chapters) == 1
@@ -87,6 +95,7 @@ def test_law_document_with_hierarchy():
 # ============================================================
 # Article / Section / Chapter / Part 数据模型
 # ============================================================
+
 
 def test_article_model():
     a = Article(index=5, number="五", number_int=5, text="正文", content="完整内容")
@@ -117,12 +126,16 @@ def test_chapter_with_articles():
 # _build_article_context — 上下文元数据
 # ============================================================
 
+
 def test_build_article_context():
     doc = LawDocument(file_path="test.txt", title="测试法律")
     article = Article(index=3, number="三", number_int=3, text="第三条内容")
     ctx = _build_article_context(
-        doc, article,
-        chapter_title="第一章", section_title="第一节", part_title="第一编",
+        doc,
+        article,
+        chapter_title="第一章",
+        section_title="第一节",
+        part_title="第一编",
     )
     assert ctx["law_name"] == "测试法律"
     assert ctx["part"] == "第一编"
@@ -145,6 +158,7 @@ def test_build_article_context_no_part():
 # ============================================================
 # _build_context_prefix — 上下文前缀
 # ============================================================
+
 
 def test_build_context_prefix_full():
     meta = {
@@ -172,6 +186,7 @@ def test_build_context_prefix_minimal():
 # ============================================================
 # _make_article_range_text — 条文范围
 # ============================================================
+
 
 def test_article_range_single():
     articles = [Article(index=1, number="一", number_int=1, text="")]
@@ -202,6 +217,7 @@ def test_article_range_two_articles():
 # ChunkConfig 配置
 # ============================================================
 
+
 def test_chunk_config_defaults():
     cfg = ChunkConfig()
     assert cfg.min_chunk_chars == 50
@@ -220,6 +236,7 @@ def test_chunk_config_custom():
 def test_articles_are_not_merged_by_default():
     """回归：默认不合并短条文，每条独立成块（召回可定位到具体条文）"""
     from src.chunking.chunker import LawChunker
+
     doc = LawDocument(
         file_path="test.txt",
         title="测试法",
@@ -232,8 +249,9 @@ def test_articles_are_not_merged_by_default():
         ],
     )
     chunker = LawChunker(ChunkConfig())
-    metas = [{"article_index": str(i), "chapter": "", "section": "",
-              "part": "", "law_name": "测试法"} for i in range(1, 4)]
+    metas = [
+        {"article_index": str(i), "chapter": "", "section": "", "part": "", "law_name": "测试法"} for i in range(1, 4)
+    ]
     chunks = chunker._chunk_articles(metas, doc)
     assert len(chunks) == 3
     assert all(c.metadata["article_count"] == "1" for c in chunks)
@@ -242,6 +260,7 @@ def test_articles_are_not_merged_by_default():
 def test_merged_chunks_keep_article_prefix():
     """回归：开启合并时，合并块每条条文保留"第X条"前缀以便追溯"""
     from src.chunking.chunker import LawChunker
+
     doc = LawDocument(
         file_path="test.txt",
         title="测试法",
@@ -253,8 +272,10 @@ def test_merged_chunks_keep_article_prefix():
         ],
     )
     chunker = LawChunker(ChunkConfig(merge_short_articles=True, max_merge_articles=3))
-    metas = [{"article_index": str(i), "chapter": "第一章", "section": "",
-              "part": "", "law_name": "测试法"} for i in range(1, 3)]
+    metas = [
+        {"article_index": str(i), "chapter": "第一章", "section": "", "part": "", "law_name": "测试法"}
+        for i in range(1, 3)
+    ]
     chunks = chunker._chunk_articles(metas, doc)
     assert len(chunks) == 1
     assert "第一条 很短" in chunks[0].page_content
@@ -265,6 +286,7 @@ def test_merged_chunks_keep_article_prefix():
 # ============================================================
 # RetrievedDoc 数据模型
 # ============================================================
+
 
 def test_retrieved_doc_citation_full():
     doc = RetrievedDoc(
@@ -279,7 +301,8 @@ def test_retrieved_doc_citation_full():
 
 def test_retrieved_doc_citation_no_article():
     doc = RetrievedDoc(
-        content="测试", score=0.5,
+        content="测试",
+        score=0.5,
         law_name="中华人民共和国民法典",
         chapter="第一章",
     )
@@ -295,6 +318,7 @@ def test_retrieved_doc_citation_empty():
 # ============================================================
 # doc_to_retrieved — 文档对象 → RetrievedDoc 转换
 # ============================================================
+
 
 def test_doc_to_retrieved_basic():
     lc_doc = Document(

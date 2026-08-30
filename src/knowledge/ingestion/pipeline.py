@@ -4,6 +4,7 @@
 将上传的 PDF/DOCX 文件解析 → 清洗 → 分块 → 向量化 → 写入 pgvector。
 支持异步任务状态追踪。
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,9 +38,11 @@ def _extract_article_range(content: str) -> str:
     m = _ARTICLE_RE.search(content or "")
     return m.group(0) if m else ""
 
+
 # 支持的文件类型
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 MAX_FILE_SIZE_MB = 50
+
 
 # 任务状态
 class TaskStatus:
@@ -62,8 +65,8 @@ class IngestionPipeline:
     """
 
     def __init__(self, store, embedder):
-        self._store = store          # PgvectorStore
-        self._embedder = embedder    # EmbeddingAdapter
+        self._store = store  # PgvectorStore
+        self._embedder = embedder  # EmbeddingAdapter
         self._pdf_parser = PDFParser()
         self._docx_parser = DocxParser()
         self._cleaner = TextCleaner()
@@ -140,7 +143,9 @@ class IngestionPipeline:
             # 4. 分块 — 以段落为边界，500 字一段
             task["status"] = TaskStatus.EMBEDDING
             chunks = self._split_paragraphs(
-                cleaned, doc_id, doc_type=task["doc_type"],
+                cleaned,
+                doc_id,
+                doc_type=task["doc_type"],
                 title=task.get("title") or file_name.replace(ext, ""),
             )
             task["progress"] = 60
@@ -148,7 +153,7 @@ class IngestionPipeline:
             # 5. 向量化 + 写入
             task["status"] = TaskStatus.INDEXING
             for i in range(0, len(chunks), self._embedder.batch_size):
-                batch = chunks[i:i + self._embedder.batch_size]
+                batch = chunks[i : i + self._embedder.batch_size]
                 texts = [c["content"] for c in batch]
                 embeddings = self._embedder.embed_documents(texts)
                 for c, emb in zip(batch, embeddings):
@@ -189,9 +194,19 @@ class IngestionPipeline:
                     existing = _json.load(f)
 
             cn_to_int = {
-                '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
-                '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
-                '百': 100, '千': 1000,
+                "零": 0,
+                "一": 1,
+                "二": 2,
+                "三": 3,
+                "四": 4,
+                "五": 5,
+                "六": 6,
+                "七": 7,
+                "八": 8,
+                "九": 9,
+                "十": 10,
+                "百": 100,
+                "千": 1000,
             }
 
             def _cn2int(cn: str) -> int:
@@ -218,7 +233,8 @@ class IngestionPipeline:
                 if not law_name or not article_range:
                     continue
                 import re as _re
-                m = _re.search(r'第([一二三四五六七八九十百千零两]+)条', article_range)
+
+                m = _re.search(r"第([一二三四五六七八九十百千零两]+)条", article_range)
                 if not m:
                     continue
                 num = _cn2int(m.group(1))
@@ -233,6 +249,7 @@ class IngestionPipeline:
             # 原子写入：先写临时文件再 rename，避免并发进程读到半写状态
             # （多进程并发入库时 JSON 会损坏，表现为 "Extra data" JSONDecodeError）
             import os as _os
+
             tmp_path = map_path.with_suffix(".json.tmp")
             with open(tmp_path, "w", encoding="utf-8") as f:
                 _json.dump(existing, f, ensure_ascii=False, indent=2)
@@ -315,8 +332,11 @@ class IngestionPipeline:
             self._store.delete_document(existing)
 
         doc_id = self._store.ensure_document(
-            doc_type=doc_type, title=title, source=source,
-            effective_date=effective_date, status=status,
+            doc_type=doc_type,
+            title=title,
+            source=source,
+            effective_date=effective_date,
+            status=status,
         )
         chunks = self._split_paragraphs(cleaned, doc_id, doc_type=doc_type, title=title)
         if not chunks:
@@ -374,27 +394,27 @@ class IngestionPipeline:
         return chunks
 
 
-def _split_article_paragraphs(
-    text: str, doc_id: str, doc_type: str, max_chars: int = 500
-) -> list[dict]:
+def _split_article_paragraphs(text: str, doc_id: str, doc_type: str, max_chars: int = 500) -> list[dict]:
     """条文体（law/interpretation/regulation）按「第X条」边界切分"""
     chunks: list[dict] = []
     segments = _split_by_articles(text)
 
     for seg in segments:
         if len(seg) <= max_chars:
-            chunks.append({
-                "doc_id": doc_id,
-                "chunk_type": "article",
-                "content": seg,
-                "metadata": {"raw": seg, "doc_type": doc_type},
-            })
+            chunks.append(
+                {
+                    "doc_id": doc_id,
+                    "chunk_type": "article",
+                    "content": seg,
+                    "metadata": {"raw": seg, "doc_type": doc_type},
+                }
+            )
             continue
 
         # 超长条文按句号拆分，每个续块都以条号开头，保证引用可追溯
         head_m = _ARTICLE_RE.match(seg)
         head = head_m.group(0) if head_m else ""
-        body = seg[len(head):].strip() if head else seg
+        body = seg[len(head) :].strip() if head else seg
         sentences = body.split("。")
         buf = head
         for s in sentences:
@@ -403,27 +423,29 @@ def _split_article_paragraphs(
                 continue  # 跳过句号产生的空串（如段落以"。"结尾）
             s += "。"
             if len(buf) + len(s) > max_chars and buf.strip():
-                chunks.append({
+                chunks.append(
+                    {
+                        "doc_id": doc_id,
+                        "chunk_type": "article",
+                        "content": buf.strip(),
+                        "metadata": {"raw": seg[:200], "doc_type": doc_type},
+                    }
+                )
+                buf = head  # 续块重新以条号开头
+            buf += s
+        if buf.strip():
+            chunks.append(
+                {
                     "doc_id": doc_id,
                     "chunk_type": "article",
                     "content": buf.strip(),
                     "metadata": {"raw": seg[:200], "doc_type": doc_type},
-                })
-                buf = head  # 续块重新以条号开头
-            buf += s
-        if buf.strip():
-            chunks.append({
-                "doc_id": doc_id,
-                "chunk_type": "article",
-                "content": buf.strip(),
-                "metadata": {"raw": seg[:200], "doc_type": doc_type},
-            })
+                }
+            )
     return chunks
 
 
-def _split_paragraph_docs(
-    text: str, doc_id: str, doc_type: str, max_chars: int = 500
-) -> list[dict]:
+def _split_paragraph_docs(text: str, doc_id: str, doc_type: str, max_chars: int = 500) -> list[dict]:
     """非条文体（interpretation / case）：叙事/解释文，无「第X条」结构。
 
     按自然段切分，不做条文/句子硬拆分（避免切碎案件事实、裁判理由的
@@ -436,12 +458,14 @@ def _split_paragraph_docs(
 
     for para in paragraphs:
         if len(para) <= max_chars:
-            chunks.append({
-                "doc_id": doc_id,
-                "chunk_type": doc_type,
-                "content": para,
-                "metadata": {"raw": para, "doc_type": doc_type},
-            })
+            chunks.append(
+                {
+                    "doc_id": doc_id,
+                    "chunk_type": doc_type,
+                    "content": para,
+                    "metadata": {"raw": para, "doc_type": doc_type},
+                }
+            )
             continue
 
         # 超长段落按句号拆分（保底，不增加续块前缀）
@@ -453,28 +477,30 @@ def _split_paragraph_docs(
                 continue
             s += "。"
             if len(buf) + len(s) > max_chars and buf:
-                chunks.append({
-                    "doc_id": doc_id,
-                    "chunk_type": doc_type,
-                    "content": buf.strip(),
-                    "metadata": {"raw": para[:200], "doc_type": doc_type},
-                })
+                chunks.append(
+                    {
+                        "doc_id": doc_id,
+                        "chunk_type": doc_type,
+                        "content": buf.strip(),
+                        "metadata": {"raw": para[:200], "doc_type": doc_type},
+                    }
+                )
                 buf = s
             else:
                 buf += s
         if buf.strip():
-            chunks.append({
-                "doc_id": doc_id,
-                "chunk_type": doc_type,
-                "content": buf.strip(),
-                "metadata": {"raw": para[:200], "doc_type": doc_type},
-            })
+            chunks.append(
+                {
+                    "doc_id": doc_id,
+                    "chunk_type": doc_type,
+                    "content": buf.strip(),
+                    "metadata": {"raw": para[:200], "doc_type": doc_type},
+                }
+            )
     return chunks
 
 
-def _split_fulltext(
-    text: str, doc_id: str, doc_type: str, max_chars: int = 500
-) -> list[dict]:
+def _split_fulltext(text: str, doc_id: str, doc_type: str, max_chars: int = 500) -> list[dict]:
     """全文模式：整篇文档作为单个 chunk，直接全文召回不切分。
 
     仅当整篇超过 max_chars 时才保底按句号拆分（embedding 有长度上限）。
@@ -483,12 +509,14 @@ def _split_fulltext(
     if not content:
         return []
     if len(content) <= max_chars:
-        return [{
-            "doc_id": doc_id,
-            "chunk_type": doc_type,
-            "content": content,
-            "metadata": {"raw": content, "doc_type": doc_type},
-        }]
+        return [
+            {
+                "doc_id": doc_id,
+                "chunk_type": doc_type,
+                "content": content,
+                "metadata": {"raw": content, "doc_type": doc_type},
+            }
+        ]
     # 超长整篇保底拆分
     return _split_paragraph_docs(text, doc_id, doc_type, max_chars=max_chars)
 
@@ -508,7 +536,7 @@ def _split_by_articles(text: str) -> list[str]:
     segments: list[str] = []
     prev = 0
     for m in matches:
-        lead = text[prev:m.start()].strip()
+        lead = text[prev : m.start()].strip()
         if lead:
             segments.append(lead)
         prev = m.start()

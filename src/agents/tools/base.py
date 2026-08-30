@@ -12,6 +12,7 @@
   供 SSE tool_result 展示与 LLM 回灌，控制上下文膨胀。
 - 失败时 summary 首词为错误类型标签（如 搜索不可用、参数校验失败、工具执行失败）。
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,13 +25,13 @@ logger = logging.getLogger(__name__)
 
 # 工具结果来源标记（D7 / M2 预留）
 SOURCE_INTERNAL_KB = "internal_kb"  # 内部法律知识库
-SOURCE_WEB = "web"                  # 网络搜索（Tavily）
-SOURCE_LEGAL = "legal_source"       # 官方法律源（M2 / F9）
+SOURCE_WEB = "web"  # 网络搜索（Tavily）
+SOURCE_LEGAL = "legal_source"  # 官方法律源（M2 / F9）
 
 # 工具分类
-CATEGORY_KNOWLEDGE = "knowledge"    # 内部知识检索
-CATEGORY_WEB = "web"                # 网络搜索
-CATEGORY_LEGAL = "legal"            # 官方法律源检索（M2）
+CATEGORY_KNOWLEDGE = "knowledge"  # 内部知识检索
+CATEGORY_WEB = "web"  # 网络搜索
+CATEGORY_LEGAL = "legal"  # 官方法律源检索（M2）
 
 
 def truncate_summary(text: str, max_chars: int = TOOL_RESULT_SUMMARY_MAX_CHARS) -> str:
@@ -152,6 +153,8 @@ _PY_TO_JSON_TYPE: dict[Any, str] = {
     list: "array",
     dict: "object",
 }
+
+
 def tool(
     *,
     name: str | None = None,

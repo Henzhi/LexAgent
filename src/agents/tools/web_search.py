@@ -7,6 +7,7 @@ web_search 内置工具（M1 / F3）。
 - Tavily 失败/超时/未配置 → ToolResult(ok=False)，summary 首词"搜索不可用"（REQ-UW1），
   不中断 ReAct 循环，LLM 据此仅基于内部库回答。
 """
+
 from __future__ import annotations
 
 import logging

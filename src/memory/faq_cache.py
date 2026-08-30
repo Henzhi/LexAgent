@@ -16,6 +16,7 @@ FAQ 语义缓存管理器 (v0.5)
     hit = cache.check(query)      # None = 未命中
     cache.store(query, answer, sources, related_laws)
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,6 +32,7 @@ def _locked(method):
     流式桥接改造后，FAQ 命中检查可能在多个请求的线程池 worker 中并发
     执行，必须保护共享连接。
     """
+
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         lock = getattr(self, "_lock", None)
@@ -40,7 +42,9 @@ def _locked(method):
             self._lock = lock
         with lock:
             return method(self, *args, **kwargs)
+
     return wrapper
+
 
 # 命中阈值：余弦相似度 >= 此值时视为命中
 HIT_THRESHOLD = 0.95
@@ -48,6 +52,7 @@ HIT_THRESHOLD = 0.95
 # TTL：默认 1 小时（超过即销毁；命中会刷新续期）。可通过 FAQ_TTL_HOURS 覆盖
 try:
     from src.config import FAQ_TTL_HOURS as _FAQ_TTL_HOURS
+
     DEFAULT_TTL_HOURS = _FAQ_TTL_HOURS
 except Exception:
     DEFAULT_TTL_HOURS = 1
@@ -79,6 +84,7 @@ class FAQCache:
         except Exception:
             import psycopg2
             from pgvector.psycopg2 import register_vector
+
             logger.warning("FAQ缓存: PG 连接断开，重连中...")
             try:
                 self._conn.close()
@@ -129,6 +135,7 @@ class FAQCache:
 
         # 解析 JSON — PSQL 中 sources 以 json.dumps 写入，取回后是 str
         import json as _json
+
         try:
             sources = _json.loads(sources_raw) if isinstance(sources_raw, str) else (sources_raw or [])
         except (_json.JSONDecodeError, TypeError):
@@ -183,6 +190,7 @@ class FAQCache:
         vec = self._embedder.embed_query(question)
 
         import json
+
         with self._conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO faq_cache "
@@ -217,8 +225,7 @@ class FAQCache:
         self._ensure_connection()
         with self._conn.cursor() as cur:
             cur.execute(
-                "UPDATE faq_cache SET status = 'invalidated' "
-                "WHERE status = 'active' AND %s = ANY(related_laws)",
+                "UPDATE faq_cache SET status = 'invalidated' WHERE status = 'active' AND %s = ANY(related_laws)",
                 (law_id,),
             )
             count = cur.rowcount

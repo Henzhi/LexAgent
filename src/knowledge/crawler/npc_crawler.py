@@ -13,6 +13,7 @@
          返回: {code, data:{url(签名外链, ~1h有效), urlIn(内网, 忽略)}}
          再用 data.url 直接下载 docx/pdf 二进制
 """
+
 from __future__ import annotations
 
 import html
@@ -40,12 +41,12 @@ DOWNLOAD_URL = f"{API_BASE}/law-search/download/pc"
 # 分类码来自 2026 实测：宪法 100；法律 110/120/130/140/150/160/180；
 # 行政法规 210；监察法规 220；地方法规 230；司法解释 320/340
 TYPE_MAP: dict[str, tuple[list[int], str]] = {
-    "constitution": ([100], "constitution"),                      # 宪法
-    "law": ([110, 120, 130, 140, 150, 160, 180], "laws"),          # 法律 / 法律解释
-    "regulation": ([210], "regulations"),                         # 行政法规
-    "supervision": ([220], "supervision_regulations"),            # 监察法规
+    "constitution": ([100], "constitution"),  # 宪法
+    "law": ([110, 120, 130, 140, 150, 160, 180], "laws"),  # 法律 / 法律解释
+    "regulation": ([210], "regulations"),  # 行政法规
+    "supervision": ([220], "supervision_regulations"),  # 监察法规
     "judicial_interpretation": ([320, 340], "judicial_interpretations"),  # 司法解释
-    "local_regulation": ([230], "local_regulations"),             # 地方性法规
+    "local_regulation": ([230], "local_regulations"),  # 地方性法规
 }
 
 # 该数据源不支持的类型（案例 / 裁判文书不在 flk）
@@ -83,6 +84,7 @@ def _clean_title(raw: str) -> str:
 @dataclass
 class CrawlResult:
     """单次爬取结果统计"""
+
     total: int = 0
     added: int = 0
     updated: int = 0
@@ -186,7 +188,9 @@ class NpcLawCrawler:
     # ------------------------------------------------------------------
     # 内部实现
     # ------------------------------------------------------------------
-    def _crawl_one(self, doc_type, keyword, limit, force, subdir, store, progress_cb, status_filter=None) -> CrawlResult:
+    def _crawl_one(
+        self, doc_type, keyword, limit, force, subdir, store, progress_cb, status_filter=None
+    ) -> CrawlResult:
         code_ids, default_sub = TYPE_MAP.get(doc_type, ([], doc_type))
         out_dir = self.law_data_dir / (subdir or default_sub)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -218,6 +222,7 @@ class NpcLawCrawler:
             # 效力状态：flk 列表返回的 sxx 字段（字符串 "1/2/3/4"）
             # 1=已废止 2=已修改 3=现行有效 4=尚未生效
             from src.knowledge.doc_types import status_from_sxx
+
             status = status_from_sxx(item.get("sxx"))
 
             # 按 sink 分别判定增量去重。
@@ -244,11 +249,17 @@ class NpcLawCrawler:
                 # 1) 落地 txt（原始文本存档，增量按 manifest/bbbs）
                 if do_txt and not txt_skip:
                     rel_path = self._save(out_dir, doc_id, title, text, effective_date)
-                    manifest[doc_id] = asdict(_ManifestEntry(
-                        id=doc_id, title=title, type=doc_type,
-                        file=rel_path, crawled_at=_now(),
-                        effective_date=effective_date, size=len(text),
-                    ))
+                    manifest[doc_id] = asdict(
+                        _ManifestEntry(
+                            id=doc_id,
+                            title=title,
+                            type=doc_type,
+                            file=rel_path,
+                            crawled_at=_now(),
+                            effective_date=effective_date,
+                            size=len(text),
+                        )
+                    )
                     result.files.append(rel_path)
                     if txt_existed:
                         result.updated += 1
@@ -324,6 +335,7 @@ class NpcLawCrawler:
             effective_date = item.get("sxrq") or item.get("gbrq") or ""
             eff_pg = effective_date if _DATE_RE.match(effective_date) else None
             from src.knowledge.doc_types import status_from_sxx
+
             status = status_from_sxx(item.get("sxx"))
 
             # 自动识别已入库：pg 按 (title, status) 精确去重，同标题不同效力
@@ -347,11 +359,17 @@ class NpcLawCrawler:
 
                 if do_txt and not txt_skip:
                     rel_path = self._save(out_dir, doc_id, title, text, effective_date)
-                    manifest[doc_id] = asdict(_ManifestEntry(
-                        id=doc_id, title=title, type=doc_type,
-                        file=rel_path, crawled_at=_now(),
-                        effective_date=effective_date, size=len(text),
-                    ))
+                    manifest[doc_id] = asdict(
+                        _ManifestEntry(
+                            id=doc_id,
+                            title=title,
+                            type=doc_type,
+                            file=rel_path,
+                            crawled_at=_now(),
+                            effective_date=effective_date,
+                            size=len(text),
+                        )
+                    )
                     result.files.append(rel_path)
                     if txt_existed:
                         result.updated += 1
@@ -399,6 +417,7 @@ class NpcLawCrawler:
             PG_CONN,
             PG_ENABLED,
         )
+
         if not PG_ENABLED:
             raise RuntimeError(
                 "PG_ENABLED 未开启，无法写入 pgvector。请在 .env 设置 PG_ENABLED=true "
@@ -424,32 +443,39 @@ class NpcLawCrawler:
 
     def _ingest_pg(self, doc_type, title, text, effective_date, force, status="active") -> int:
         return self._pg_pipeline.ingest_text(
-            title, text, doc_type=doc_type, source=SOURCE,
-            effective_date=effective_date or None, force=force, status=status,
+            title,
+            text,
+            doc_type=doc_type,
+            source=SOURCE,
+            effective_date=effective_date or None,
+            force=force,
+            status=status,
         )
 
-    def _fetch_list(self, code_ids: list[int], keyword: str, limit: int, status_filter: list[str] | None = None) -> list[dict]:
+    def _fetch_list(
+        self, code_ids: list[int], keyword: str, limit: int, status_filter: list[str] | None = None
+    ) -> list[dict]:
         collected: list[dict] = []
         page = 1
         size = 100  # 二期 API 最大 100
         while True:
             body = {
-                "searchRange": 1,            # 1=标题检索
-                "searchContent": keyword,    # 空=该分类全部
-                "searchType": 2,             # 2=模糊
+                "searchRange": 1,  # 1=标题检索
+                "searchContent": keyword,  # 空=该分类全部
+                "searchType": 2,  # 2=模糊
                 # 效力状态过滤：1=已废止 2=已修改 3=现行有效 4=尚未生效
                 "sxx": [int(x) for x in (status_filter or ["3"])],
-                "sxrq": [], "gbrq": [], "gbrqYear": [],
-                "flfgCodeId": code_ids,      # 按分类过滤（空=全部）
+                "sxrq": [],
+                "gbrq": [],
+                "gbrqYear": [],
+                "flfgCodeId": code_ids,  # 按分类过滤（空=全部）
                 "zdjgCodeId": [],
                 "xgzlSearch": False,
                 "pageNum": page,
                 "pageSize": size,
             }
             try:
-                r = self.session.post(
-                    LIST_URL, data=json.dumps(body).encode("utf-8"), timeout=self.timeout
-                )
+                r = self.session.post(LIST_URL, data=json.dumps(body).encode("utf-8"), timeout=self.timeout)
                 r.raise_for_status()
                 data = r.json()
             except Exception as e:
@@ -504,11 +530,13 @@ class NpcLawCrawler:
                 if fmt == "pdf":
                     import os
                     import tempfile
+
                     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
                         tf.write(content)
                         tmp = tf.name
                     try:
                         from src.knowledge.ingestion.pdf_parser import PDFParser
+
                         raw = PDFParser().parse(tmp)
                     finally:
                         os.unlink(tmp)

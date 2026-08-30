@@ -10,6 +10,7 @@ v0.6 改进：
   - 线程安全：连接加锁，支持 Agent 路径并发调用
   - finalize 幂等：可多次调用（提前 return 分支也能记录正确字段）
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,6 +53,7 @@ class QueryLogger:
 
     def _connect(self):
         import psycopg2
+
         self._conn = psycopg2.connect(self._conn_string)
 
     def _ensure_connection(self):
@@ -135,6 +137,7 @@ class _QueryTrace:
 
     def _save(self):
         import json
+
         total_latency = int((time.time() - self._start_time) * 1000)
 
         qlog = self._qlog
@@ -149,11 +152,16 @@ class _QueryTrace:
                         " faq_cache_hit, memory_docs_used, llm_tokens_used, total_latency_ms, stage_timings) "
                         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                         (
-                            self._request_id, self._user_id, self._query,
+                            self._request_id,
+                            self._user_id,
+                            self._query,
                             self._intent or "",
-                            self._retrieved_count, self._reranked_count,
-                            self._faq_cache_hit, self._memory_docs_used,
-                            self._llm_tokens, total_latency,
+                            self._retrieved_count,
+                            self._reranked_count,
+                            self._faq_cache_hit,
+                            self._memory_docs_used,
+                            self._llm_tokens,
+                            total_latency,
                             json.dumps(self._stages, ensure_ascii=False) if self._stages else "{}",
                         ),
                     )

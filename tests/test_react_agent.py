@@ -3,6 +3,7 @@ M1 ReAct 循环测试：图结构、轮数上限、非法 tool_calls 容错、SS
 
 不依赖外部服务：retriever 用 FakeRetriever，LLM 用 FakeToolLLM（可脚本化工具调用）。
 """
+
 from __future__ import annotations
 
 from tests.fakes import FakeRetriever, FakeToolLLM
@@ -32,9 +33,13 @@ def _build_agent(llm, retriever=None, max_tool_turns=5, monkeypatch=None, react=
     retriever = retriever or FakeRetriever()
     registry = build_default_tools(retriever)
     agent = LawAgentGraph(
-        retriever=retriever, llm=llm,
-        top_k=3, max_retries=0,
-        memory_manager=None, faq_cache=None, query_logger=None,
+        retriever=retriever,
+        llm=llm,
+        top_k=3,
+        max_retries=0,
+        memory_manager=None,
+        faq_cache=None,
+        query_logger=None,
         registry=registry,
     )
     return agent
@@ -43,6 +48,7 @@ def _build_agent(llm, retriever=None, max_tool_turns=5, monkeypatch=None, react=
 # ---------------------------------------------------------------------------
 # 图结构与模式选择
 # ---------------------------------------------------------------------------
+
 
 class TestGraphMode:
     def test_react_mode_selected_by_default(self, monkeypatch):
@@ -69,6 +75,7 @@ class TestGraphMode:
 # ---------------------------------------------------------------------------
 # ask() 同步路径
 # ---------------------------------------------------------------------------
+
 
 class TestAskReact:
     def test_react_loop_with_tool_then_answer(self, monkeypatch):
@@ -109,7 +116,12 @@ class TestAskReact:
         from src.agents.react_nodes import _strip_dsml_tool_calls
 
         # 单元：纯 DSML 块被清除
-        assert _strip_dsml_tool_calls("<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"x\"></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>") == ""
+        assert (
+            _strip_dsml_tool_calls(
+                '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="x"></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>'
+            )
+            == ""
+        )
         # 单元：DSML 块外的自然语言保留
         mixed = "前面文字<｜｜DSML｜｜tool_calls>xxx</｜｜DSML｜｜tool_calls>后面文字"
         assert _strip_dsml_tool_calls(mixed) == "前面文字后面文字"
@@ -119,7 +131,7 @@ class TestAskReact:
         # 集成：上限轮返回 DSML 文本 → answer 不含 DSML
         monkeypatch.setattr("src.agents.graph.AGENT_MAX_TOOL_TURNS", 2)
         dsml_resp = ToolCallResponse(
-            content="我来检索<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"retrieve_knowledge\"></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>",
+            content='我来检索<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="retrieve_knowledge"></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>',
             tool_calls=[],
             raw={},
         )
@@ -137,15 +149,17 @@ class TestAskReact:
         不再存在（Pydantic 会先拦截）。因此改为测更贴近现实的场景：
         模型传了缺少必填字段的参数 —— 容错机制本身不变。
         """
-        llm = FakeToolLLM([
-            ToolCallResponse(
-                content="",
-                # 缺 query（必填）→ 工具执行应失败并回灌错误
-                tool_calls=[ToolCall(id="bad_1", name="retrieve_knowledge", arguments={})],
-                raw={},
-            ),
-            _final_response("容错后回答"),
-        ])
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(
+                    content="",
+                    # 缺 query（必填）→ 工具执行应失败并回灌错误
+                    tool_calls=[ToolCall(id="bad_1", name="retrieve_knowledge", arguments={})],
+                    raw={},
+                ),
+                _final_response("容错后回答"),
+            ]
+        )
         agent = _build_agent(llm, monkeypatch=monkeypatch)
         result = agent.ask("行政拘留最长多久")
         assert result["answer"] == "容错后回答"
@@ -159,10 +173,12 @@ class TestAskReact:
 
     def test_unknown_tool_returns_error_result(self, monkeypatch):
         """LLM 请求未知工具 → 工具返回 ok=False 的 ToolResult，循环继续。"""
-        llm = FakeToolLLM([
-            ToolCallResponse(content="", tool_calls=[ToolCall(id="x1", name="not_exist", arguments={})], raw={}),
-            _final_response("未知工具容错回答"),
-        ])
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(content="", tool_calls=[ToolCall(id="x1", name="not_exist", arguments={})], raw={}),
+                _final_response("未知工具容错回答"),
+            ]
+        )
         agent = _build_agent(llm, monkeypatch=monkeypatch)
         result = agent.ask("行政拘留最长多久")
         assert result["answer"] == "未知工具容错回答"
@@ -171,13 +187,15 @@ class TestAskReact:
 
     def test_empty_name_tool_call_routes_to_final_answer(self, monkeypatch):
         """空 name 的 tool_call（DeepSeek V4 空占位）→ 不路由 tools，直接最终答案。"""
-        llm = FakeToolLLM([
-            ToolCallResponse(
-                content="直接回答",
-                tool_calls=[ToolCall(id="c1", name="", arguments={})],
-                raw={},
-            ),
-        ])
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(
+                    content="直接回答",
+                    tool_calls=[ToolCall(id="c1", name="", arguments={})],
+                    raw={},
+                ),
+            ]
+        )
         agent = _build_agent(llm, monkeypatch=monkeypatch)
         result = agent.ask("行政拘留最长多久")
         assert result["answer"] == "直接回答"
@@ -189,6 +207,7 @@ class TestAskReact:
 # ---------------------------------------------------------------------------
 # stream() 流式路径（SSE 事件序列）
 # ---------------------------------------------------------------------------
+
 
 class TestStreamReact:
     def test_emits_tool_events_and_tokens(self, monkeypatch):
@@ -217,14 +236,16 @@ class TestStreamReact:
 
     def test_tool_result_failure_marked(self, monkeypatch):
         """web_search 不可用 → tool_result.ok=false + summary 首词"搜索不可用"（REQ-UW1/AC-2）。"""
-        llm = FakeToolLLM([
-            ToolCallResponse(
-                content="",
-                tool_calls=[ToolCall(id="w1", name="web_search", arguments={"query": "最新修订"})],
-                raw={},
-            ),
-            _final_response("基于内部库回答"),
-        ])
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(
+                    content="",
+                    tool_calls=[ToolCall(id="w1", name="web_search", arguments={"query": "最新修订"})],
+                    raw={},
+                ),
+                _final_response("基于内部库回答"),
+            ]
+        )
         agent = _build_agent(llm, monkeypatch=monkeypatch)
         events = list(agent.stream("行政拘留最长多久"))
         tool_result_event = next(e for e in events if e["type"] == "tool_result")
@@ -245,6 +266,7 @@ class TestStreamReact:
 # agent_node 决策调用的入口语义（D-M1-3 重试 + Failover 4xx 降级回归守卫）
 # ---------------------------------------------------------------------------
 
+
 class TestAgentNodeCallSemantics:
     """agent_node 必须经 `chat_with_tools` 公开入口调用 LLM。
 
@@ -263,8 +285,12 @@ class TestAgentNodeCallSemantics:
 
     def _state(self):
         return {
-            "query": "测试问题", "messages": [], "agent_turns": 0,
-            "tool_calls": [], "tool_results": [], "tool_log": [],
+            "query": "测试问题",
+            "messages": [],
+            "agent_turns": 0,
+            "tool_calls": [],
+            "tool_results": [],
+            "tool_log": [],
         }
 
     def test_primary_4xx_degrades_to_fallback(self):

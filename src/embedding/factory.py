@@ -4,6 +4,7 @@ Embedding 后端工厂函数。
 根据环境变量配置自动选择并创建 Embedding 后端实例。
 支持 Ollama 和 OpenAI 兼容 API 两种后端。
 """
+
 from __future__ import annotations
 
 import logging
@@ -46,10 +47,7 @@ def create_embedding_backend(
     elif backend_type in ("openai", "openai_compatible"):
         return _create_openai(**kwargs)
     else:
-        raise ValueError(
-            f"不支持的 Embedding 后端类型: '{backend_type}'。"
-            f"支持的类型: ollama, openai"
-        )
+        raise ValueError(f"不支持的 Embedding 后端类型: '{backend_type}'。支持的类型: ollama, openai")
 
 
 def _create_ollama(**kwargs) -> OllamaEmbedder:
@@ -75,9 +73,7 @@ def _create_openai(**kwargs) -> OpenAIEmbedder:
     max_retries = kwargs.get("max_retries", int(os.getenv("EMBED_MAX_RETRIES", "3")))
 
     if not api_key:
-        raise ValueError(
-            "使用 OpenAI 兼容 Embedding 后端必须设置 OPENAI_API_KEY 环境变量"
-        )
+        raise ValueError("使用 OpenAI 兼容 Embedding 后端必须设置 OPENAI_API_KEY 环境变量")
 
     safe_key = api_key[:8] + "..." if len(api_key) > 8 else "***"
     logger.info(f"创建 OpenAI Embedding 后端: model={model}, base_url={base_url}, api_key={safe_key}")

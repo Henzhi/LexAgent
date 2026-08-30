@@ -1,6 +1,7 @@
 """
 API 路由定义。支持多轮对话 + LangGraph Agent + 用户会话隔离。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +20,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
 from .dependencies import get_engine, get_agent, get_llm, _create_embedder
-from .models import ChatRequest, ChatResponse, CancelRequest, HealthResponse, RegisterRequest, LoginRequest, AuthResponse, CrawlRequest, CrawlTaskResponse, CrawlStatusResponse, RewriteRequest
+from .models import (
+    ChatRequest,
+    ChatResponse,
+    CancelRequest,
+    HealthResponse,
+    RegisterRequest,
+    LoginRequest,
+    AuthResponse,
+    CrawlRequest,
+    CrawlTaskResponse,
+    CrawlStatusResponse,
+    RewriteRequest,
+)
 from .auth import get_current_user, require_registered_user, register_user, login_user
 from src.config import AGENT_ENABLED, LLM_MAX_CONCURRENCY
 from src.observability.cost_budget import get_budget
@@ -136,6 +149,7 @@ def budget_status(user_id: str = Depends(get_current_user)):
 async def health():
     try:
         from src.config import LLM_MODEL
+
         eng = get_engine() if not AGENT_ENABLED else get_agent()
 
         # 遍历检索器链找到最内层的 pgvector retriever
@@ -152,7 +166,8 @@ async def health():
                 doc_count = getattr(chain._store, "doc_count", 0)
 
         return HealthResponse(
-            status="ok", version="0.1.0",
+            status="ok",
+            version="0.1.0",
             index_ready=index_ready,
             doc_count=doc_count,
             llm_model=LLM_MODEL,
@@ -194,7 +209,8 @@ def chat(req: ChatRequest):
                 f"retrieved={len(ret_docs)} fused={len(fused or [])} elapsed={elapsed:.0f}ms"
             )
             return ChatResponse.from_rag_answer(
-                query=result["query"], answer=result["answer"],
+                query=result["query"],
+                answer=result["answer"],
                 sources=_dicts_to_retrieved(fused if fused is not None else ret_docs),
                 is_casual=not result.get("is_legal_query", True),
             )
@@ -212,7 +228,7 @@ def chat(req: ChatRequest):
             elapsed = (time.perf_counter() - t_start) * 1000
             perf_logger.info(
                 f"[chat] mode=casual query_len={len(req.query)} "
-                f"route_ms={(time.perf_counter()-t_route)*1000:.0f} elapsed={elapsed:.0f}ms"
+                f"route_ms={(time.perf_counter() - t_route) * 1000:.0f} elapsed={elapsed:.0f}ms"
             )
             return ChatResponse.from_rag_answer(query=req.query, answer=answer, sources=[], is_casual=True)
 
@@ -436,18 +452,21 @@ def _iter_engine_stream(engine, query: str, history: list) -> Iterator[dict]:
     ret_ms = (time.perf_counter() - t_ret) * 1000
     prompt = engine._build_prompt(query, docs)
     top_score = round(docs[0].score, 4) if docs else 0
-    perf_logger.info(
-        f"[stream] mode=rag retrieved={len(docs)} top_score={top_score} ret_ms={ret_ms:.0f}ms"
-    )
+    perf_logger.info(f"[stream] mode=rag retrieved={len(docs)} top_score={top_score} ret_ms={ret_ms:.0f}ms")
     yield {"type": "thinking", "content": f"检索完成，找到 {len(docs)} 条相关条文"}
     if docs:
         citations = [f"{d.law_name} {d.article_range}" for d in docs[:5]]
         yield {"type": "thinking", "content": f"引用: {', '.join(citations)}"}
 
     sources = [
-        {"law_name": s.law_name, "chapter": s.chapter,
-         "article_range": s.article_range, "citation": s.citation,
-         "score": float(s.score), "content": s.content}
+        {
+            "law_name": s.law_name,
+            "chapter": s.chapter,
+            "article_range": s.article_range,
+            "citation": s.citation,
+            "score": float(s.score),
+            "content": s.content,
+        }
         for s in docs
     ]
     yield {"type": "meta", "sources": sources, "is_casual": False}
@@ -463,9 +482,11 @@ async def chat_stream(req: ChatRequest, request: Request):
     # 输入安全过滤（Prompt 注入 + 敏感内容检测）
     safe_query, is_safe, reject_reason = sanitize_input(req.query)
     if not is_safe:
+
         async def _reject_stream():
             yield _sse({"type": "error", "content": safe_query})
             yield "data: [DONE]\n\n"
+
         return StreamingResponse(
             _reject_stream(),
             media_type="text/event-stream",
@@ -600,10 +621,12 @@ async def chat_stream(req: ChatRequest, request: Request):
 # 对话持久化（全部按 user_id 隔离）
 # ------------------------------------------------------------------
 
+
 @router.get("/conversations")
 def list_conversations(user_id: str = Depends(get_current_user)):
     """列出当前用户的对话会话"""
     from .conversation_store import get_conversation_store
+
     store = get_conversation_store()
     return store.list_sessions(user_id=user_id)
 
@@ -612,6 +635,7 @@ def list_conversations(user_id: str = Depends(get_current_user)):
 def get_conversation(session_id: str, user_id: str = Depends(get_current_user)):
     """加载指定会话的对话历史（仅限当前用户）"""
     from .conversation_store import get_conversation_store
+
     store = get_conversation_store()
     history = store.load_history(user_id=user_id, session_id=session_id)
     return {"session_id": session_id, "history": history}
@@ -632,6 +656,7 @@ def _persist_memory_background(user_id: str, session_id: str, messages: list[dic
     try:
         from .dependencies import get_memory_manager
         from .auth import ANONYMOUS_USER_ID
+
         if not user_id or user_id == ANONYMOUS_USER_ID:
             return
         mgr = get_memory_manager()
@@ -651,6 +676,7 @@ def save_session(session_id: str, body: dict, user_id: str = Depends(get_current
     （幂等 UPSERT，同一会话重复保存不会产生重复记忆）。
     """
     from .conversation_store import get_conversation_store
+
     store = get_conversation_store()
     messages = body.get("messages", [])
     if not isinstance(messages, list):
@@ -664,6 +690,7 @@ def save_session(session_id: str, body: dict, user_id: str = Depends(get_current
 
     # 异步触发记忆固化（≥6 轮才写，内部幂等）
     from src.memory.conversation import SUMMARY_TRIGGER_ROUNDS
+
     if len(messages) >= SUMMARY_TRIGGER_ROUNDS:
         resp = JSONResponse({"ok": True})
         resp.background = BackgroundTask(_persist_memory_background, user_id, session_id, messages)
@@ -675,6 +702,7 @@ def save_session(session_id: str, body: dict, user_id: str = Depends(get_current
 def delete_session(session_id: str, user_id: str = Depends(get_current_user)):
     """删除指定会话"""
     from .conversation_store import get_conversation_store
+
     store = get_conversation_store()
     store.delete_session(user_id=user_id, session_id=session_id)
     return {"ok": True}
@@ -683,6 +711,7 @@ def delete_session(session_id: str, user_id: str = Depends(get_current_user)):
 # ------------------------------------------------------------------
 # 认证路由
 # ------------------------------------------------------------------
+
 
 @auth_router.post("/register", response_model=AuthResponse)
 def register(req: RegisterRequest):
@@ -700,6 +729,7 @@ def login(req: LoginRequest):
 def get_me(user_id: str = Depends(get_current_user)):
     """获取当前用户信息"""
     from .auth import ANONYMOUS_USER_ID
+
     is_anonymous = user_id == ANONYMOUS_USER_ID
     return {"user_id": user_id, "anonymous": is_anonymous}
 
@@ -763,9 +793,11 @@ def _get_ingestion_pipeline():
         embedder = _create_embedder()
         from src.knowledge.pgvector_store import PgvectorStore
         from src.config import PG_CONN as _pg_conn
+
         store = PgvectorStore(_pg_conn)
         store.ensure_tables()
         from src.knowledge.ingestion.pipeline import IngestionPipeline
+
         _ingestion_pipeline = IngestionPipeline(store, embedder)
     return _ingestion_pipeline
 
@@ -784,6 +816,7 @@ async def upload_document(
 ):
     # 归一到规范 doc_type（兼容前端旧别名 interpretation/local/judicial）
     from src.knowledge.doc_types import normalize_doc_type
+
     doc_type = normalize_doc_type(doc_type)
 
     # 校验效力状态（防止伪造非法值）
@@ -840,6 +873,7 @@ async def upload_document(
 def _run_ingestion_sync(pipeline, task_id: str, tmp_path: str):
     """后台同步执行解析任务（运行在 asyncio.to_thread 线程中）"""
     import os
+
     try:
         chunk_count = pipeline.run(task_id)
         logger.info(f"后台解析完成: task={task_id[:8]}..., chunks={chunk_count}")
@@ -866,10 +900,12 @@ async def get_ingestion_status(task_id: str):
 # 5. 知识库 — 文档管理
 # ---------------------------------------------------------------------------
 
+
 def _get_store():
     """获取 pgvector store 单例"""
     from src.knowledge.pgvector_store import PgvectorStore
     from src.config import PG_CONN as _pg_conn
+
     store = PgvectorStore(_pg_conn)
     store.ensure_tables()
     return store
@@ -901,12 +937,18 @@ def list_knowledge_documents(
         {documents, total, limit, offset}
     """
     from src.knowledge.doc_types import normalize_doc_type
+
     store = _get_store()
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
     docs, total = store.list_documents(
-        doc_type=normalize_doc_type(doc_type), status=status,
-        q=q or None, sort=sort, order=order, limit=limit, offset=offset,
+        doc_type=normalize_doc_type(doc_type),
+        status=status,
+        q=q or None,
+        sort=sort,
+        order=order,
+        limit=limit,
+        offset=offset,
     )
     return {"documents": docs, "total": total, "limit": limit, "offset": offset}
 
@@ -961,12 +1003,16 @@ async def crawl_laws(req: CrawlRequest, _user: str = Depends(require_registered_
     _crawl_tasks[task_id] = {
         "status": "pending",
         "progress": {"total": 0, "added": 0, "updated": 0, "skipped": 0, "failed": 0},
-        "errors": [], "files": [], "finished": False,
-        "result": None, "rebuild": None,
+        "errors": [],
+        "files": [],
+        "finished": False,
+        "result": None,
+        "rebuild": None,
     }
     asyncio.create_task(asyncio.to_thread(_run_crawl, task_id, req))
     return CrawlTaskResponse(
-        task_id=task_id, status="pending",
+        task_id=task_id,
+        status="pending",
         message="爬取任务已提交，请用 GET /api/crawl/status/{task_id} 查询进度",
     )
 
@@ -986,21 +1032,31 @@ def _run_crawl(task_id: str, req: CrawlRequest) -> None:
 
         def _on_progress(r) -> None:
             state["progress"] = {
-                "total": r.total, "added": r.added, "updated": r.updated,
-                "skipped": r.skipped, "failed": r.failed,
+                "total": r.total,
+                "added": r.added,
+                "updated": r.updated,
+                "skipped": r.skipped,
+                "failed": r.failed,
             }
 
         res = crawler.crawl(
-            doc_type=normalize_doc_type(req.doc_type), keyword=req.keyword, limit=req.limit,
-            force=req.force, subdir=req.subdir, store=req.store,
+            doc_type=normalize_doc_type(req.doc_type),
+            keyword=req.keyword,
+            limit=req.limit,
+            force=req.force,
+            subdir=req.subdir,
+            store=req.store,
             progress_cb=_on_progress,
         )
         state["result"] = asdict(res)
         state["errors"] = res.errors
         state["files"] = res.files
         state["progress"] = {
-            "total": res.total, "added": res.added, "updated": res.updated,
-            "skipped": res.skipped, "failed": res.failed,
+            "total": res.total,
+            "added": res.added,
+            "updated": res.updated,
+            "skipped": res.skipped,
+            "failed": res.failed,
         }
         state["finished"] = True
         state["status"] = "done"
@@ -1026,6 +1082,7 @@ def _trigger_rebuild(task_id: str) -> None:
     try:
         from src.config import PG_CONN
         from src.knowledge.pgvector_store import PgvectorStore
+
         store = PgvectorStore(PG_CONN)
         store.reindex()
         state["rebuild"] = "done"
@@ -1056,6 +1113,7 @@ async def get_crawl_status(task_id: str):
 async def list_crawl_types():
     """列出支持的爬取类型与说明（分类对齐 flk 国家法律法规数据库顶级分类）"""
     from src.knowledge.doc_types import crawlable_types
+
     types = crawlable_types()
     types["auto"] = "自动分类（按关键词搜索，逐条按 flxz 自动判定归属）"
     types["all"] = "全部（依次爬取上述类型）"

@@ -4,6 +4,7 @@
 死代码「年月日」（jieba 不会把日期切出该整体）。这两个问题都极隐蔽——
 索引能建、查询能跑，只是「某些问题搜不到」，因此必须有用例守住。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -59,9 +60,7 @@ class TestTokenize:
 
     def test_law_name_prefix_normalized(self):
         """法名前缀归一化：带不带「中华人民共和国」应等价。"""
-        assert _tokenize("中华人民共和国劳动合同法第四十六条") == _tokenize(
-            "劳动合同法第四十六条"
-        )
+        assert _tokenize("中华人民共和国劳动合同法第四十六条") == _tokenize("劳动合同法第四十六条")
 
     @pytest.mark.parametrize("query", ["赔偿多少万元", "罚款十万元"])
     def test_amount_queries_produce_tokens(self, query):
@@ -86,10 +85,12 @@ class TestBm25RetrieverSearch:
         """法名拼入索引文本，使「法名+关键词」可被 BM25 精确命中。"""
         from src.rag.bm25_retriever import Bm25Retriever
 
-        store = _FakeStore([
-            ("用人单位应当按月支付劳动报酬", {"law_name": "中华人民共和国劳动法"}),
-            ("正当防卫不负刑事责任", {"law_name": "中华人民共和国刑法"}),
-        ])
+        store = _FakeStore(
+            [
+                ("用人单位应当按月支付劳动报酬", {"law_name": "中华人民共和国劳动法"}),
+                ("正当防卫不负刑事责任", {"law_name": "中华人民共和国刑法"}),
+            ]
+        )
         retriever = Bm25Retriever(store)
         retriever.load_index()
 
@@ -125,10 +126,12 @@ class TestFragmentFilter:
         assert not _is_fragment("正当防卫不负刑事责任")
 
     def test_load_index_skips_fragments(self):
-        store = _FakeStore([
-            ("第九条", {"law_name": "刑法", "article_range": "第九条"}),
-            ("正当防卫不负刑事责任", {"law_name": "刑法", "article_range": "第二十条"}),
-        ])
+        store = _FakeStore(
+            [
+                ("第九条", {"law_name": "刑法", "article_range": "第九条"}),
+                ("正当防卫不负刑事责任", {"law_name": "刑法", "article_range": "第二十条"}),
+            ]
+        )
         retriever = Bm25Retriever(store)
         retriever.load_index()
         assert len(retriever._chunks) == 1
@@ -143,9 +146,11 @@ class TestLawNameBoost:
     """
 
     def test_law_name_token_repeated_in_index(self):
-        store = _FakeStore([
-            ("正当防卫不负刑事责任", {"law_name": "中华人民共和国刑法"}),
-        ])
+        store = _FakeStore(
+            [
+                ("正当防卫不负刑事责任", {"law_name": "中华人民共和国刑法"}),
+            ]
+        )
         retriever = Bm25Retriever(store)
         retriever.load_index()
         doc_terms = retriever._bm25.doc_freqs[0]
@@ -156,14 +161,13 @@ class TestLawNameBoost:
 
         回归基线：加权前 top5 全是信托法/关税法等的「第二十条」碎片。
         """
-        store = _FakeStore([
-            ("正当防卫不负刑事责任", {"law_name": "中华人民共和国刑法",
-                                    "article_range": "第二十条"}),
-            ("信托当事人的其他权利义务", {"law_name": "中华人民共和国信托法",
-                                       "article_range": "第二十条"}),
-            ("关税的退还与补缴规则", {"law_name": "中华人民共和国关税法",
-                          "article_range": "第二十条"}),
-        ])
+        store = _FakeStore(
+            [
+                ("正当防卫不负刑事责任", {"law_name": "中华人民共和国刑法", "article_range": "第二十条"}),
+                ("信托当事人的其他权利义务", {"law_name": "中华人民共和国信托法", "article_range": "第二十条"}),
+                ("关税的退还与补缴规则", {"law_name": "中华人民共和国关税法", "article_range": "第二十条"}),
+            ]
+        )
         retriever = Bm25Retriever(store)
         retriever.load_index()
         docs = retriever.search("刑法第二十条", top_k=3)
@@ -174,14 +178,13 @@ class TestSearchDedupByArticle:
     """同一条文的多 chunk 只保留最高排名的一个，空位由后续条文补足。"""
 
     def test_same_article_chunks_dedup(self):
-        store = _FakeStore([
-            ("第四十二条第一款关于初步审查的内容", {"law_name": "专利法实施细则",
-                                              "article_range": "第四十二条"}),
-            ("第四十二条第二款关于期限补偿的内容", {"law_name": "专利法实施细则",
-                                            "article_range": "第四十二条"}),
-            ("第四十三条关于优先权恢复的内容", {"law_name": "专利法实施细则",
-                                          "article_range": "第四十三条"}),
-        ])
+        store = _FakeStore(
+            [
+                ("第四十二条第一款关于初步审查的内容", {"law_name": "专利法实施细则", "article_range": "第四十二条"}),
+                ("第四十二条第二款关于期限补偿的内容", {"law_name": "专利法实施细则", "article_range": "第四十二条"}),
+                ("第四十三条关于优先权恢复的内容", {"law_name": "专利法实施细则", "article_range": "第四十三条"}),
+            ]
+        )
         retriever = Bm25Retriever(store)
         retriever.load_index()
         docs = retriever.search("第四十二条 第四十三条 初步审查 期限补偿", top_k=5)
@@ -191,10 +194,12 @@ class TestSearchDedupByArticle:
 
     def test_chunks_without_article_range_not_dedup(self):
         """article_range 为空的 chunk（总则等）不参与去重。"""
-        store = _FakeStore([
-            ("总则编的适用范围说明", {"law_name": "民法典", "article_range": ""}),
-            ("总则编的基本原则说明", {"law_name": "民法典", "article_range": ""}),
-        ])
+        store = _FakeStore(
+            [
+                ("总则编的适用范围说明", {"law_name": "民法典", "article_range": ""}),
+                ("总则编的基本原则说明", {"law_name": "民法典", "article_range": ""}),
+            ]
+        )
         retriever = Bm25Retriever(store)
         retriever.load_index()
         docs = retriever.search("总则编 段 内容", top_k=5)

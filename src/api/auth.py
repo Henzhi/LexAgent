@@ -6,6 +6,7 @@
 - 盐值拼接在哈希值中，格式: $pbkdf2-sha256$迭代次数$salt$hash
 - Token 为 64 位随机字符串，服务端只存 SHA256 哈希
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -33,7 +34,7 @@ PBKDF2_ALGORITHM = "sha256"
 
 # 登录防爆破：同一用户名滑动窗口内连续失败 N 次后锁定（内存实现，重启即清零）
 _LOGIN_MAX_FAILURES = 5
-_LOGIN_FAIL_WINDOW = 300    # 5 分钟滑动窗口（秒）
+_LOGIN_FAIL_WINDOW = 300  # 5 分钟滑动窗口（秒）
 _login_failures: dict[str, list[float]] = {}
 _login_failures_lock = threading.Lock()
 

@@ -3,6 +3,7 @@ M2 官方法律源测试（F9）：legal_source_search 工具、LegalSourceClien
 
 全部 mock HTTP，不打真实网络（AGENTS.md 禁止事项）。
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -27,6 +28,7 @@ from tests.fakes import FakeRetriever
 # ---------------------------------------------------------------------------
 # NationalLawClient
 # ---------------------------------------------------------------------------
+
 
 class TestNationalLawClient:
     def test_search_law_parses_records(self):
@@ -81,6 +83,7 @@ class TestNationalLawClient:
 # CourtCaseLibraryClient（Tavily 域限定）
 # ---------------------------------------------------------------------------
 
+
 class TestCourtCaseLibraryClient:
     def test_unavailable_without_tavily(self):
         """未配置 Tavily → is_available()=False，search 抛 RuntimeError。"""
@@ -109,6 +112,7 @@ class TestCourtCaseLibraryClient:
 # XiaobaogongClient
 # ---------------------------------------------------------------------------
 
+
 class TestXiaobaogongClient:
     def test_unavailable_without_config(self):
         assert XiaobaogongClient(api_key="", api_url="").is_available() is False
@@ -128,6 +132,7 @@ class TestXiaobaogongClient:
 # ---------------------------------------------------------------------------
 # LegalSourceClient 聚合
 # ---------------------------------------------------------------------------
+
 
 class TestLegalSourceClientAggregate:
     def _client(self, law_results=None, case_results=None, law_error=None, law_available=True):
@@ -172,7 +177,12 @@ class TestLegalSourceClientAggregate:
     def test_dedup_by_url(self):
         law = [
             {"title": "民法典", "url": "https://flk.npc.gov.cn/1", "content": "", "source": SOURCE_NATIONAL_LAW_DB},
-            {"title": "民法典（重复）", "url": "https://flk.npc.gov.cn/1", "content": "", "source": SOURCE_NATIONAL_LAW_DB},
+            {
+                "title": "民法典（重复）",
+                "url": "https://flk.npc.gov.cn/1",
+                "content": "",
+                "source": SOURCE_NATIONAL_LAW_DB,
+            },
         ]
         data = self._client(law_results=law).search("民法典", source_type="law")
         assert data["count"] == 1
@@ -182,6 +192,7 @@ class TestLegalSourceClientAggregate:
 # LegalSourceSearchTool（工具封装）
 # ---------------------------------------------------------------------------
 
+
 class TestLegalSourceSearchTool:
     def _spec(self, client):
         return build_legal_source_search_spec(client)
@@ -190,7 +201,15 @@ class TestLegalSourceSearchTool:
         client = MagicMock()
         client.is_available.return_value = True
         client.search.return_value = {
-            "results": [{"title": "民事诉讼法", "url": "https://flk/1", "content": "", "source": SOURCE_NATIONAL_LAW_DB, "law_status": "现行有效"}],
+            "results": [
+                {
+                    "title": "民事诉讼法",
+                    "url": "https://flk/1",
+                    "content": "",
+                    "source": SOURCE_NATIONAL_LAW_DB,
+                    "law_status": "现行有效",
+                }
+            ],
             "count": 1,
             "sources": [SOURCE_NATIONAL_LAW_DB],
             "errors": [],
@@ -237,6 +256,7 @@ class TestLegalSourceSearchTool:
 # ---------------------------------------------------------------------------
 # build_default_tools 注册集成
 # ---------------------------------------------------------------------------
+
 
 class TestRegistryIntegration:
     def test_legal_source_registered_by_default(self, monkeypatch):

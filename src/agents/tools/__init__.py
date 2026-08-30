@@ -5,6 +5,7 @@
 两个内置工具；LEGAL_SOURCE_ENABLED=true（默认）时追加 legal_source_search；
 PKULAW_ENABLED=true 且客户端可用时追加 pkulaw_search / pkulaw_verify。
 """
+
 from __future__ import annotations
 
 import logging

@@ -3,6 +3,7 @@ M3 / F14 预算熔断测试：日用量统计、超限熔断、Redis 降级、�
 
 不依赖真实 Redis：CostBudget 在无 redis_url 时自动走进程内计数。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -65,7 +66,7 @@ class TestCounting:
 class TestCircuitBreaking:
     def test_check_passes_before_limit(self, budget):
         for _ in range(3):
-            budget.check(KIND_LLM)      # 不应抛
+            budget.check(KIND_LLM)  # 不应抛
             budget.record(KIND_LLM)
 
     def test_check_raises_at_limit(self, budget):
@@ -93,7 +94,7 @@ class TestCircuitBreaking:
         b = CostBudget(redis_url="", limits={KIND_LLM: 1}, enforce=False)
         b.reset()
         b.record(KIND_LLM)
-        b.check(KIND_LLM)                       # 不应抛
+        b.check(KIND_LLM)  # 不应抛
         assert b.is_exceeded(KIND_LLM) is True
 
     def test_tavily_breaks_independently(self, budget):
@@ -103,7 +104,7 @@ class TestCircuitBreaking:
             budget.record(KIND_TAVILY)
         with pytest.raises(BudgetExceededError):
             budget.check(KIND_TAVILY)
-        budget.check(KIND_LLM)                  # LLM 仍可用
+        budget.check(KIND_LLM)  # LLM 仍可用
 
 
 class TestResetAndStatus:
@@ -113,7 +114,7 @@ class TestResetAndStatus:
         budget.reset(KIND_LLM)
         assert budget.used(KIND_LLM) == 0
         assert budget.is_exceeded(KIND_LLM) is False
-        budget.check(KIND_LLM)                  # 重置后可继续
+        budget.check(KIND_LLM)  # 重置后可继续
 
     def test_reset_all(self, budget):
         budget.record(KIND_LLM, 3)
@@ -129,7 +130,10 @@ class TestResetAndStatus:
         assert st["enforce"] is True
         assert st["exceeded"] is False
         assert st["detail"][KIND_LLM] == {
-            "used": 1, "limit": 3, "remaining": 2, "exceeded": False,
+            "used": 1,
+            "limit": 3,
+            "remaining": 2,
+            "exceeded": False,
         }
         assert st["detail"][KIND_TAVILY]["used"] == 0
 
@@ -144,7 +148,7 @@ class TestRedisDegradation:
     def test_bad_redis_url_falls_back_to_memory(self):
         """Redis 不可用时退化为进程内计数，不抛异常、不影响主链路。"""
         b = CostBudget(
-            redis_url="redis://127.0.0.1:1/0",   # 必然连不上
+            redis_url="redis://127.0.0.1:1/0",  # 必然连不上
             limits={KIND_LLM: 5},
             enforce=True,
         )
@@ -163,7 +167,7 @@ class TestRedisDegradation:
                 raise RuntimeError("redis down")
 
         object.__setattr__(budget, "_client", _BrokenClient())
-        budget.record(KIND_LLM)          # 不抛异常
+        budget.record(KIND_LLM)  # 不抛异常
         assert budget.used(KIND_LLM) >= 1
         assert budget.status()["storage"] == "redis"
 
@@ -265,13 +269,8 @@ class TestLLMBudgetCallback:
             OllamaBackend(model="qwen2.5:7b"),
         ]
         for backend in backends:
-            names = [
-                getattr(cb, "name", type(cb).__name__)
-                for cb in (backend.chat_model.callbacks or [])
-            ]
-            assert "llm_budget_callback" in names, (
-                f"{type(backend).__name__} 未挂载预算 callback"
-            )
+            names = [getattr(cb, "name", type(cb).__name__) for cb in (backend.chat_model.callbacks or [])]
+            assert "llm_budget_callback" in names, f"{type(backend).__name__} 未挂载预算 callback"
 
 
 class TestTavilyIntegration:
@@ -292,10 +291,10 @@ class TestTavilyIntegration:
         client._client = MagicMock()
         client._client.search.return_value = {"results": []}
 
-        client.search("q")                       # 第一次：消耗配额
+        client.search("q")  # 第一次：消耗配额
         assert b.used(KIND_TAVILY) == 1
         with pytest.raises(BudgetExceededError):
-            client.search("q")                   # 第二次：熔断
+            client.search("q")  # 第二次：熔断
         reset_budget()
 
     def test_failed_search_does_not_consume_quota(self, monkeypatch):

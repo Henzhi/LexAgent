@@ -5,6 +5,7 @@ M3+ 北大法宝 MCP 接入测试（F9 扩展，决策 D-PKULAW）。
 （AGENTS.md 禁止事项）。覆盖：客户端归一化、官方法律源门面集成、融合验证状态、
 ReAct 工具封装、预算熔断降级、build_default_tools 注册。
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -28,6 +29,7 @@ from tests.fakes import FakePkulawClient, FakeRetriever
 # PkulawMCPClient 归一化
 # ---------------------------------------------------------------------------
 
+
 class TestPkulawNormalization:
     def test_strip_dotzero(self):
         assert PkulawMCPClient._strip_dotzero("https://x#tiao_1077.0") == "https://x#tiao_1077"
@@ -35,7 +37,18 @@ class TestPkulawNormalization:
 
     def test_normalize_wrapped_data(self):
         """包裹体（大写 Data）→ 条目列表，链接 .0 锚点被清理。"""
-        raw = {"Message": "成功", "Data": [{"title": "民法典", "url": "https://pkulaw.com/1#tiao_1077.0", "article": "第一条", "timeliness": "现行有效"}], "Total": 1}
+        raw = {
+            "Message": "成功",
+            "Data": [
+                {
+                    "title": "民法典",
+                    "url": "https://pkulaw.com/1#tiao_1077.0",
+                    "article": "第一条",
+                    "timeliness": "现行有效",
+                }
+            ],
+            "Total": 1,
+        }
         items = PkulawMCPClient()._normalize_search(raw, purpose="article")
         assert len(items) == 1
         it = items[0]
@@ -51,7 +64,17 @@ class TestPkulawNormalization:
         assert items[0]["url"] == "https://pkulaw.com/x#tiao_1"
 
     def test_normalize_case_extracts_fields(self):
-        raw = [{"title": "某案", "url": "https://pkulaw.com/c/1", "Ascertain": "查明事实", "Identified": "认为", "RefereeResult": "结果", "CaseFlag": "(2024)京01民终1号", "Court": "北京一中院"}]
+        raw = [
+            {
+                "title": "某案",
+                "url": "https://pkulaw.com/c/1",
+                "Ascertain": "查明事实",
+                "Identified": "认为",
+                "RefereeResult": "结果",
+                "CaseFlag": "(2024)京01民终1号",
+                "Court": "北京一中院",
+            }
+        ]
         items = PkulawMCPClient()._normalize_search(raw, purpose="case")
         it = items[0]
         assert it["case_number"] == "(2024)京01民终1号"
@@ -62,6 +85,7 @@ class TestPkulawNormalization:
 # ---------------------------------------------------------------------------
 # 运行时工具名解析（历史 Bug：_discover 漏 await）
 # ---------------------------------------------------------------------------
+
 
 class TestPkulawToolDiscovery:
     """守护「运行时按用途解析工具名」不退化为静态兜底名。
@@ -159,8 +183,9 @@ class TestPkulawToolDiscovery:
             yield session
 
         client = PkulawMCPClient()
-        with patch("mcp.client.streamable_http.streamablehttp_client", fake_http), patch(
-            "mcp.ClientSession", fake_session
+        with (
+            patch("mcp.client.streamable_http.streamablehttp_client", fake_http),
+            patch("mcp.ClientSession", fake_session),
         ):
             asyncio.run(client._a_call("article_search", {"text": "x"}))
 
@@ -172,6 +197,7 @@ class TestPkulawToolDiscovery:
 # ---------------------------------------------------------------------------
 # PkulawLegalClient（门面子源适配）
 # ---------------------------------------------------------------------------
+
 
 class TestPkulawLegalClient:
     def test_search_law_maps_to_norm_item(self):
@@ -220,6 +246,7 @@ class TestPkulawLegalClient:
 # LegalSourceClient 聚合（含 pkulaw 子源）
 # ---------------------------------------------------------------------------
 
+
 class TestLegalSourceClientWithPkulaw:
     def test_pkulaw_law_included(self):
         """all 检索：国家库 + 北大法宝法条 合并返回。"""
@@ -265,6 +292,7 @@ class TestLegalSourceClientWithPkulaw:
 # 融合验证状态
 # ---------------------------------------------------------------------------
 
+
 def _legal(title, url, sub=SOURCE_PKULAW, **extra):
     return {"title": title, "url": url, "content": "", "source": sub, **extra}
 
@@ -280,6 +308,7 @@ class TestFusionPkulaw:
 # ---------------------------------------------------------------------------
 # ReAct 工具封装
 # ---------------------------------------------------------------------------
+
 
 class TestPkulawSearchTool:
     def _spec(self, client=None):
@@ -350,6 +379,7 @@ class TestPkulawVerifyTool:
 # ---------------------------------------------------------------------------
 # build_default_tools 注册
 # ---------------------------------------------------------------------------
+
 
 class TestRegistryIntegrationPkulaw:
     def test_pkulaw_registered_when_available(self, monkeypatch):

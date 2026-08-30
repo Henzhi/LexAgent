@@ -7,6 +7,7 @@ M1 后端降级测试：FailoverLLMBackend（F5 / REQ-U1 / REQ-UW2 / AC-6）。
 - 可重试异常（429/5xx）→ 不触发降级
 - chat / chat_stream / chat_with_tools 三条路径的降级与重放
 """
+
 from __future__ import annotations
 
 import pytest
@@ -81,6 +82,7 @@ class FakeOllamaBackend(LLMBackend):
 # 创建期降级
 # ---------------------------------------------------------------------------
 
+
 class TestCreationDegradation:
     def test_primary_none_initial_degraded(self):
         backend = FailoverLLMBackend(primary=None, fallback=FakeOllamaBackend())
@@ -116,6 +118,7 @@ class TestCreationDegradation:
 # ---------------------------------------------------------------------------
 # 运行期降级
 # ---------------------------------------------------------------------------
+
 
 class TestRuntimeDegradation:
     def test_non_retryable_401_switches(self):

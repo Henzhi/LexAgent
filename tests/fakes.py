@@ -7,6 +7,7 @@ D-M3-13：`FakeToolLLM` 额外提供 `chat_model` 属性，把脚本化响应包
 LangChain ChatModel 形态（bind_tools / invoke），使既有测试无需改动即可
 覆盖迁移后的 LangChain 代码路径。
 """
+
 from __future__ import annotations
 
 
@@ -15,6 +16,7 @@ class FakeRetriever:
 
     def __init__(self, docs=None):
         from src.rag.retriever import RetrievedDoc
+
         self.docs = docs or [
             RetrievedDoc(
                 content="根据《测试法》第一条，测试规定内容。",
@@ -54,6 +56,7 @@ class FakeToolLLM:
 
     def chat_with_tools(self, messages, tools, tool_choice="auto"):
         from src.llm.base import ToolCallResponse
+
         self.calls.append({"messages": messages, "tools": tools, "tool_choice": tool_choice})
         if not self.script:
             return ToolCallResponse(content="已耗尽脚本，直接回答。", tool_calls=[])

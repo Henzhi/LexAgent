@@ -4,6 +4,7 @@ FastAPI 应用入口。
 启动:
     uv run uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 """
+
 from __future__ import annotations
 
 import logging
@@ -48,6 +49,7 @@ async def _cleanup_loop():
         elif faq_cache is None:
             try:
                 from src.memory.faq_cache import FAQCache
+
                 faq_cache = FAQCache(conn_string=PG_CONN, embedder=None)
                 logger.info("FAQ 清理任务初始化成功")
             except Exception as e:
@@ -64,6 +66,7 @@ async def _cleanup_loop():
         if memory_mgr is None:
             try:
                 from src.memory.conversation import ConversationMemoryManager
+
                 memory_mgr = ConversationMemoryManager(conn_string=PG_CONN)
                 logger.info("对话记忆清理任务初始化成功")
             except Exception as e:
@@ -82,12 +85,15 @@ async def lifespan(app: FastAPI):
     """应用生命周期：启动时预热（pgvector 连接 + 模型加载提前到启动时消耗）"""
     import asyncio
     from src.config import AGENT_ENABLED
+
     if AGENT_ENABLED:
         from .dependencies import get_agent
+
         get_agent(force_reload=True)
         logger.info("Agent 图已重建")
     else:
         from .dependencies import get_engine
+
         get_engine()
         logger.info("RAG 引擎已预热")
 
@@ -140,6 +146,7 @@ async def add_request_id(request: Request, call_next):
 # 全局异常处理
 # ------------------------------------------------------------------
 
+
 @app.exception_handler(TimeoutError)
 async def timeout_exception_handler(request: Request, exc: TimeoutError):
     # 内部异常原文只落日志，不外发给客户端（防连接串/路径等信息泄露）
@@ -177,12 +184,14 @@ async def general_exception_handler(request: Request, exc: Exception):
         ).model_dump(),
     )
 
+
 # API 路由
 app.include_router(api_router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth")
 
 # 启动时加载 Token 缓存（PG 不可用时跳过，不影响测试）
 from .auth import load_token_cache
+
 try:
     load_token_cache()
 except Exception:

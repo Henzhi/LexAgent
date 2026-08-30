@@ -6,6 +6,7 @@
 
 每一条（Article）是最小的语义单元，保留完整的层次上下文。
 """
+
 from __future__ import annotations
 
 import re
@@ -22,18 +23,22 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # 匹配：第X编/章/节/条　标题或内容
-_RE_PART    = re.compile(r'^第([一二三四五六七八九十百]+)编\s+(.+)')
-_RE_CHAPTER = re.compile(r'^第([一二三四五六七八九十百]+)章\s+(.+)')
-_RE_SECTION = re.compile(r'^第([一二三四五六七八九十百]+)节\s+(.+)')
-_RE_ARTICLE = re.compile(r'^第([一二三四五六七八九十百千]+)条[\s　]+(.+)')
+_RE_PART = re.compile(r"^第([一二三四五六七八九十百]+)编\s+(.+)")
+_RE_CHAPTER = re.compile(r"^第([一二三四五六七八九十百]+)章\s+(.+)")
+_RE_SECTION = re.compile(r"^第([一二三四五六七八九十百]+)节\s+(.+)")
+_RE_ARTICLE = re.compile(r"^第([一二三四五六七八九十百千]+)条[\s　]+(.+)")
 
 # 匹配"目录"所在行，遇到目录后跳过直到第一条正文出现
-_RE_TOC = re.compile(r'^目\s*录\s*$')
+_RE_TOC = re.compile(r"^目\s*录\s*$")
 
 # 匹配主席令等序言行（以特定关键词开头）
 _PREAMBLE_KEYWORDS = [
-    '中华人民共和国主席令', '全国人民代表大会常务委员会',
-    '（', '第', '主席', '委员长',
+    "中华人民共和国主席令",
+    "全国人民代表大会常务委员会",
+    "（",
+    "第",
+    "主席",
+    "委员长",
 ]
 
 
@@ -41,19 +46,22 @@ _PREAMBLE_KEYWORDS = [
 # 数据模型
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Article:
     """单条法律条文"""
-    index: int              # 全局序号，如 1, 2, 3 ...
-    number: str             # 中文序号，如 "一"、"十二"、"一百二十三"
-    number_int: int         # 整型序号
-    text: str               # 正文内容
-    content: str = ''       # 完整上下文文本（含后续续行）
+
+    index: int  # 全局序号，如 1, 2, 3 ...
+    number: str  # 中文序号，如 "一"、"十二"、"一百二十三"
+    number_int: int  # 整型序号
+    text: str  # 正文内容
+    content: str = ""  # 完整上下文文本（含后续续行）
 
 
 @dataclass
 class Section:
     """一节"""
+
     title: str
     articles: list[Article] = field(default_factory=list)
 
@@ -61,6 +69,7 @@ class Section:
 @dataclass
 class Chapter:
     """一章"""
+
     title: str
     sections: list[Section] = field(default_factory=list)
     articles: list[Article] = field(default_factory=list)  # 无节时直接挂条文
@@ -69,6 +78,7 @@ class Chapter:
 @dataclass
 class Part:
     """一编（部分法律才有编，如民法典、刑法）"""
+
     title: str
     chapters: list[Chapter] = field(default_factory=list)
 
@@ -76,9 +86,10 @@ class Part:
 @dataclass
 class LawDocument:
     """一部完整的法律"""
+
     file_path: str
     title: str
-    preamble: str = ''          # 序言（主席令、修订历史等）
+    preamble: str = ""  # 序言（主席令、修订历史等）
     parts: list[Part] = field(default_factory=list)
     chapters: list[Chapter] = field(default_factory=list)  # 无编时直接挂章
     articles: list[Article] = field(default_factory=list)  # 所有条文的扁平列表
@@ -89,9 +100,19 @@ class LawDocument:
 # ---------------------------------------------------------------------------
 
 _CN_NUM_MAP = {
-    '零': 0, '一': 1, '二': 2, '三': 3, '四': 4,
-    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
-    '十': 10, '百': 100, '千': 1000,
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+    "百": 100,
+    "千": 1000,
 }
 
 
@@ -108,9 +129,9 @@ def _cn_to_int(cn: str) -> int:
         else:
             total += val * (base if base >= 10 else 1)
     # 处理 "十"、"十二" 等
-    if cn.startswith('十'):
+    if cn.startswith("十"):
         total += 10
-    if cn.endswith('十'):
+    if cn.endswith("十"):
         total += base * 10
     # 重新计算更稳健的方式
     result = 0
@@ -135,6 +156,7 @@ def _cn_to_int(cn: str) -> int:
 # 解析器
 # ---------------------------------------------------------------------------
 
+
 class LawParser:
     """法律文档解析器"""
 
@@ -148,24 +170,24 @@ class LawParser:
     def parse_file(self, file_path: str | Path) -> LawDocument:
         """解析单个法律文件"""
         file_path = Path(file_path)
-        raw_text = file_path.read_text(encoding='utf-8')
+        raw_text = file_path.read_text(encoding="utf-8")
         return self.parse(file_path.as_posix(), raw_text)
 
     def parse(self, file_path: str, raw_text: str) -> LawDocument:
         """解析法律文本"""
         lines = self._clean_lines(raw_text)
         if not lines:
-            raise ValueError(f'文件为空: {file_path}')
+            raise ValueError(f"文件为空: {file_path}")
 
         # 提取标题（第一个非空行）
-        title = lines[0] if lines else '未知'
+        title = lines[0] if lines else "未知"
 
         # 找到目录结束 & 正文开始位置
         body_start = self._find_body_start(lines)
 
         # 收集序言（标题之后、正文开始之前）
         preamble_lines = lines[1:body_start]
-        preamble = '\n'.join(line for line in preamble_lines if line.strip())
+        preamble = "\n".join(line for line in preamble_lines if line.strip())
 
         doc = LawDocument(
             file_path=file_path,
@@ -189,7 +211,7 @@ class LawParser:
     @staticmethod
     def _clean_lines(text: str) -> list[str]:
         """清洗文本行：去 BOM、合并空白、去空行（保留有意义空行）"""
-        text = text.strip('\ufeff').strip()
+        text = text.strip("\ufeff").strip()
         lines = []
         for line in text.splitlines():
             line = line.strip()
@@ -259,7 +281,7 @@ class LawParser:
             m_chapter = _RE_CHAPTER.match(line)
             if m_chapter:
                 # 构建唯一键：编标题 + 章标题（同一编下可能同名章）
-                chapter_key = (current_part.title if current_part else '') + line
+                chapter_key = (current_part.title if current_part else "") + line
                 if chapter_key in chapter_map:
                     current_chapter = chapter_map[chapter_key]
                 else:
@@ -330,7 +352,7 @@ class LawParser:
         direct_articles = list(doc.articles)
         doc.articles = []
 
-        def _walk_chapter(chapter: Chapter, part_title: str = '', ch_title: str = ''):
+        def _walk_chapter(chapter: Chapter, part_title: str = "", ch_title: str = ""):
             if chapter.sections:
                 for sec in chapter.sections:
                     for art in sec.articles:
@@ -345,7 +367,7 @@ class LawParser:
                     _walk_chapter(ch, part.title, ch.title)
         elif doc.chapters:
             for ch in doc.chapters:
-                _walk_chapter(ch, '', ch.title)
+                _walk_chapter(ch, "", ch.title)
 
         # 合并没有层级结构的直接条文
         if direct_articles:
@@ -360,49 +382,50 @@ class LawParser:
 # 工具函数
 # ---------------------------------------------------------------------------
 
+
 def build_all_documents(data_dir: str | Path) -> list[LawDocument]:
     """解析 LawData 目录下所有 .txt 文件"""
     data_dir = Path(data_dir)
     parser = LawParser()
     docs = []
     # 递归扫描（支持 LawData 下的子目录，如 laws/、regulations/ 等增量爬取结果）
-    for fp in sorted(data_dir.rglob('*.txt')):
+    for fp in sorted(data_dir.rglob("*.txt")):
         try:
             doc = parser.parse_file(fp)
             docs.append(doc)
-            logger.info(f'解析完成: {doc.title}  (共 {len(doc.articles)} 条)')
+            logger.info(f"解析完成: {doc.title}  (共 {len(doc.articles)} 条)")
         except Exception as e:
-            logger.error(f'解析失败 {fp.name}: {e}')
+            logger.error(f"解析失败 {fp.name}: {e}")
     return docs
 
 
 def print_hierarchy(doc: LawDocument) -> None:
     """调试用：打印法律文档的结构层级"""
-    print(f'\n{"="*60}')
-    print(f'法律: {doc.title}')
-    print(f'条文数: {len(doc.articles)}')
-    print(f'序言: {doc.preamble[:80]}...' if len(doc.preamble) > 80 else f'序言: {doc.preamble}')
+    print(f"\n{'=' * 60}")
+    print(f"法律: {doc.title}")
+    print(f"条文数: {len(doc.articles)}")
+    print(f"序言: {doc.preamble[:80]}..." if len(doc.preamble) > 80 else f"序言: {doc.preamble}")
 
     def _print_chapter(ch: Chapter, indent: int = 2):
-        prefix = '  ' * indent
-        print(f'{prefix}章: {ch.title}')
+        prefix = "  " * indent
+        print(f"{prefix}章: {ch.title}")
         if ch.sections:
             for sec in ch.sections:
-                print(f'{prefix}  节: {sec.title}  ({len(sec.articles)} 条)')
+                print(f"{prefix}  节: {sec.title}  ({len(sec.articles)} 条)")
                 for art in sec.articles[:2]:
-                    print(f'{prefix}    第{art.number}条: {art.text[:60]}...')
+                    print(f"{prefix}    第{art.number}条: {art.text[:60]}...")
         elif ch.articles:
-            print(f'{prefix}  ({len(ch.articles)} 条)')
+            print(f"{prefix}  ({len(ch.articles)} 条)")
             for art in ch.articles[:3]:
-                print(f'{prefix}  第{art.number}条: {art.text[:60]}...')
+                print(f"{prefix}  第{art.number}条: {art.text[:60]}...")
 
     if doc.parts:
         for part in doc.parts:
-            print(f'  编: {part.title}')
+            print(f"  编: {part.title}")
             for ch in part.chapters:
                 _print_chapter(ch, 3)
     elif doc.chapters:
         for ch in doc.chapters[:5]:
             _print_chapter(ch)
         if len(doc.chapters) > 5:
-            print(f'  ... 共 {len(doc.chapters)} 章')
+            print(f"  ... 共 {len(doc.chapters)} 章")

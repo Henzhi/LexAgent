@@ -12,6 +12,7 @@ ReAct 管线（AGENT_ENABLED=true + AGENT_REACT_ENABLED=true，M1 默认）:
     intent → memory_retrieve → [agent ⇄ tools] → validate → END（校验失败走 generate 兜底）
     其中固定 retrieve 节点移除，由 LLM 自主决定调用 retrieve_knowledge 工具。
 """
+
 from __future__ import annotations
 
 import logging
@@ -60,7 +61,7 @@ def _supports_tools(llm) -> bool:
 def _chunk_text(text: str, size: int = 16) -> Iterator[str]:
     """将长文本按块切分（SSE 分块推送模拟打字机效果，D2）。"""
     for i in range(0, len(text), size):
-        yield text[i:i + size]
+        yield text[i : i + size]
 
 
 class LawAgentGraph:
@@ -75,12 +76,12 @@ class LawAgentGraph:
     def __init__(
         self,
         retriever: BaseRetriever,
-        llm,                    # LLMAdapter
+        llm,  # LLMAdapter
         top_k: int = 5,
         max_retries: int = 1,
-        memory_manager = None,  # ConversationMemoryManager | None
-        faq_cache = None,       # FAQCache | None
-        query_logger = None,    # QueryLogger | None
+        memory_manager=None,  # ConversationMemoryManager | None
+        faq_cache=None,  # FAQCache | None
+        query_logger=None,  # QueryLogger | None
         registry: ToolRegistry | None = None,  # M1：工具注册表（默认注册内置工具）
     ):
         self.retriever = retriever
@@ -98,14 +99,11 @@ class LawAgentGraph:
 
         # M1：ReAct 图开关 —— AGENT_REACT_ENABLED=true 且主后端未降级（Ollama 降级 → 固定管线）
         # 且 LLM 具备工具调用能力（chat_with_tools）；任一不满足 → 固定管线（AC-7）
-        self._react_enabled = (
-            AGENT_REACT_ENABLED
-            and not _backend_degraded(llm)
-            and _supports_tools(llm)
-        )
+        self._react_enabled = AGENT_REACT_ENABLED and not _backend_degraded(llm) and _supports_tools(llm)
         if self._react_enabled:
             self._react = make_react_nodes(
-                llm, self.registry,
+                llm,
+                self.registry,
                 max_tool_turns=AGENT_MAX_TOOL_TURNS,
             )
             # 完整管线图（ask() 用，含 intent/memory/validate）
@@ -142,14 +140,16 @@ class LawAgentGraph:
 
         builder.set_entry_point("intent")
         builder.add_conditional_edges(
-            "intent", nodes["route_by_intent"],
+            "intent",
+            nodes["route_by_intent"],
             {"legal": "memory_retrieve", "casual": "casual_reply"},
         )
         builder.add_edge("casual_reply", END)
         builder.add_edge("memory_retrieve", "retrieve")
         builder.add_edge("retrieve", "generate")
         builder.add_conditional_edges(
-            "validate", nodes["should_retry"],
+            "validate",
+            nodes["should_retry"],
             {"retry": "generate", "end": END},
         )
         builder.add_edge("generate", "validate")
@@ -175,18 +175,21 @@ class LawAgentGraph:
 
         builder.set_entry_point("intent")
         builder.add_conditional_edges(
-            "intent", nodes["route_by_intent"],
+            "intent",
+            nodes["route_by_intent"],
             {"legal": "memory_retrieve", "casual": "casual_reply"},
         )
         builder.add_edge("casual_reply", END)
         builder.add_edge("memory_retrieve", "agent")
         builder.add_conditional_edges(
-            "agent", react["route_after_agent"],
+            "agent",
+            react["route_after_agent"],
             {"tools": "tools", "final": "validate"},
         )
         builder.add_edge("tools", "agent")
         builder.add_conditional_edges(
-            "validate", nodes["should_retry"],
+            "validate",
+            nodes["should_retry"],
             {"retry": "generate", "end": END},
         )
         builder.add_edge("generate", "validate")
@@ -218,7 +221,8 @@ class LawAgentGraph:
 
         builder.set_entry_point("agent")
         builder.add_conditional_edges(
-            "agent", react["route_after_agent"],
+            "agent",
+            react["route_after_agent"],
             {"tools": "tools", "final": END},
         )
         builder.add_edge("tools", "agent")
@@ -232,7 +236,7 @@ class LawAgentGraph:
     def ask(self, query: str, history: list[dict] | None = None, user_id: str = "") -> dict:
         """同步问答 — 含 FAQ 缓存检查（与 stream() 路径行为一致）"""
         qlog = self._qlog
-        with (qlog.trace(user_id or "", query) if qlog else _null_trace()) as trace:
+        with qlog.trace(user_id or "", query) if qlog else _null_trace() as trace:
             t0 = time.time()
             query_type = classify_query_type(query, history=history or [])
             if trace is not None:
@@ -255,9 +259,12 @@ class LawAgentGraph:
                         if trace is not None:
                             trace.finalize(faq_cache_hit=True, retrieved_count=0)
                         return {
-                            "query": query, "answer": cached["answer"],
-                            "retrieved_docs": [], "is_legal_query": True,
-                            "cached": True, "tool_log": [],
+                            "query": query,
+                            "answer": cached["answer"],
+                            "retrieved_docs": [],
+                            "is_legal_query": True,
+                            "cached": True,
+                            "tool_log": [],
                         }
                 except Exception as e:
                     logger.warning(f"FAQ缓存检查失败: {e}")
@@ -382,7 +389,12 @@ class LawAgentGraph:
                     if cached:
                         yield {"type": "FAQ", "content": f"⚡ FAQ 缓存命中 (相似度: {cached['score']:.3f})"}
                         yield {"type": "token", "content": cached["answer"]}
-                        yield {"type": "meta", "sources": cached.get("sources", []), "is_casual": False, "cache_hit": True}
+                        yield {
+                            "type": "meta",
+                            "sources": cached.get("sources", []),
+                            "is_casual": False,
+                            "cache_hit": True,
+                        }
                         yield {"type": "thinking", "content": "✅ 完成（来自缓存）"}
                         if trace is not None:
                             trace.finalize(faq_cache_hit=True, retrieved_count=0)
@@ -391,14 +403,27 @@ class LawAgentGraph:
                     logger.warning(f"FAQ缓存检查失败: {e}")
 
             state: dict = {
-                "query": query, "messages": history or [],
-                "retrieved_docs": [], "answer": "", "validation_passed": False,
-                "retry_count": 0, "validation_feedback": "", "is_legal_query": True,
-                "query_type": query_type, "memory_context": "", "user_id": user_id,
-                "tool_calls": [], "tool_results": [], "agent_turns": 0,
-                "tool_log": [], "sub_agent": None,
-                "web_results": [], "legal_results": [], "fused_sources": [],
-                "scene_id": scene.scene_id, "scene_kind": scene.kind,
+                "query": query,
+                "messages": history or [],
+                "retrieved_docs": [],
+                "answer": "",
+                "validation_passed": False,
+                "retry_count": 0,
+                "validation_feedback": "",
+                "is_legal_query": True,
+                "query_type": query_type,
+                "memory_context": "",
+                "user_id": user_id,
+                "tool_calls": [],
+                "tool_results": [],
+                "agent_turns": 0,
+                "tool_log": [],
+                "sub_agent": None,
+                "web_results": [],
+                "legal_results": [],
+                "fused_sources": [],
+                "scene_id": scene.scene_id,
+                "scene_kind": scene.kind,
                 "scene_matched": scene.matched,
             }
 
@@ -473,7 +498,11 @@ class LawAgentGraph:
                 fb = state.get("validation_feedback", "")
                 memory_ctx = state.get("memory_context", "")
                 ctx = build_hierarchical_context(docs)
-                extra = f"\n\n## ⚠️ 上次回答不合格\n原因: {fb}\n请确保本次回答: 引用法律名称、标注条款号、不编造内容。" if fb else ""
+                extra = (
+                    f"\n\n## ⚠️ 上次回答不合格\n原因: {fb}\n请确保本次回答: 引用法律名称、标注条款号、不编造内容。"
+                    if fb
+                    else ""
+                )
 
                 # TokenBudget 预算化组装：动态窗口 + 分段截断 + 历史预算筛选
                 prompt, hist = build_budgeted_prompt(

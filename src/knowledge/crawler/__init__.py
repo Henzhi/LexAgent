@@ -8,6 +8,7 @@
   - 请合理控制请求频率（默认每次请求间隔 1s）；
   - 遵守目标网站的 robots.txt 与版权声明。
 """
+
 from __future__ import annotations
 
 from .npc_crawler import (

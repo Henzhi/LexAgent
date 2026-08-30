@@ -9,6 +9,7 @@ Tavily 网络搜索客户端封装（M1 / F3）。
 注意：tavily 包为运行时可选依赖（pyproject 已声明），此处延迟导入，
 避免未安装时影响整个应用启动。
 """
+
 from __future__ import annotations
 
 import logging
@@ -52,6 +53,7 @@ class TavilySearchClient:
         """延迟初始化 TavilyClient（失败时记录错误，is_available 返回 False）。"""
         try:
             from tavily import TavilyClient
+
             try:
                 self._client = TavilyClient(api_key=self.api_key, timeout=self.timeout)
             except TypeError:
@@ -109,10 +111,12 @@ class TavilySearchClient:
         for r in raw_results:
             if not isinstance(r, dict):
                 continue
-            results.append({
-                "title": (r.get("title") or "").strip(),
-                "url": (r.get("url") or "").strip(),
-                "content": (r.get("content") or "").strip(),
-                "score": float(r.get("score") or 0.0),
-            })
+            results.append(
+                {
+                    "title": (r.get("title") or "").strip(),
+                    "url": (r.get("url") or "").strip(),
+                    "content": (r.get("content") or "").strip(),
+                    "score": float(r.get("score") or 0.0),
+                }
+            )
         return results

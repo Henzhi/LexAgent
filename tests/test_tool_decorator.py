@@ -9,6 +9,7 @@ D-M3-13 后 schema 推导交给 LangChain 的 `@tool`，本装饰器只负责再
 2. dataclass 类型 → 展开为对象 schema（原降级为 string）
 3. 枚举必须用 `Literal` 表达；历史上的 `Param` 类会被 LangChain **静默丢弃**
 """
+
 from __future__ import annotations
 
 from typing import Annotated, Literal
@@ -27,7 +28,7 @@ class TestToolDecoratorBasics:
         """装饰器产出 ToolSpec，executor 即原函数。"""
 
         @tool(name="my_tool", category=CATEGORY_LEGAL)
-        def my_tool(query: Annotated[str, "查询"] ) -> ToolResult:
+        def my_tool(query: Annotated[str, "查询"]) -> ToolResult:
             """演示工具。"""
             return ToolResult(tool="my_tool", call_id="", ok=True, summary="ok")
 
@@ -153,7 +154,7 @@ class TestSchemaDerivation:
         """产出结构对齐 OpenAI tools 参数格式。"""
 
         @tool(name="t", category=CATEGORY_LEGAL)
-        def t(query: Annotated[str, "q"] ) -> ToolResult:
+        def t(query: Annotated[str, "q"]) -> ToolResult:
             """格式测试。"""
             return ToolResult(tool="t", call_id="", ok=True, summary="")
 

@@ -9,6 +9,7 @@
     - 检索后通过 (law_name, article_number_int) 做 O(1) 查找相邻条文
     - 相邻条文以装饰器模式包装基础检索器
 """
+
 from __future__ import annotations
 
 import json
@@ -91,15 +92,17 @@ class AdjacentExpander(BaseRetriever):
                     seen_key = (law_name, art_range)
                     if seen_key not in seen:
                         seen.add(seen_key)
-                        expanded.append(RetrievedDoc(
-                            content=article_data.get("content", ""),
-                            score=0.0,  # 相邻条文不打分
-                            law_name=law_name,
-                            chapter=article_data.get("chapter", ""),
-                            section=article_data.get("section", ""),
-                            article_range=art_range,
-                            chunk_type="adjacent",
-                        ))
+                        expanded.append(
+                            RetrievedDoc(
+                                content=article_data.get("content", ""),
+                                score=0.0,  # 相邻条文不打分
+                                law_name=law_name,
+                                chapter=article_data.get("chapter", ""),
+                                section=article_data.get("section", ""),
+                                article_range=art_range,
+                                chunk_type="adjacent",
+                            )
+                        )
 
         return expanded
 
@@ -119,9 +122,19 @@ class AdjacentExpander(BaseRetriever):
 
         # 中文数字 → 整数映射
         cn_map = {
-            '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
-            '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
-            '百': 100, '千': 1000,
+            "零": 0,
+            "一": 1,
+            "二": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+            "十": 10,
+            "百": 100,
+            "千": 1000,
         }
 
         def _cn2int(cn: str) -> int:
@@ -142,7 +155,7 @@ class AdjacentExpander(BaseRetriever):
             return result
 
         # 匹配 "第X条" 或 "第X条至第Y条"
-        nums = re.findall(r'第([一二三四五六七八九十百千]+)条', article_range)
+        nums = re.findall(r"第([一二三四五六七八九十百千]+)条", article_range)
         return [_cn2int(n) for n in nums]
 
     @staticmethod

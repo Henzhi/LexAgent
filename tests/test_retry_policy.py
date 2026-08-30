@@ -8,6 +8,7 @@
   4. 首 token 前 429 可重试成功
   5. 同步生成 4xx 业务错误不重试
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # 1. 重试判定
 # ---------------------------------------------------------------------------
+
 
 class _FakeStatusError(Exception):
     def __init__(self, status: int):
@@ -36,34 +38,41 @@ class _FakeRetryAfterError(_FakeStatusError):
 class TestIsRetryable:
     def test_429_retryable(self):
         from src.llm.retry import is_retryable
+
         assert is_retryable(_FakeStatusError(429)) is True
 
     @pytest.mark.parametrize("status", [500, 502, 503, 504])
     def test_5xx_retryable(self, status):
         from src.llm.retry import is_retryable
+
         assert is_retryable(_FakeStatusError(status)) is True
 
     @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
     def test_4xx_not_retryable(self, status):
         from src.llm.retry import is_retryable
+
         assert is_retryable(_FakeStatusError(status)) is False
 
     def test_timeout_retryable(self):
         from src.llm.retry import is_retryable
+
         assert is_retryable(TimeoutError("timeout")) is True
 
     def test_connection_error_retryable(self):
         from src.llm.retry import is_retryable
+
         assert is_retryable(ConnectionError("conn refused")) is True
 
     def test_business_error_not_retryable(self):
         from src.llm.retry import is_retryable
+
         assert is_retryable(ValueError("bad arg")) is False
 
 
 class TestBackoff:
     def test_delay_within_range(self):
         from src.llm.retry import backoff_delay
+
         for attempt in range(1, 5):
             cap = min(1.0 * (2 ** (attempt - 1)), 30.0)
             for _ in range(50):
@@ -72,6 +81,7 @@ class TestBackoff:
 
     def test_retry_after_parsed(self):
         from src.llm.retry import get_retry_after_seconds
+
         assert get_retry_after_seconds(_FakeRetryAfterError("5")) == 5.0
         assert get_retry_after_seconds(_FakeStatusError(429)) is None
 
@@ -79,6 +89,7 @@ class TestBackoff:
 # ---------------------------------------------------------------------------
 # 2. 流式重试行为（不 mock 重试等待，直接断言调用次数）
 # ---------------------------------------------------------------------------
+
 
 class TestStreamRetry:
     """流式/同步重试行为。
@@ -150,4 +161,3 @@ class TestStreamRetry:
         with pytest.raises(_FakeStatusError):
             backend._generate_impl([{"role": "user", "content": "x"}])
         assert calls["n"] == 1, "4xx 不应重试"
-

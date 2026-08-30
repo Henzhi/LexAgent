@@ -3,6 +3,7 @@
 覆盖：PRD §5.2 的 10 个场景识别、A/B 类归属、未命中保守回落、
 关键词冲突回归（合同起草 vs 合同审查 vs 法律检索）、配置完整性。
 """
+
 from __future__ import annotations
 
 import pytest
@@ -50,13 +51,18 @@ def test_scenes_have_match_rules():
 def test_prd_ten_scenes_present():
     """PRD §5.2 定义的 10 个典型场景全部在清单中"""
     expected = {
-        "legal_lookup", "legal_qa", "regulation_tracking", "case_analysis",
-        "similar_case_report", "contract_draft", "contract_review",
-        "legal_document", "due_diligence", "compliance_check",
+        "legal_lookup",
+        "legal_qa",
+        "regulation_tracking",
+        "case_analysis",
+        "similar_case_report",
+        "contract_draft",
+        "contract_review",
+        "legal_document",
+        "due_diligence",
+        "compliance_check",
     }
-    assert expected.issubset(set(scene_ids())), (
-        f"缺失场景: {expected - set(scene_ids())}"
-    )
+    assert expected.issubset(set(scene_ids())), f"缺失场景: {expected - set(scene_ids())}"
 
 
 def test_default_scene_is_class_a():
@@ -76,32 +82,35 @@ def test_patterns_compile():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("query,expected_id,expected_kind", [
-    # ---- A 类：全自动 ----
-    ("劳动合同法第四十六条是什么", "legal_lookup", KIND_A),
-    ("民法典关于违约金是怎么规定的", "legal_lookup", KIND_A),
-    ("刑法第二百三十四条的内容", "legal_lookup", KIND_A),
-    ("治安管理处罚法有没有关于寻衅滋事的规定", "legal_lookup", KIND_A),
-    ("打架被拘留最长多久，违法吗", "legal_qa", KIND_A),
-    ("公司辞退我需要赔偿吗", "legal_qa", KIND_A),
-    ("2026年劳动法有没有新规定出台", "regulation_tracking", KIND_A),
-    ("最近有没有关于个人信息保护的新规", "regulation_tracking", KIND_A),
-    ("帮我分析一下这个判决案例", "case_analysis", KIND_A),
-    ("这个案子法院会怎么判", "case_analysis", KIND_A),
-    # ---- B 类：需人工确认 ----
-    ("帮我做一份类案检索报告", "similar_case_report", KIND_B),
-    ("帮我检索一下类似的判决案例并出报告", "similar_case_report", KIND_B),
-    ("帮我起草一份房屋租赁合同", "contract_draft", KIND_B),
-    ("拟一份股权转让协议", "contract_draft", KIND_B),
-    ("帮我审查一下这份劳动合同有没有问题", "contract_review", KIND_B),
-    ("这份合同的风险点帮我审核一下", "contract_review", KIND_B),
-    ("帮我写一份起诉状", "legal_document", KIND_B),
-    ("起草一份劳动仲裁申请书", "legal_document", KIND_B),
-    ("帮我做一下这家公司的尽调", "due_diligence", KIND_B),
-    ("投前帮我做一次尽职调查", "due_diligence", KIND_B),
-    ("帮我做一次合规检查", "compliance_check", KIND_B),
-    ("这份证据材料帮我做个证据分类", "compliance_check", KIND_B),
-])
+@pytest.mark.parametrize(
+    "query,expected_id,expected_kind",
+    [
+        # ---- A 类：全自动 ----
+        ("劳动合同法第四十六条是什么", "legal_lookup", KIND_A),
+        ("民法典关于违约金是怎么规定的", "legal_lookup", KIND_A),
+        ("刑法第二百三十四条的内容", "legal_lookup", KIND_A),
+        ("治安管理处罚法有没有关于寻衅滋事的规定", "legal_lookup", KIND_A),
+        ("打架被拘留最长多久，违法吗", "legal_qa", KIND_A),
+        ("公司辞退我需要赔偿吗", "legal_qa", KIND_A),
+        ("2026年劳动法有没有新规定出台", "regulation_tracking", KIND_A),
+        ("最近有没有关于个人信息保护的新规", "regulation_tracking", KIND_A),
+        ("帮我分析一下这个判决案例", "case_analysis", KIND_A),
+        ("这个案子法院会怎么判", "case_analysis", KIND_A),
+        # ---- B 类：需人工确认 ----
+        ("帮我做一份类案检索报告", "similar_case_report", KIND_B),
+        ("帮我检索一下类似的判决案例并出报告", "similar_case_report", KIND_B),
+        ("帮我起草一份房屋租赁合同", "contract_draft", KIND_B),
+        ("拟一份股权转让协议", "contract_draft", KIND_B),
+        ("帮我审查一下这份劳动合同有没有问题", "contract_review", KIND_B),
+        ("这份合同的风险点帮我审核一下", "contract_review", KIND_B),
+        ("帮我写一份起诉状", "legal_document", KIND_B),
+        ("起草一份劳动仲裁申请书", "legal_document", KIND_B),
+        ("帮我做一下这家公司的尽调", "due_diligence", KIND_B),
+        ("投前帮我做一次尽职调查", "due_diligence", KIND_B),
+        ("帮我做一次合规检查", "compliance_check", KIND_B),
+        ("这份证据材料帮我做个证据分类", "compliance_check", KIND_B),
+    ],
+)
 def test_classify_scene(query, expected_id, expected_kind):
     match = classify_scene(query)
     assert match.scene_id == expected_id, f"{query!r} 期望 {expected_id}，实际 {match.scene_id}"
@@ -115,12 +124,15 @@ def test_classify_scene(query, expected_id, expected_kind):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("query", [
-    "劳动合同法第四十六条是什么",
-    "打架被拘留违法吗",
-    "2026年劳动法有没有新规",
-    "帮我分析一下这个案例",
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "劳动合同法第四十六条是什么",
+        "打架被拘留违法吗",
+        "2026年劳动法有没有新规",
+        "帮我分析一下这个案例",
+    ],
+)
 def test_a_class_never_needs_confirmation(query):
     """A 类场景不应触发确认"""
     match = classify_scene(query)
@@ -128,14 +140,17 @@ def test_a_class_never_needs_confirmation(query):
     assert match.needs_confirmation() is False
 
 
-@pytest.mark.parametrize("query", [
-    "帮我起草一份房屋租赁合同",
-    "帮我审查这份合同",
-    "帮我写一份起诉状",
-    "帮我做一次尽调",
-    "帮我做一次合规检查",
-    "帮我做一份类案检索报告",
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "帮我起草一份房屋租赁合同",
+        "帮我审查这份合同",
+        "帮我写一份起诉状",
+        "帮我做一次尽调",
+        "帮我做一次合规检查",
+        "帮我做一份类案检索报告",
+    ],
+)
 def test_b_class_needs_confirmation(query):
     """B 类场景必须触发确认"""
     match = classify_scene(query)
@@ -176,12 +191,15 @@ def test_contract_dispute_qa_not_mistaken_for_draft():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("query", [
-    "今天天气怎么样",
-    "啊",
-    "？",
-    "asdfghjkl",
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "今天天气怎么样",
+        "啊",
+        "？",
+        "asdfghjkl",
+    ],
+)
 def test_unmatched_falls_back_to_default_a_class(query):
     """未命中任何场景 → 回落默认 A 类场景，matched=False"""
     match = classify_scene(query)
@@ -233,9 +251,13 @@ def _build_agent(llm) -> LawAgentGraph:
     """构造 LawAgentGraph（不依赖外部服务）。"""
     retriever = FakeRetriever()
     return LawAgentGraph(
-        retriever=retriever, llm=llm,
-        top_k=3, max_retries=0,
-        memory_manager=None, faq_cache=None, query_logger=None,
+        retriever=retriever,
+        llm=llm,
+        top_k=3,
+        max_retries=0,
+        memory_manager=None,
+        faq_cache=None,
+        query_logger=None,
         registry=build_default_tools(retriever),
     )
 
@@ -249,10 +271,7 @@ class TestSceneInGraph:
         agent = _build_agent(FakeToolLLM([_final_response()]))
 
         events = list(agent.stream("帮我起草一份房屋租赁合同"))
-        scene_events = [
-            e for e in events
-            if e.get("type") == "thinking" and "场景识别" in (e.get("content") or "")
-        ]
+        scene_events = [e for e in events if e.get("type") == "thinking" and "场景识别" in (e.get("content") or "")]
         assert len(scene_events) == 1, f"场景识别事件应恰好 1 条，实际: {scene_events}"
         assert "合同起草" in scene_events[0]["content"]
         assert "B 类" in scene_events[0]["content"]
@@ -264,10 +283,7 @@ class TestSceneInGraph:
         agent = _build_agent(FakeToolLLM([_final_response()]))
 
         events = list(agent.stream("劳动合同法第四十六条是什么"))
-        scene_events = [
-            e for e in events
-            if e.get("type") == "thinking" and "场景识别" in (e.get("content") or "")
-        ]
+        scene_events = [e for e in events if e.get("type") == "thinking" and "场景识别" in (e.get("content") or "")]
         assert len(scene_events) == 1
         assert "法律检索" in scene_events[0]["content"]
         assert "全自动" in scene_events[0]["content"]
@@ -278,10 +294,7 @@ class TestSceneInGraph:
         agent = _build_agent(FakeToolLLM([_final_response()]))
 
         events = list(agent.stream("你好"))
-        scene_events = [
-            e for e in events
-            if e.get("type") == "thinking" and "场景识别" in (e.get("content") or "")
-        ]
+        scene_events = [e for e in events if e.get("type") == "thinking" and "场景识别" in (e.get("content") or "")]
         assert scene_events == []
 
     def test_ask_writes_scene_into_state(self, monkeypatch):

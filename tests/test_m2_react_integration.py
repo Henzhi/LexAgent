@@ -3,6 +3,7 @@ M2 ReAct 集成测试：三路证据累计（tools_node）、融合 sources 进�
 
 不依赖外部服务：retriever 用 FakeRetriever，Tavily 用 MagicMock，LLM 用 FakeToolLLM。
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -19,8 +20,12 @@ def _fake_tavily():
     tavily = MagicMock()
     tavily.is_available.return_value = True
     tavily.search.return_value = [
-        {"title": "《测试法》最新修订解读", "url": "https://x.com/1",
-         "content": "《测试法》2026 年发布了修订内容", "score": 0.9},
+        {
+            "title": "《测试法》最新修订解读",
+            "url": "https://x.com/1",
+            "content": "《测试法》2026 年发布了修订内容",
+            "score": 0.9,
+        },
     ]
     return tavily
 
@@ -32,9 +37,13 @@ def _build_agent(llm, tavily=None, monkeypatch=None):
     retriever = FakeRetriever()
     registry = build_default_tools(retriever, tavily_client=tavily)
     return LawAgentGraph(
-        retriever=retriever, llm=llm,
-        top_k=3, max_retries=0,
-        memory_manager=None, faq_cache=None, query_logger=None,
+        retriever=retriever,
+        llm=llm,
+        top_k=3,
+        max_retries=0,
+        memory_manager=None,
+        faq_cache=None,
+        query_logger=None,
         registry=registry,
     )
 
@@ -96,13 +105,16 @@ class TestDualRouteEvidence:
         tavily.search.return_value = [
             {"title": "无关新闻", "url": "https://x.com/9", "content": "无关内容", "score": 0.7},
         ]
-        llm = FakeToolLLM([
-            ToolCallResponse(
-                content="", raw={},
-                tool_calls=[ToolCall(id="c2", name="web_search", arguments={"query": "随便"})],
-            ),
-            _final_response("仅网络线索的答案"),
-        ])
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(
+                    content="",
+                    raw={},
+                    tool_calls=[ToolCall(id="c2", name="web_search", arguments={"query": "随便"})],
+                ),
+                _final_response("仅网络线索的答案"),
+            ]
+        )
         agent = _build_agent(llm, tavily=tavily, monkeypatch=monkeypatch)
         events = list(agent.stream("测试法怎么规定"))
         thinking = [e["content"] for e in events if e["type"] == "thinking"]
@@ -117,10 +129,12 @@ class TestDualRouteEvidence:
             {"title": "线索B", "url": "https://x.com/b", "content": "c", "score": 0.7},
         ]
         script = [
-            ToolCallResponse(content="", raw={},
-                             tool_calls=[ToolCall(id="w1", name="web_search", arguments={"query": "q1"})]),
-            ToolCallResponse(content="", raw={},
-                             tool_calls=[ToolCall(id="w2", name="web_search", arguments={"query": "q2"})]),
+            ToolCallResponse(
+                content="", raw={}, tool_calls=[ToolCall(id="w1", name="web_search", arguments={"query": "q1"})]
+            ),
+            ToolCallResponse(
+                content="", raw={}, tool_calls=[ToolCall(id="w2", name="web_search", arguments={"query": "q2"})]
+            ),
             _final_response(),
         ]
         llm = FakeToolLLM(script)
@@ -160,8 +174,7 @@ class TestStreamMessageHistoryIntegrity:
         assert assistant_call_ids, f"第 2 轮应包含带 tool_calls 的 assistant 消息: {roles}"
         # tool 消息必须出现在 assistant(tool_calls) 之后，且 id 匹配
         first_assistant_idx = next(
-            i for i, m in enumerate(msgs)
-            if m.get("role") == "assistant" and m.get("tool_calls")
+            i for i, m in enumerate(msgs) if m.get("role") == "assistant" and m.get("tool_calls")
         )
         for i, m in enumerate(msgs):
             if m.get("role") == "tool":

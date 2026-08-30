@@ -1,4 +1,5 @@
 """查询改写模块测试：正常规范化、失败回退、去引号。"""
+
 from src.agents.rewrite import rewrite_query
 
 

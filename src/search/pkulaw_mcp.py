@@ -24,6 +24,7 @@
 测试约束：本模块真实调用走网络 + mcp SDK，单测一律用 tests/fakes 的
 FakePkulawClient（同接口、返回 canned 数据），不触达真实端点与 Key。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -52,6 +53,7 @@ def _run_async(coro: Any) -> Any:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         return ex.submit(asyncio.run, coro).result()
+
 
 # 用途 → 匹配关键词（name 或 description 命中即认领该用途；顺序即优先级）
 _PURPOSE_KEYWORDS: dict[str, list[str]] = {
@@ -136,7 +138,9 @@ class PkulawMCPClient:
         raw = self._run("case_search", params)
         return self._normalize_search(raw, purpose="case")
 
-    def get_law_list(self, title: str, effectiveness: list[str] | None = None, max_results: int = PKULAW_MAX_RESULTS) -> list[dict]:
+    def get_law_list(
+        self, title: str, effectiveness: list[str] | None = None, max_results: int = PKULAW_MAX_RESULTS
+    ) -> list[dict]:
         """法规列表：关键词 → 法规元数据（合规清单/立法追踪）。"""
         params: dict[str, Any] = {"title": title}
         if effectiveness:
@@ -259,11 +263,7 @@ class PkulawMCPClient:
         if structured:
             return structured
         blocks = getattr(result, "content", []) or []
-        texts = [
-            getattr(b, "text", "")
-            for b in blocks
-            if getattr(b, "type", None) == "text"
-        ]
+        texts = [getattr(b, "text", "") for b in blocks if getattr(b, "type", None) == "text"]
         raw = "\n".join(t for t in texts if t).strip()
         if not raw:
             return {}
@@ -308,10 +308,7 @@ class PkulawMCPClient:
     def _extract_item(self, it: dict, purpose: str) -> dict:
         """从单条结果按语义提取标准字段。"""
         # 标题
-        title = (
-            it.get("title") or it.get("lawName") or it.get("caseName")
-            or it.get("name") or it.get("original") or ""
-        )
+        title = it.get("title") or it.get("lawName") or it.get("caseName") or it.get("name") or it.get("original") or ""
         title = re.sub(r"<[^>]+>", "", str(title)).strip()
         # 链接：找含 pkulaw.com 的字段，若是 [名](url) 取裸链
         url = ""

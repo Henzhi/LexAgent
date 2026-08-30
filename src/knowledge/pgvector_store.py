@@ -14,6 +14,7 @@ PostgreSQL + pgvector 知识库存储层 (v0.5)
     store.insert_chunks(chunks, embedding_model="bge-m3")
     results = store.search(query_vec, top_k=5)
 """
+
 from __future__ import annotations
 
 import logging
@@ -31,6 +32,7 @@ def _locked(method):
     store（各占一个线程池 worker），必须用锁保护同一连接，否则会出现
     cursor 冲突 / 连接被并发使用等错误。
     """
+
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         lock = getattr(self, "_lock", None)
@@ -40,6 +42,7 @@ def _locked(method):
             self._lock = lock
         with lock:
             return method(self, *args, **kwargs)
+
     return wrapper
 
 
@@ -73,6 +76,7 @@ class PgvectorStore:
         except Exception:
             import psycopg2
             from pgvector.psycopg2 import register_vector
+
             logger.warning("PG 连接断开，重连中...")
             try:
                 self._conn.close()
@@ -97,9 +101,7 @@ class PgvectorStore:
         with self._conn.cursor() as cur:
             cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name='document_chunks'")
             if cur.fetchone() is None:
-                raise RuntimeError(
-                    "document_chunks 表不存在。请先运行 docker compose up -d 初始化数据库。"
-                )
+                raise RuntimeError("document_chunks 表不存在。请先运行 docker compose up -d 初始化数据库。")
         self._conn.commit()
 
     # ------------------------------------------------------------------
@@ -161,8 +163,7 @@ class PgvectorStore:
                 )
             else:
                 cur.execute(
-                    "SELECT id FROM documents WHERE title = %s ORDER BY "
-                    "(status = 'active') DESC LIMIT 1",
+                    "SELECT id FROM documents WHERE title = %s ORDER BY (status = 'active') DESC LIMIT 1",
                     (title,),
                 )
             row = cur.fetchone()
@@ -189,10 +190,11 @@ class PgvectorStore:
             写入的块数量
         """
         import json as _json
+
         self._ensure_connection()
         total = 0
         for i in range(0, len(chunks), batch_size):
-            batch = chunks[i:i + batch_size]
+            batch = chunks[i : i + batch_size]
             with self._conn.cursor() as cur:
                 for c in batch:
                     embedding = c["embedding"]
@@ -320,9 +322,7 @@ class PgvectorStore:
         return deleted > 0
 
     @_locked
-    def get_document_chunks(
-        self, doc_id: str, limit: int | None = None, offset: int = 0
-    ) -> list[dict]:
+    def get_document_chunks(self, doc_id: str, limit: int | None = None, offset: int = 0) -> list[dict]:
         """获取文档的文本块（不含向量），支持分页
 
         Args:
@@ -350,18 +350,21 @@ class PgvectorStore:
             meta = row[4] or {}
             if isinstance(meta, str):
                 import json as _json
+
                 try:
                     meta = _json.loads(meta)
                 except Exception:
                     meta = {}
-            results.append({
-                "id": str(row[0]),
-                "chunk_type": row[1],
-                "content": row[2],
-                "embedding_model": row[3],
-                "metadata": meta,
-                "created_at": str(row[5]) if row[5] else "",
-            })
+            results.append(
+                {
+                    "id": str(row[0]),
+                    "chunk_type": row[1],
+                    "content": row[2],
+                    "embedding_model": row[3],
+                    "metadata": meta,
+                    "created_at": str(row[5]) if row[5] else "",
+                }
+            )
         return results
 
     def count_document_chunks(self, doc_id: str) -> int:
@@ -460,24 +463,24 @@ class PgvectorStore:
         for row in rows:
             content, metadata, model, score = row
             meta = metadata or {}
-            results.append({
-                "content": content,
-                "score": round(float(score), 4),
-                "law_name": meta.get("law_name", ""),
-                "chapter": meta.get("chapter", ""),
-                "section": meta.get("section", ""),
-                "article_range": meta.get("article_range", ""),
-                "chunk_type": meta.get("chunk_type", ""),
-                "embedding_model": model,
-            })
+            results.append(
+                {
+                    "content": content,
+                    "score": round(float(score), 4),
+                    "law_name": meta.get("law_name", ""),
+                    "chapter": meta.get("chapter", ""),
+                    "section": meta.get("section", ""),
+                    "article_range": meta.get("article_range", ""),
+                    "chunk_type": meta.get("chunk_type", ""),
+                    "embedding_model": model,
+                }
+            )
 
         # 相似度阈值过滤
         if sim_threshold > 0 and results:
             filtered = [r for r in results if r["score"] >= sim_threshold]
             if not filtered:
-                logger.warning(
-                    f"pgvector 阈值 {sim_threshold} 过滤后无候选，回退保留 {len(results)} 条"
-                )
+                logger.warning(f"pgvector 阈值 {sim_threshold} 过滤后无候选，回退保留 {len(results)} 条")
                 return results[:top_k]
             return filtered[:top_k]
 

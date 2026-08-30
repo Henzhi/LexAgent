@@ -68,6 +68,9 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cu124" }
 
+[tool.ruff]
+line-length = 120  # 与存量代码风格一致，避免 format 大幅重排
+
 [tool.ruff.lint]
 ignore = ["E402", "E702"]  # E402: import not at top, E702: semicolon
 

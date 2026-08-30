@@ -13,6 +13,7 @@
 - `is_available()` 仅做配置级检查（不发网络请求）；
 - 官方接口失败不静默回退 Tavily（D-M2-4）：验证不可用要让 LLM 知道。
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,10 +34,10 @@ from src.search.pkulaw_mcp import PkulawMCPClient
 logger = logging.getLogger(__name__)
 
 # 来源标识（ToolResult.data 与 fusion 使用的 source 粒度）
-SOURCE_NATIONAL_LAW_DB = "national_law_db"      # 国家法律法规数据库
-SOURCE_COURT_CASE_LIB = "court_case_lib"        # 人民法院案例库（官方域线索）
-SOURCE_XBG = "xiaobaogong"                      # 小包公（第三方）
-SOURCE_PKULAW = "pkulaw"                        # 北大法宝 MCP（高权威官方法律源）
+SOURCE_NATIONAL_LAW_DB = "national_law_db"  # 国家法律法规数据库
+SOURCE_COURT_CASE_LIB = "court_case_lib"  # 人民法院案例库（官方域线索）
+SOURCE_XBG = "xiaobaogong"  # 小包公（第三方）
+SOURCE_PKULAW = "pkulaw"  # 北大法宝 MCP（高权威官方法律源）
 
 # 法规状态码（flk.npc.gov.cn 返回的 sxx 字段）→ 中文说明
 # 来源：前端 JS L4e=[{label:"尚未生效",key:4},{label:"有效",key:3},{label:"已修改",key:2},{label:"已废止",key:1}]
@@ -94,8 +95,8 @@ class NationalLawClient:
         # 新版 API（2025 改版）使用 JSON body，字段名与旧版不同
         payload_body = {
             "searchContent": keyword or "",
-            "searchType": 2,        # 2=模糊匹配
-            "searchRange": 1,       # 1=法规
+            "searchType": 2,  # 2=模糊匹配
+            "searchRange": 1,  # 1=法规
             "page": 1,
             "size": k,
         }
@@ -106,7 +107,10 @@ class NationalLawClient:
         }
         try:
             resp = requests.post(
-                self.SEARCH_URL, json=payload_body, headers=headers, timeout=self.timeout,
+                self.SEARCH_URL,
+                json=payload_body,
+                headers=headers,
+                timeout=self.timeout,
             )
             resp.raise_for_status()
             payload = resp.json()
@@ -128,17 +132,19 @@ class NationalLawClient:
             raw_title = r.get("title") or ""
             title = re.sub(r"<[^>]+>", "", raw_title).strip()
             sxx = r.get("sxx")
-            results.append(_norm_item(
-                title=title,
-                url=url,
-                content="",           # 列表接口不返回正文摘要
-                source=SOURCE_NATIONAL_LAW_DB,
-                office=r.get("zdjgName") or "",               # 发布机关
-                publish_date=r.get("gbrq") or "",              # 公布日期
-                effective_date=r.get("sxrq") or "",            # 生效日期
-                law_status=_LAW_STATUS_MAP.get(sxx, str(sxx) if sxx is not None else "未知"),
-                law_type=r.get("flxz") or "",                  # 法律性质（法律/行政法规等）
-            ))
+            results.append(
+                _norm_item(
+                    title=title,
+                    url=url,
+                    content="",  # 列表接口不返回正文摘要
+                    source=SOURCE_NATIONAL_LAW_DB,
+                    office=r.get("zdjgName") or "",  # 发布机关
+                    publish_date=r.get("gbrq") or "",  # 公布日期
+                    effective_date=r.get("sxrq") or "",  # 生效日期
+                    law_status=_LAW_STATUS_MAP.get(sxx, str(sxx) if sxx is not None else "未知"),
+                    law_type=r.get("flxz") or "",  # 法律性质（法律/行政法规等）
+                )
+            )
         return results
 
 
@@ -194,8 +200,7 @@ class XiaobaogongClient:
     XBG_API_KEY 与 XBG_API_URL 都配置时才可用。
     """
 
-    def __init__(self, api_key: str = XBG_API_KEY, api_url: str = XBG_API_URL,
-                 timeout: float = LEGAL_SOURCE_TIMEOUT):
+    def __init__(self, api_key: str = XBG_API_KEY, api_url: str = XBG_API_URL, timeout: float = LEGAL_SOURCE_TIMEOUT):
         self.api_key = (api_key or "").strip()
         self.api_url = (api_url or "").strip()
         self.timeout = max(1.0, float(timeout))
@@ -229,7 +234,8 @@ class XiaobaogongClient:
                 content=r.get("content") or r.get("summary") or "",
                 source=SOURCE_XBG,
             )
-            for r in rows if isinstance(r, dict)
+            for r in rows
+            if isinstance(r, dict)
         ]
 
 

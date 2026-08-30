@@ -10,6 +10,7 @@ ToolRegistry 管理全部 Agent 可调用工具：
 - 工具执行失败不抛出，统一返回 ToolResult(ok=False)；
 - summary 首词为错误类型标签：未知工具 / 参数校验失败 / 工具执行失败。
 """
+
 from __future__ import annotations
 
 import logging
@@ -58,11 +59,7 @@ class ToolRegistry:
         的推荐写法（schema 由 BaseTool 自己负责，且能做参数校验）。
         工具未带 LangChain 对象时（如历史自定义 ToolSpec）跳过。
         """
-        return [
-            spec.langchain_tool
-            for spec in self._tools.values()
-            if spec.langchain_tool is not None
-        ]
+        return [spec.langchain_tool for spec in self._tools.values() if spec.langchain_tool is not None]
 
     def execute(self, name: str, arguments: dict[str, Any], call_id: str = "") -> ToolResult:
         """执行工具。
@@ -78,21 +75,30 @@ class ToolRegistry:
         spec = self._tools.get(name)
         if spec is None:
             return ToolResult(
-                tool=name, call_id=call_id, ok=False,
-                summary=f"未知工具: {name}", data={},
+                tool=name,
+                call_id=call_id,
+                ok=False,
+                summary=f"未知工具: {name}",
+                data={},
             )
         if spec.executor is None:
             return ToolResult(
-                tool=name, call_id=call_id, ok=False,
-                summary="工具执行器未注册", data={},
+                tool=name,
+                call_id=call_id,
+                ok=False,
+                summary="工具执行器未注册",
+                data={},
             )
         try:
             result = spec.executor(**arguments)
             if not isinstance(result, ToolResult):
                 # 防御：executor 返回非 ToolResult 时包装
                 result = ToolResult(
-                    tool=name, call_id=call_id, ok=True,
-                    summary=str(result)[:300], data={},
+                    tool=name,
+                    call_id=call_id,
+                    ok=True,
+                    summary=str(result)[:300],
+                    data={},
                 )
             if call_id and not result.call_id:
                 result.call_id = call_id
@@ -101,18 +107,27 @@ class ToolRegistry:
             return result
         except ToolExecutionError as e:
             return ToolResult(
-                tool=name, call_id=call_id, ok=False,
-                summary=f"工具执行失败: {e}", data={},
+                tool=name,
+                call_id=call_id,
+                ok=False,
+                summary=f"工具执行失败: {e}",
+                data={},
             )
         except TypeError as e:
             # 参数与 executor 签名不匹配（LLM 传参错误）
             return ToolResult(
-                tool=name, call_id=call_id, ok=False,
-                summary=f"参数校验失败: {e}", data={},
+                tool=name,
+                call_id=call_id,
+                ok=False,
+                summary=f"参数校验失败: {e}",
+                data={},
             )
         except Exception as e:
             logger.error(f"工具执行异常: {name} args={arguments}", exc_info=True)
             return ToolResult(
-                tool=name, call_id=call_id, ok=False,
-                summary=f"工具执行失败: {e}", data={},
+                tool=name,
+                call_id=call_id,
+                ok=False,
+                summary=f"工具执行失败: {e}",
+                data={},
             )

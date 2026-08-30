@@ -8,6 +8,7 @@ QueryLogger（检索质量日志）单元测试。
   4. start() 手动模式（供生成器路径使用）
   5. 断线自动重连
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -66,17 +67,19 @@ class TestTraceContext:
                 trace.stage("retrieve", 350)
                 trace.stage("generate", 2100)
                 trace.finalize(
-                    retrieved_count=15, reranked_count=5,
-                    faq_cache_hit=True, memory_docs_used=2,
+                    retrieved_count=15,
+                    reranked_count=5,
+                    faq_cache_hit=True,
+                    memory_docs_used=2,
                 )
 
             sql, params = fake_conn.cursor.return_value.execute.call_args[0]
             assert "query_logs" in sql
-            assert params[2] == "行政拘留最长多久"       # query
-            assert params[4] == 15                       # retrieved_count
-            assert params[5] == 5                        # reranked_count
-            assert params[6] is True                     # faq_cache_hit
-            assert params[7] == 2                        # memory_docs_used
+            assert params[2] == "行政拘留最长多久"  # query
+            assert params[4] == 15  # retrieved_count
+            assert params[5] == 5  # reranked_count
+            assert params[6] is True  # faq_cache_hit
+            assert params[7] == 2  # memory_docs_used
 
 
 class TestFinalizeIdempotent:

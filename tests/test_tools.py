@@ -3,6 +3,7 @@ M1 工具层测试：ToolSpec / ToolRegistry / retrieve_knowledge / web_search /
 
 不依赖外部服务：retriever 用 FakeRetriever，Tavily 用 mock client。
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -25,6 +26,7 @@ from src.search.tavily import TavilySearchClient
 # ---------------------------------------------------------------------------
 # ToolSpec
 # ---------------------------------------------------------------------------
+
 
 class TestToolSpec:
     def test_to_openai_format(self):
@@ -59,10 +61,16 @@ class TestTruncateSummary:
 # ToolRegistry
 # ---------------------------------------------------------------------------
 
+
 class TestToolRegistry:
     def test_register_and_list(self):
         reg = ToolRegistry()
-        spec = ToolSpec(name="a", description="A", parameters={}, executor=lambda: ToolResult(tool="a", call_id="", ok=True, summary="ok"))
+        spec = ToolSpec(
+            name="a",
+            description="A",
+            parameters={},
+            executor=lambda: ToolResult(tool="a", call_id="", ok=True, summary="ok"),
+        )
         reg.register(spec)
         assert reg.has("a")
         assert reg.get("a") is spec
@@ -82,7 +90,15 @@ class TestToolRegistry:
         def _exec(query: str) -> ToolResult:
             return ToolResult(tool="echo", call_id="", ok=True, summary=f"收到: {query}")
 
-        reg.register(ToolSpec(name="echo", description="", parameters={"query": {"type": "string"}}, required=["query"], executor=_exec))
+        reg.register(
+            ToolSpec(
+                name="echo",
+                description="",
+                parameters={"query": {"type": "string"}},
+                required=["query"],
+                executor=_exec,
+            )
+        )
         result = reg.execute("echo", {"query": "你好"}, call_id="call_1")
         assert result.ok
         assert result.call_id == "call_1"  # call_id 由调用方回填
@@ -101,7 +117,11 @@ class TestToolRegistry:
         def _exec(query: str) -> ToolResult:
             return ToolResult(tool="x", call_id="", ok=True, summary="ok")
 
-        reg.register(ToolSpec(name="x", description="", parameters={"query": {"type": "string"}}, required=["query"], executor=_exec))
+        reg.register(
+            ToolSpec(
+                name="x", description="", parameters={"query": {"type": "string"}}, required=["query"], executor=_exec
+            )
+        )
         result = reg.execute("x", {"unknown_arg": 1}, call_id="c1")
         assert not result.ok
         assert result.summary.startswith("参数校验失败")
@@ -122,6 +142,7 @@ class TestToolRegistry:
 # ---------------------------------------------------------------------------
 # retrieve_knowledge（@tool 装饰器声明）
 # ---------------------------------------------------------------------------
+
 
 class TestRetrieveKnowledgeTool:
     def test_build_spec(self, fake_retriever):
@@ -157,6 +178,7 @@ class TestRetrieveKnowledgeTool:
 # ---------------------------------------------------------------------------
 # web_search（@tool 装饰器声明）
 # ---------------------------------------------------------------------------
+
 
 class TestWebSearchTool:
     def _mock_client(self, available=True, results=None):
@@ -200,6 +222,7 @@ class TestWebSearchTool:
 # TavilySearchClient
 # ---------------------------------------------------------------------------
 
+
 class TestTavilySearchClient:
     def test_unavailable_without_key(self):
         client = TavilySearchClient(api_key="")
@@ -209,6 +232,7 @@ class TestTavilySearchClient:
     def _patch_tavily_module(fake_client):
         """伪造 sys.modules['tavily']，使 src.search.tavily 延迟导入拿到假 TavilyClient。"""
         import sys
+
         fake_tavily = MagicMock()
         fake_tavily.TavilyClient.return_value = fake_client
         return patch.dict(sys.modules, {"tavily": fake_tavily})

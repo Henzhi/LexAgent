@@ -9,6 +9,7 @@ Embeddings 接口，避免 langchain-ollama 的版本冲突问题。
   - 本地运行，零网络依赖
   - 实现 langchain_core.embeddings.Embeddings 接口，可直接用于向量库
 """
+
 from __future__ import annotations
 
 import time
@@ -30,8 +31,8 @@ class LawEmbedder(Embeddings):
 
     def __init__(
         self,
-        model: str = 'bge-m3',
-        base_url: str = 'http://localhost:11434',
+        model: str = "bge-m3",
+        base_url: str = "http://localhost:11434",
         batch_size: int = 32,
         max_retries: int = 3,
         retry_delay: float = 2.0,
@@ -51,13 +52,13 @@ class LawEmbedder(Embeddings):
         self.retry_delay = retry_delay
 
         # 创建 ollama 客户端
-        host = base_url.replace('http://', '').replace('https://', '')
-        if ':' in host:
-            host, port = host.rsplit(':', 1)
+        host = base_url.replace("http://", "").replace("https://", "")
+        if ":" in host:
+            host, port = host.rsplit(":", 1)
         else:
-            host, port = host, '11434'
+            host, port = host, "11434"
 
-        self._client = ollama.Client(host=f'http://{host}:{port}')
+        self._client = ollama.Client(host=f"http://{host}:{port}")
 
     # ------------------------------------------------------------------
     # LangChain Embeddings 接口
@@ -79,7 +80,7 @@ class LawEmbedder(Embeddings):
         total = len(texts)
 
         for i in range(0, total, self.batch_size):
-            batch = texts[i:i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
             batch_embs = self._embed_batch(batch)
             all_embeddings.extend(batch_embs)
         return all_embeddings
@@ -114,19 +115,19 @@ class LawEmbedder(Embeddings):
         total = len(texts)
 
         for i in range(0, total, self.batch_size):
-            batch = texts[i:i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
             batch_embs = self._embed_batch(batch)
             all_embeddings.extend(batch_embs)
 
             if show_progress:
                 done = min(i + self.batch_size, total)
-                logger.info(f'Embedding 进度: {done}/{total}')
+                logger.info(f"Embedding 进度: {done}/{total}")
 
         return all_embeddings
 
     def get_embedding_dim(self) -> int:
         """获取当前模型的向量维度"""
-        test_vec = self.embed_query('test')
+        test_vec = self.embed_query("test")
         return len(test_vec)
 
     # ------------------------------------------------------------------
@@ -142,15 +143,11 @@ class LawEmbedder(Embeddings):
                     model=self.model,
                     input=texts,
                 )
-                return response['embeddings']
+                return response["embeddings"]
             except Exception as e:
                 last_error = e
-                logger.warning(
-                    f'Embedding 调用失败 (尝试 {attempt}/{self.max_retries}): {e}'
-                )
+                logger.warning(f"Embedding 调用失败 (尝试 {attempt}/{self.max_retries}): {e}")
                 if attempt < self.max_retries:
                     time.sleep(self.retry_delay * attempt)
 
-        raise RuntimeError(
-            f'Embedding 调用失败，已重试 {self.max_retries} 次: {last_error}'
-        )
+        raise RuntimeError(f"Embedding 调用失败，已重试 {self.max_retries} 次: {last_error}")

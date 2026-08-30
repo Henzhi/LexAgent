@@ -9,6 +9,7 @@ Ollama LLM 后端实现。
   - 流式请求已产出内容后失败不再重试（避免重复 token），
     并在 finally 中尽力关闭底层流以尽快释放连接
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,15 +33,15 @@ logger = logging.getLogger(__name__)
 # 说明: 窗口应取模型真实上下文能力且略保守(留 KV Cache 余量)，
 #       与 Ollama 服务端 num_ctx 保持一致；可用 OLLAMA_NUM_CTX 显式覆盖。
 _OLLAMA_CONTEXT_WINDOWS = {
-    "qwen2.5:3b":         32000,  # 真实 32768，取保守值
-    "qwen2.5:7b":         28000,
-    "qwen2.5:14b":        60000,
-    "qwen2.5:32b":        80000,
-    "qwen2.5:72b":        80000,
-    "qwen3:8b":           32000,
-    "llama3.1:8b":        32000,
-    "deepseek-r1:7b":     32000,
-    "deepseek-r1:14b":    64000,
+    "qwen2.5:3b": 32000,  # 真实 32768，取保守值
+    "qwen2.5:7b": 28000,
+    "qwen2.5:14b": 60000,
+    "qwen2.5:32b": 80000,
+    "qwen2.5:72b": 80000,
+    "qwen3:8b": 32000,
+    "llama3.1:8b": 32000,
+    "deepseek-r1:7b": 32000,
+    "deepseek-r1:14b": 64000,
 }
 
 
@@ -128,9 +129,7 @@ class OllamaBackend(LLMBackend):
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(
-            f"Ollama 调用失败，已重试 {self.max_retries} 次: {last_error}"
-        )
+        raise RuntimeError(f"Ollama 调用失败，已重试 {self.max_retries} 次: {last_error}")
 
     def _stream_impl(self, messages: list[dict[str, str]]) -> Iterator[str]:
         lc_messages = to_langchain_messages(messages)
@@ -150,18 +149,14 @@ class OllamaBackend(LLMBackend):
             except Exception as e:
                 last_error = e
                 if yielded_any:
-                    logger.warning(
-                        f"Ollama 流式中途失败（已输出内容，不重试）: {e}"
-                    )
+                    logger.warning(f"Ollama 流式中途失败（已输出内容，不重试）: {e}")
                     raise
                 if not is_retryable(e):
                     logger.warning(f"Ollama 流式调用失败（不可重试）: {e}")
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(
-            f"Ollama 流式调用失败，已重试 {self.max_retries} 次: {last_error}"
-        )
+        raise RuntimeError(f"Ollama 流式调用失败，已重试 {self.max_retries} 次: {last_error}")
 
     # ------------------------------------------------------------------
     # 工具调用实现（M1 / F2）
@@ -202,6 +197,4 @@ class OllamaBackend(LLMBackend):
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(
-            f"Ollama 工具调用失败，已重试 {self.max_retries} 次: {last_error}"
-        )
+        raise RuntimeError(f"Ollama 工具调用失败，已重试 {self.max_retries} 次: {last_error}")

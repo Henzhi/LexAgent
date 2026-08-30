@@ -6,6 +6,7 @@ retrieve_knowledge 内置工具（M1 / F1）。
 - 内部库检索结果为最高优先级法律依据（REQ-U3），source=internal_kb；
 - 检索异常不抛出，返回 ToolResult(ok=False)（summary 首词"检索失败"）。
 """
+
 from __future__ import annotations
 
 import logging

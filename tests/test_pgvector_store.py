@@ -6,21 +6,25 @@ pgvector 存储层单元测试。
   2. PgvectorStoreRetriever 可导入
   3. 纯 PG 架构（FAISS 已移除）
 """
+
 from __future__ import annotations
 
 
 class TestImports:
     def test_import_pgvector_store(self):
         from src.knowledge.pgvector_store import PgvectorStore
+
         assert PgvectorStore is not None
 
     def test_import_retriever(self):
         from src.rag.retriever import PgvectorStoreRetriever
+
         assert PgvectorStoreRetriever is not None
 
     def test_no_faiss_left(self):
         """v0.6 纯 PG：FAISSRetriever / vector_store 模块应已移除"""
         import pytest
+
         with pytest.raises(ImportError):
             from src.rag.retriever import FAISSRetriever  # noqa: F401
         with pytest.raises(ImportError):
@@ -30,6 +34,7 @@ class TestImports:
 class TestRetriever:
     def test_row_to_doc(self):
         from src.rag.retriever import PgvectorStoreRetriever
+
         row = {
             "content": "第一条 为了惩罚犯罪...",
             "score": 0.9521,

@@ -4,6 +4,7 @@ Agent 工作流节点实现。
 每个节点是一个纯函数，接收 AgentState 并返回部分 state 更新。
 节点之间通过 AgentState 通信，不直接持有对方引用。
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,6 +28,7 @@ _HISTORY_MAX_TURNS = 6
 # 消息工具（兼容 dict 和 LangChain message 对象）
 # ---------------------------------------------------------------------------
 
+
 def _msg_role(m) -> str:
     if hasattr(m, "type"):
         type_map = {"human": "user", "ai": "assistant", "system": "system"}
@@ -48,6 +50,7 @@ def _msg_content(m) -> str:
 # 预算化上下文构建（TokenBudget）
 # ---------------------------------------------------------------------------
 
+
 def _fit_history(messages: list, limit_tokens: int) -> list[LLMMessage]:
     """按 token 预算从后往前挑选对话历史（上下文缩减策略的滑动窗口）。
 
@@ -56,7 +59,7 @@ def _fit_history(messages: list, limit_tokens: int) -> list[LLMMessage]:
     """
     msgs = list(messages or [])
     if len(msgs) > _HISTORY_MAX_TURNS * 2:
-        msgs = msgs[-_HISTORY_MAX_TURNS * 2:]
+        msgs = msgs[-_HISTORY_MAX_TURNS * 2 :]
 
     selected = []
     total = 0
@@ -130,6 +133,7 @@ def build_budgeted_prompt(
 # 上下文构建
 # ---------------------------------------------------------------------------
 
+
 def build_hierarchical_context(docs: list[dict]) -> str:
     """将检索结果按 (法律名, 章) 分组构建层级结构化上下文"""
     groups: dict[str, dict[str, list]] = {}
@@ -169,6 +173,7 @@ def build_hierarchical_context(docs: list[dict]) -> str:
 # 每个节点需要访问 LLM / retriever / memory，但它们不属于 state。
 # 通过闭包将外部依赖注入到节点函数中，保持节点本身无状态。
 # ---------------------------------------------------------------------------
+
 
 def make_nodes(llm, retriever, memory_manager, top_k: int = 5, max_retries: int = 1):
     """创建所有工作流节点（闭包注入外部依赖）
@@ -236,9 +241,13 @@ def make_nodes(llm, retriever, memory_manager, top_k: int = 5, max_retries: int 
         docs = retriever.search(q, top_k=top_k, doc_type=doc_type)
         return {
             "retrieved_docs": [
-                {"content": d.content, "law_name": d.law_name,
-                 "article_range": d.article_range, "citation": d.citation,
-                 "score": d.score}
+                {
+                    "content": d.content,
+                    "law_name": d.law_name,
+                    "article_range": d.article_range,
+                    "citation": d.citation,
+                    "score": d.score,
+                }
                 for d in docs
             ]
         }
@@ -283,10 +292,7 @@ def make_nodes(llm, retriever, memory_manager, top_k: int = 5, max_retries: int 
         if not docs:
             return {"validation_passed": True}
 
-        ctx = "\n".join(
-            f"- {d.get('citation','')}: {d.get('content','')[:120]}"
-            for d in docs[:5]
-        )
+        ctx = "\n".join(f"- {d.get('citation', '')}: {d.get('content', '')[:120]}" for d in docs[:5])
         prompt = VALIDATOR_PROMPT.format(query=query, context=ctx, answer=answer[:800])
         result = llm.chat(prompt, system_prompt="你是一个法律回答审核员。").strip()
 

@@ -1,6 +1,7 @@
 """
 M2 双路融合测试（F6/F7/F8）：排序、去重、冲突裁决、验证状态标注。
 """
+
 from __future__ import annotations
 
 from src.search.fusion import (
@@ -54,7 +55,8 @@ class TestOrderingAndDedup:
         """内部库条目按 法名+条号 去重（F7）。"""
         fused = fuse_evidence(
             [_internal(), _internal(), _internal(article="第一百条")],
-            [], [],
+            [],
+            [],
         )
         assert fused["count"] == 2
 

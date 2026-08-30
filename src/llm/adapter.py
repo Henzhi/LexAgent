@@ -6,6 +6,7 @@ LLM / Embedding 后端适配器。
 
 过渡方案：Phase 1 阶段使用，后续逐步替换为直接使用新 API。
 """
+
 from __future__ import annotations
 
 from typing import Any, Iterator, List
@@ -36,6 +37,7 @@ def _normalize_history(history: list[Any] | None) -> list[dict[str, str]] | None
 # ---------------------------------------------------------------------------
 # LLM 适配器 — 兼容旧 LawLLM 接口
 # ---------------------------------------------------------------------------
+
 
 class LLMAdapter:
     """将 LLMBackend 适配为旧 LawLLM 兼容接口
@@ -131,6 +133,7 @@ class LLMAdapter:
 # Embedding 适配器 — 兼容旧 LawEmbedder 接口
 # ---------------------------------------------------------------------------
 
+
 class EmbeddingAdapter:
     """将 EmbeddingBackend 适配为旧 LawEmbedder 兼容接口
 
@@ -150,9 +153,7 @@ class EmbeddingAdapter:
     def embed_query(self, text: str) -> List[float]:
         return self._backend.embed_query(text)
 
-    def embed_documents_with_progress(
-        self, texts: List[str], show_progress: bool = True
-    ) -> List[List[float]]:
+    def embed_documents_with_progress(self, texts: List[str], show_progress: bool = True) -> List[List[float]]:
         return self._backend.embed_with_progress(texts, show_progress)
 
     def get_embedding_dim(self) -> int:

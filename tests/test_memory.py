@@ -8,26 +8,31 @@
   4. 上下文构建
   5. 记忆集成到 Agent Graph（不涉及 DB）
 """
+
 from __future__ import annotations
 
 
 class TestImports:
     def test_import_memory_manager(self):
         from src.memory.conversation import ConversationMemoryManager
+
         assert ConversationMemoryManager is not None
 
 
 class TestSummaryTrigger:
     def test_below_threshold(self):
         from src.memory.conversation import ConversationMemoryManager
+
         # 不需要实例化，should_summarize 是实例方法但逻辑纯函数
         assert ConversationMemoryManager.should_summarize is not None
 
     def test_at_threshold(self):
         from src.memory.conversation import SUMMARY_TRIGGER_ROUNDS
+
         # 创建一个最小 mock 来测试
         class FakeMgr:
             pass
+
         mgr = FakeMgr()
         mgr.should_summarize = lambda n: n >= SUMMARY_TRIGGER_ROUNDS
         assert mgr.should_summarize(6) is True
@@ -39,6 +44,7 @@ class TestSummaryTrigger:
 class TestEntityParsing:
     def test_parse_full_entities(self):
         from src.memory.conversation import ConversationMemoryManager
+
         summary = """案件类型: 劳动争议
 涉及法律: 劳动合同法, 劳动争议调解仲裁法
 关键事实: 用户在试用期被辞退，单位未支付补偿金
@@ -51,6 +57,7 @@ class TestEntityParsing:
 
     def test_parse_partial_entities(self):
         from src.memory.conversation import ConversationMemoryManager
+
         summary = """案件类型: 合同纠纷
 涉及法律: 民法典"""
         entities = ConversationMemoryManager._parse_entities(summary)
@@ -62,17 +69,21 @@ class TestEntityParsing:
 class TestContextBuilding:
     def test_empty_memories(self):
         from src.memory.conversation import ConversationMemoryManager
+
         # build_context 是实例方法但可用 class 调用
         result = ConversationMemoryManager.build_context(None, [])
         assert result == ""
 
     def test_single_memory(self):
         from src.memory.conversation import ConversationMemoryManager
-        memories = [{
-            "summary": "用户咨询了工伤认定相关问题",
-            "score": 0.85,
-            "entities": {"case_type": "劳动争议"},
-        }]
+
+        memories = [
+            {
+                "summary": "用户咨询了工伤认定相关问题",
+                "score": 0.85,
+                "entities": {"case_type": "劳动争议"},
+            }
+        ]
         result = ConversationMemoryManager.build_context(None, memories)
         assert "历史对话参考" in result
         assert "工伤认定" in result
@@ -80,6 +91,7 @@ class TestContextBuilding:
 
     def test_multiple_memories(self):
         from src.memory.conversation import ConversationMemoryManager
+
         memories = [
             {"summary": "工伤认定问题", "score": 0.9, "entities": {}},
             {"summary": "劳动合同纠纷", "score": 0.7, "entities": {}},
@@ -92,6 +104,7 @@ class TestContextBuilding:
 class TestConversationFormatting:
     def test_format_messages(self):
         from src.memory.conversation import ConversationMemoryManager
+
         msgs = [
             {"role": "user", "content": "工伤怎么认定"},
             {"role": "assistant", "content": "根据《工伤保险条例》第十四条..."},
@@ -103,6 +116,7 @@ class TestConversationFormatting:
 
     def test_truncate_long_messages(self):
         from src.memory.conversation import ConversationMemoryManager
+
         long_text = "A" * 800
         msgs = [{"role": "user", "content": long_text}]
         result = ConversationMemoryManager._format_conversation(msgs)
@@ -121,6 +135,7 @@ class TestGraphMemoryIntegration:
 
     def test_graph_node_count(self):
         from src.agents.graph import AgentState
+
         assert "memory_context" in AgentState.__annotations__
         assert "user_id" in AgentState.__annotations__
 
@@ -137,6 +152,7 @@ class TestSaveMemoryJsonb:
         from src.memory.conversation import ConversationMemoryManager
 
         import threading
+
         with patch("src.memory.conversation.psycopg2.connect") as mock_connect:
             fake_conn = MagicMock()
             fake_cursor = MagicMock()
@@ -154,7 +170,9 @@ class TestSaveMemoryJsonb:
             mgr._lock = threading.Lock()
             mgr._schema_ready = True  # 跳过 schema 迁移
             mgr._embedder.embed_query.return_value = [0.1] * 1024
-            mgr._llm.chat.return_value = "案件类型: 劳动争议\n涉及法律: 劳动法\n关键事实: 试用期被辞退\n已回答: 无\n未解决: 赔偿金额"
+            mgr._llm.chat.return_value = (
+                "案件类型: 劳动争议\n涉及法律: 劳动法\n关键事实: 试用期被辞退\n已回答: 无\n未解决: 赔偿金额"
+            )
 
             messages = [{"role": "user", "content": f"问题{i}"} for i in range(8)]
             mgr.save_memory("user1", "session1", messages)
@@ -176,6 +194,7 @@ class TestCleanExpired:
         """清理场景:embedder/llm 可传 None,避免清理任务加载模型"""
         import inspect
         from src.memory.conversation import ConversationMemoryManager
+
         sig = inspect.signature(ConversationMemoryManager.__init__)
         assert sig.parameters["embedder"].default is None
         assert sig.parameters["llm"].default is None
@@ -224,6 +243,7 @@ class TestImportanceEstimation:
 
     def test_importance_levels(self):
         from src.memory.conversation import ConversationMemoryManager
+
         assert ConversationMemoryManager._estimate_importance(6) == 0.6
         assert ConversationMemoryManager._estimate_importance(9) == 0.6
         assert ConversationMemoryManager._estimate_importance(10) == 0.8
@@ -233,6 +253,7 @@ class TestImportanceEstimation:
 
     def test_importance_below_trigger_returns_base(self):
         from src.memory.conversation import ConversationMemoryManager
+
         assert ConversationMemoryManager._estimate_importance(0) == 0.6
 
 
@@ -244,12 +265,14 @@ class TestHistoryBudgetFitting:
 
     def test_fit_within_budget_keeps_all(self):
         from src.agents.nodes import _fit_history
+
         msgs = self._msgs(4)
         result = _fit_history(msgs, limit_tokens=10000)
         assert len(result) == 4
 
     def test_fit_limited_by_budget(self):
         from src.agents.nodes import _fit_history
+
         # 20 条长消息 + 极小预算 → 只能带下最后 1-2 条
         msgs = [{"role": "user", "content": "这是一条很长的法律咨询消息内容。" * 20} for _ in range(20)]
         result = _fit_history(msgs, limit_tokens=50)
@@ -257,6 +280,7 @@ class TestHistoryBudgetFitting:
 
     def test_fit_orders_newest_last(self):
         from src.agents.nodes import _fit_history
+
         msgs = [{"role": "user", "content": f"Q{i}"} for i in range(3)]
         result = _fit_history(msgs, limit_tokens=10000)
         # 历史按时间顺序: 最早在前, 最近在后
@@ -278,11 +302,15 @@ class TestBudgetedPrompt:
 
     def test_uses_model_window(self):
         from src.agents.nodes import build_budgeted_prompt
+
         llm = self.FakeLLM(window=64000)
         prompt, history = build_budgeted_prompt(
-            llm=llm, template="{context}\n\n## 用户问题\n{query}",
-            context="条文", query="工伤怎么认定",
-            memory_context="历史记忆", messages=[],
+            llm=llm,
+            template="{context}\n\n## 用户问题\n{query}",
+            context="条文",
+            query="工伤怎么认定",
+            memory_context="历史记忆",
+            messages=[],
         )
         # 窗口 64K → 默认检索预算翻倍到 16000，长 context 不被截断
         assert "条文" in prompt
@@ -290,21 +318,30 @@ class TestBudgetedPrompt:
 
     def test_truncates_oversized_context(self):
         from src.agents.nodes import build_budgeted_prompt
+
         llm = self.FakeLLM(window=28000)
         big = "法条内容" * 5000  # 远超 8000 token 预算
         prompt, history = build_budgeted_prompt(
-            llm=llm, template="{context}\n## 用户问题\n{query}",
-            context=big, query="问题", memory_context="", messages=[],
+            llm=llm,
+            template="{context}\n## 用户问题\n{query}",
+            context=big,
+            query="问题",
+            memory_context="",
+            messages=[],
         )
         from src.memory.token_budget import TokenBudget
+
         assert TokenBudget.count(prompt) <= 28000 - 2000 + 500  # 不超窗口
 
     def test_memory_before_context(self):
         from src.agents.nodes import build_budgeted_prompt
+
         llm = self.FakeLLM(window=28000)
         prompt, _ = build_budgeted_prompt(
-            llm=llm, template="{context}\n## 用户问题\n{query}",
-            context="条文内容", query="问题",
+            llm=llm,
+            template="{context}\n## 用户问题\n{query}",
+            context="条文内容",
+            query="问题",
             memory_context="## 历史对话参考\n旧记忆",
             messages=[],
         )

@@ -10,6 +10,7 @@
   chunk（metadata.law_name 模糊匹配 + article_range 精确匹配），置顶注入
   检索结果。解析失败则原样透传基础检索结果，不影响既有行为。
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,8 +27,20 @@ _BOOK_RE = re.compile(r"《([^》]+)》")
 _LAW_HINT_RE = re.compile(r"([\u4e00-\u9fff]{1,24}?(?:法|条例|规定|办法|细则|规则|公约|决定|章程|标准|通则))")
 
 _CN = {
-    "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
-    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10, "百": 100, "千": 1000,
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+    "百": 100,
+    "千": 1000,
 }
 
 
@@ -153,15 +166,17 @@ class ArticleRouter(BaseRetriever):
             meta = meta or {}
             if not _range_contains(meta.get("article_range", ""), num):
                 continue
-            found.append(RetrievedDoc(
-                content=content,
-                score=0.99,
-                law_name=meta.get("law_name", ""),
-                chapter=meta.get("chapter", ""),
-                section=meta.get("section", ""),
-                article_range=meta.get("article_range", ""),
-                chunk_type=meta.get("chunk_type", ""),
-            ))
+            found.append(
+                RetrievedDoc(
+                    content=content,
+                    score=0.99,
+                    law_name=meta.get("law_name", ""),
+                    chapter=meta.get("chapter", ""),
+                    section=meta.get("section", ""),
+                    article_range=meta.get("article_range", ""),
+                    chunk_type=meta.get("chunk_type", ""),
+                )
+            )
             if len(found) >= limit:
                 break
         if found:

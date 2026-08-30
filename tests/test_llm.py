@@ -9,6 +9,7 @@ from src.llm.client import Message, LLMConfig, LawLLM, LAW_SYSTEM_PROMPT
 # Message — 消息模型
 # ============================================================
 
+
 def test_message_basic():
     msg = Message(role="user", content="你好")
     assert msg.role == "user"
@@ -42,6 +43,7 @@ def test_message_assistant_factory():
 # ============================================================
 # LLMConfig — LLM 配置
 # ============================================================
+
 
 def test_llm_config_defaults():
     cfg = LLMConfig()
@@ -81,6 +83,7 @@ def test_llm_config_to_options_custom():
 # ============================================================
 # LawLLM._build_messages — 消息列表构建
 # ============================================================
+
 
 @pytest.fixture
 def mock_llm():
@@ -146,6 +149,7 @@ def test_build_messages_empty_system(mock_llm):
 # LawLLM._build_rag_prompt — RAG Prompt 构建
 # ============================================================
 
+
 def test_build_rag_prompt(mock_llm):
     prompt = mock_llm._build_rag_prompt("正当防卫怎么认定", "第二十条: 正当防卫...")
     assert "正当防卫怎么认定" in prompt
@@ -162,6 +166,7 @@ def test_build_rag_prompt_empty_context(mock_llm):
 # ============================================================
 # LawLLM 属性
 # ============================================================
+
 
 def test_llm_identifying_params(mock_llm):
     params = mock_llm._identifying_params

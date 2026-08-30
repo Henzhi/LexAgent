@@ -16,6 +16,7 @@ QA 独立验证补充测试（M1 边界/薄弱点，由 QA 工程师严过关新
 
 全部为本地单测：retriever 用 FakeRetriever，LLM 用 FakeToolLLM，Tavily 用 MagicMock。
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -44,6 +45,7 @@ from tests.fakes import FakeRetriever, FakeToolLLM
 # 公共构造
 # ---------------------------------------------------------------------------
 
+
 def _tool_call_response(query="测试") -> ToolCallResponse:
     return ToolCallResponse(
         content="",
@@ -63,9 +65,13 @@ def _build_agent(llm, retriever=None, max_tool_turns=5, monkeypatch=None, react=
     retriever = retriever or FakeRetriever()
     registry = build_default_tools(retriever)
     agent = LawAgentGraph(
-        retriever=retriever, llm=llm,
-        top_k=3, max_retries=0,
-        memory_manager=None, faq_cache=None, query_logger=None,
+        retriever=retriever,
+        llm=llm,
+        top_k=3,
+        max_retries=0,
+        memory_manager=None,
+        faq_cache=None,
+        query_logger=None,
         registry=registry,
     )
     return agent
@@ -74,6 +80,7 @@ def _build_agent(llm, retriever=None, max_tool_turns=5, monkeypatch=None, react=
 # ---------------------------------------------------------------------------
 # 1. ToolRegistry.execute 边界
 # ---------------------------------------------------------------------------
+
 
 class TestRegistryExecuteEdge:
     def test_execute_no_executor(self):
@@ -115,9 +122,17 @@ class TestRegistryExecuteEdge:
         def _boom(query: str) -> ToolResult:  # 固定签名：传错参数才会触发 TypeError
             raise RuntimeError("任意运行时错误")
 
-        reg.register(ToolSpec(name="boom", description="", parameters={"query": {"type": "string"}}, required=["query"], executor=_boom))
+        reg.register(
+            ToolSpec(
+                name="boom",
+                description="",
+                parameters={"query": {"type": "string"}},
+                required=["query"],
+                executor=_boom,
+            )
+        )
         results = [
-            reg.execute("unknown_tool", {}, call_id="c1"),   # 未知工具
+            reg.execute("unknown_tool", {}, call_id="c1"),  # 未知工具
             reg.execute("boom", {"bad_arg": 1}, call_id="c2"),  # 参数不匹配 → TypeError
             reg.execute("boom", {"query": "x"}, call_id="c3"),  # 参数正确 → executor 内部异常
         ]
@@ -132,6 +147,7 @@ class TestRegistryExecuteEdge:
 # ---------------------------------------------------------------------------
 # 2. truncate_summary 300 字符截断边界
 # ---------------------------------------------------------------------------
+
 
 class TestTruncateSummaryEdge:
     def test_exact_300_passthrough(self):
@@ -176,6 +192,7 @@ class TestTruncateSummaryEdge:
 # 3. ReAct 循环边界（REQ-UW4 / R5 parallel_tool_calls）
 # ---------------------------------------------------------------------------
 
+
 class TestReactLoopEdge:
     def test_default_max_turns_forces_answer(self, monkeypatch):
         """默认 max=5：无限工具调用 → 强制产出答案，agent_turns ≤ max+1（REQ-UW4）。"""
@@ -198,17 +215,19 @@ class TestReactLoopEdge:
 
     def test_parallel_tool_calls_all_executed(self, monkeypatch):
         """一次返回多个 tool_calls → tools 节点遍历执行全部（DeepSeek V4 特性，R5）。"""
-        llm = FakeToolLLM([
-            ToolCallResponse(
-                content="",
-                tool_calls=[
-                    ToolCall(id="p1", name="retrieve_knowledge", arguments={"query": "问题A"}),
-                    ToolCall(id="p2", name="web_search", arguments={"query": "问题B"}),
-                ],
-                raw={},
-            ),
-            _final_response("并行工具后回答"),
-        ])
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="p1", name="retrieve_knowledge", arguments={"query": "问题A"}),
+                        ToolCall(id="p2", name="web_search", arguments={"query": "问题B"}),
+                    ],
+                    raw={},
+                ),
+                _final_response("并行工具后回答"),
+            ]
+        )
         agent = _build_agent(llm, monkeypatch=monkeypatch)
         result = agent.ask("行政拘留最长多久")
         assert len(result["tool_log"]) == 2, "两个 tool_calls 必须都被执行"
@@ -217,17 +236,19 @@ class TestReactLoopEdge:
 
     def test_parallel_tool_calls_sse_events(self, monkeypatch):
         """并行调用 → SSE 产出 2 个 tool_call + 2 个 tool_result（F4 契约）。"""
-        llm = FakeToolLLM([
-            ToolCallResponse(
-                content="",
-                tool_calls=[
-                    ToolCall(id="p1", name="retrieve_knowledge", arguments={"query": "问题A"}),
-                    ToolCall(id="p2", name="web_search", arguments={"query": "问题B"}),
-                ],
-                raw={},
-            ),
-            _final_response("并行回答"),
-        ])
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(
+                    content="",
+                    tool_calls=[
+                        ToolCall(id="p1", name="retrieve_knowledge", arguments={"query": "问题A"}),
+                        ToolCall(id="p2", name="web_search", arguments={"query": "问题B"}),
+                    ],
+                    raw={},
+                ),
+                _final_response("并行回答"),
+            ]
+        )
         agent = _build_agent(llm, monkeypatch=monkeypatch)
         events = list(agent.stream("行政拘留最长多久"))
         tool_call_events = [e for e in events if e["type"] == "tool_call"]
@@ -243,6 +264,7 @@ class TestReactLoopEdge:
 # ---------------------------------------------------------------------------
 # 4. FailoverLLMBackend 边界
 # ---------------------------------------------------------------------------
+
 
 class FakeAPIError(Exception):
     """带 HTTP 状态码的假 API 异常（模拟 openai SDK 异常形态）。"""
@@ -344,6 +366,7 @@ class TestFailoverEdge:
 # 5. web_search 边界（REQ-UW1）
 # ---------------------------------------------------------------------------
 
+
 class TestWebSearchEdge:
     def _mock_client(self, available=True, results=None):
         client = MagicMock(spec=TavilySearchClient)
@@ -393,6 +416,7 @@ class TestWebSearchEdge:
     def test_retrieve_knowledge_error_source_tag(self, fake_retriever):
         """内部检索失败 → ok=False + source=internal_kb + 首词"检索失败"（共享约定 §8.3）。"""
         from src.agents.tools.retrieve_knowledge import build_retrieve_knowledge_spec
+
         fake_retriever.search = MagicMock(side_effect=RuntimeError("pg down"))
         spec = build_retrieve_knowledge_spec(fake_retriever)
         result = spec.executor(query="测试")
@@ -404,6 +428,7 @@ class TestWebSearchEdge:
 # ---------------------------------------------------------------------------
 # 6. graph 固定管线回退（AC-7 向后兼容）
 # ---------------------------------------------------------------------------
+
 
 class TestFixedPipelineFallback:
     def test_fixed_pipeline_stream_no_tool_events(self, monkeypatch):

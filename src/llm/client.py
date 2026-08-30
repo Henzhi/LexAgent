@@ -10,6 +10,7 @@ Ollama LLM 客户端。
     for chunk in client.chat_stream("请解释..."):
         print(chunk, end="")
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 消息模型
 # ---------------------------------------------------------------------------
+
 
 class Message:
     """轻量消息封装（非 LangChain 用户直接使用）"""
@@ -62,6 +64,7 @@ class Message:
 # ---------------------------------------------------------------------------
 # LLM 配置
 # ---------------------------------------------------------------------------
+
 
 class LLMConfig:
     """LLM 调用参数"""
@@ -106,6 +109,7 @@ LAW_SYSTEM_PROMPT = """你是一位专业的中国法律助手，具备以下能
 # ---------------------------------------------------------------------------
 # 核心客户端
 # ---------------------------------------------------------------------------
+
 
 class LawLLM(BaseChatModel):
     """Ollama 法律 LLM 客户端
@@ -306,13 +310,9 @@ class LawLLM(BaseChatModel):
                     raise
                 wait_and_log(e, attempt, self._max_retries, logger_name=__name__)
 
-        raise RuntimeError(
-            f"Ollama 调用失败，已重试 {self._max_retries} 次: {last_error}"
-        )
+        raise RuntimeError(f"Ollama 调用失败，已重试 {self._max_retries} 次: {last_error}")
 
-    def _call_ollama_stream(
-        self, messages: list[dict[str, str]]
-    ) -> Iterator[str]:
+    def _call_ollama_stream(self, messages: list[dict[str, str]]) -> Iterator[str]:
         """流式调用 Ollama chat API（带重试）
 
         已产出内容后失败不重试（避免重复 token），并关闭底层流尽快释放连接。
@@ -339,9 +339,7 @@ class LawLLM(BaseChatModel):
             except Exception as e:
                 last_error = e
                 if yielded_any:
-                    logger.warning(
-                        f"Ollama 流式中途失败（已输出内容，不重试）: {e}"
-                    )
+                    logger.warning(f"Ollama 流式中途失败（已输出内容，不重试）: {e}")
                     raise
                 if not is_retryable(e):
                     logger.warning(f"Ollama 流式调用失败（不可重试）: {e}")
@@ -356,9 +354,7 @@ class LawLLM(BaseChatModel):
                     except Exception:
                         pass
 
-        raise RuntimeError(
-            f"Ollama 流式调用失败，已重试 {self._max_retries} 次: {last_error}"
-        )
+        raise RuntimeError(f"Ollama 流式调用失败，已重试 {self._max_retries} 次: {last_error}")
 
     @staticmethod
     def _langchain_to_ollama(
@@ -381,6 +377,7 @@ class LawLLM(BaseChatModel):
 # ---------------------------------------------------------------------------
 # 便捷工厂
 # ---------------------------------------------------------------------------
+
 
 def create_llm(
     model: str = "qwen2.5:7b",

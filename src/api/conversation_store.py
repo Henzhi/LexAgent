@@ -1,4 +1,5 @@
 """对话持久化（pgvector PostgreSQL）—— 每个会话一条 JSONB 记录"""
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ def _locked(method):
 
     会话读写由 FastAPI sync 端点在线程池执行，多请求并发必须保护共享连接。
     """
+
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         lock = getattr(self, "_lock", None)
@@ -26,6 +28,7 @@ def _locked(method):
             self._lock = lock
         with lock:
             return method(self, *args, **kwargs)
+
     return wrapper
 
 
@@ -89,7 +92,9 @@ class ConversationStore:
             """)
             # 兼容旧表加列
             try:
-                cur.execute("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES users(id) ON DELETE CASCADE")
+                cur.execute(
+                    "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS user_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000' REFERENCES users(id) ON DELETE CASCADE"
+                )
             except Exception as e:
                 logger.warning(f"conversations 表迁移 user_id 失败（可忽略）: {e}")
             try:
@@ -143,12 +148,15 @@ class ConversationStore:
         """列出当前用户的对话会话"""
         self._ensure_connection()
         with self._conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT session_id, created_at, updated_at, messages
                 FROM conversations
                 WHERE user_id = %s
                 ORDER BY updated_at DESC LIMIT %s
-            """, (user_id, limit))
+            """,
+                (user_id, limit),
+            )
             rows = cur.fetchall()
         result = []
         for r in rows:
@@ -158,12 +166,14 @@ class ConversationStore:
                 if m.get("role") == "user":
                     first_msg = m.get("content", "")[:50]
                     break
-            result.append({
-                "session_id": r[0],
-                "started": r[1].isoformat(),
-                "msg_count": len(messages),
-                "first_msg": first_msg,
-            })
+            result.append(
+                {
+                    "session_id": r[0],
+                    "started": r[1].isoformat(),
+                    "msg_count": len(messages),
+                    "first_msg": first_msg,
+                }
+            )
         return result
 
     @_locked

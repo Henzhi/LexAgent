@@ -53,8 +53,9 @@ class LLMAdapter:
     def chat_model(self):
         """底层 LangChain ChatModel（D-M3-13）——委托给被包装的后端。
 
-        agent_node 已改为标准写法（`chat_model.bind_tools(...).invoke(...)`），
-        本适配器必须透传该属性，否则 ReAct 路径会拿不到模型。
+        供标准生态互操作（bind_tools / invoke / stream）直接使用；但 ReAct 循环的
+        决策调用必须走 `chat_with_tools()` 公开入口（重试与 Failover 降级语义在
+        该入口链路上，绕过会丢失，见 react_nodes.agent_node）。
         """
         return self._backend.chat_model
 

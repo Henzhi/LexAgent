@@ -239,3 +239,60 @@ class TestStreamReact:
         types = [e["type"] for e in events]
         assert "tool_call" not in types
         assert "token" in types
+
+
+# ---------------------------------------------------------------------------
+# agent_node 决策调用的入口语义（D-M1-3 重试 + Failover 4xx 降级回归守卫）
+# ---------------------------------------------------------------------------
+
+class TestAgentNodeCallSemantics:
+    """agent_node 必须经 `chat_with_tools` 公开入口调用 LLM。
+
+    D-M3-13 迁移期间曾改为直接 `chat_model.bind_tools().invoke()`，同时绕过了
+    该入口链路上的两层语义：D-M1-3 重试（429/5xx 不再重试）与 FailoverLLMBackend
+    的 4xx 运行期降级（主后端 4xx 不再切 Ollama，ReAct 循环直接给出失败答案）。
+    本组测试用「只会抛错 / 只在 _chat_with_tools_impl 里应答」的假后端守住回归——
+    若 agent_node 再走 chat_model 裸调用，FakePrimaryBackend 的 chat_model 未初始化
+    会直接 NotImplementedError，测试必然失败。
+    """
+
+    def _react(self, backend):
+        from src.agents.react_nodes import make_react_nodes
+
+        return make_react_nodes(backend, build_default_tools(FakeRetriever()))
+
+    def _state(self):
+        return {
+            "query": "测试问题", "messages": [], "agent_turns": 0,
+            "tool_calls": [], "tool_results": [], "tool_log": [],
+        }
+
+    def test_primary_4xx_degrades_to_fallback(self):
+        from src.llm.failover import FailoverLLMBackend
+        from tests.test_failover import FakeAPIError, FakeOllamaBackend, FakePrimaryBackend
+
+        primary = FakePrimaryBackend(error=FakeAPIError(401))
+        backend = FailoverLLMBackend(primary=primary, fallback=FakeOllamaBackend())
+        update = self._react(backend)["agent"](self._state())
+        # 4xx → 降级 Ollama 并用备用后端的结果作答（而非"模型调用失败"兜底文案）
+        assert update["answer"] == "fallback-tools"
+        assert backend.degraded is True
+
+    def test_primary_429_no_degradation_failure_answer(self):
+        from src.llm.failover import FailoverLLMBackend
+        from tests.test_failover import FakeAPIError, FakeOllamaBackend, FakePrimaryBackend
+
+        primary = FakePrimaryBackend(error=FakeAPIError(429))
+        backend = FailoverLLMBackend(primary=primary, fallback=FakeOllamaBackend())
+        update = self._react(backend)["agent"](self._state())
+        # 429 属可重试故障 → 不降级，agent 节点按调用失败兜底
+        assert update["answer"] == "抱歉，模型调用失败，暂时无法回答该问题。"
+        assert backend.degraded is False
+
+    def test_answer_flows_through_public_entry(self):
+        """正常路径：经 chat_with_tools 拿到最终答案（FakeToolLLM 记录调用参数）。"""
+        llm = FakeToolLLM([_final_response("公开入口回答")])
+        update = self._react(llm)["agent"](self._state())
+        assert update["answer"] == "公开入口回答"
+        assert llm.calls, "agent_node 应通过 chat_with_tools 公开入口调用"
+        assert llm.calls[0]["tools"], "第一轮应携带工具 schema"

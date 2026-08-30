@@ -155,12 +155,12 @@ class LLMBackend(ABC):
       - context_window: 返回上下文窗口大小
 
     D-M3-13：内部实现改为 LangChain 的 `BaseChatModel`（ChatOpenAI / ChatOllama），
-    并通过 `.model` 属性暴露，上层可直接用标准写法：
-
-        llm.model.bind_tools(schemas).invoke(messages)
+    并通过 `.chat_model` 属性暴露，供标准生态互操作（bind_tools / invoke / stream）。
 
     对外的 `chat` / `chat_stream` / `chat_with_tools` 三个入口保持不变，
-    供上层 18 处既有调用点继续使用，迁移期零改动。
+    供上层 18 处既有调用点继续使用，迁移期零改动。**多轮决策类调用（ReAct）
+    必须走 `chat_with_tools` 入口**：重试（D-M1-3）与 Failover 4xx 降级语义
+    实现于该入口链路，直接 `chat_model.invoke()` 会绕过它们。
     """
 
     def __init__(

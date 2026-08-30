@@ -25,12 +25,7 @@ from src.agents.prompts import REACT_SYSTEM_PROMPT
 from src.agents.state import AgentState
 from src.agents.tools.base import SOURCE_INTERNAL_KB, SOURCE_LEGAL, SOURCE_WEB, ToolResult
 from src.agents.tools.registry import ToolRegistry
-from src.llm.base import (
-    ToolCall,
-    ToolCallResponse,
-    to_langchain_messages,
-    tool_calls_from_langchain,
-)
+from src.llm.base import ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -196,19 +191,13 @@ def make_react_nodes(
             "tool_results": [],
         }
         try:
-            # D-M3-13：LangChain 标准写法 —— bind_tools + invoke。
-            # 预算埋点由 ChatModel 上挂载的 LLMBudgetCallbackHandler 负责（F14）。
-            chat_model = llm.chat_model
-            bound = (
-                chat_model.bind_tools(schemas, tool_choice="auto")
-                if schemas
-                else chat_model
-            )
-            ai_message = bound.invoke(to_langchain_messages(messages))
-            resp = ToolCallResponse(
-                content=ai_message.content or "",
-                tool_calls=tool_calls_from_langchain(ai_message),
-            )
+            # 必须经 LLMBackend 公开入口 chat_with_tools（内部已是 LangChain
+            # bind_tools + invoke，D-M3-13）：D-M1-3 的重试语义与 FailoverLLMBackend
+            # 的 4xx 运行期降级语义都实现于该入口链路上，直接
+            # `chat_model.bind_tools().invoke()` 会同时绕过这两层——瞬时 429/5xx
+            # 不再重试、主后端 4xx 不再降级 Ollama。预算埋点由 ChatModel 挂载的
+            # LLMBudgetCallbackHandler 负责（F14），走哪个入口都会计数。
+            resp = llm.chat_with_tools(messages, schemas, tool_choice="auto")
         except Exception as e:
             logger.error(f"agent 节点 LLM 工具调用失败: {e}", exc_info=True)
             update["tool_calls"] = []

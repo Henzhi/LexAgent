@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -187,7 +188,14 @@ def tool(
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
     def decorator(fn: Callable[..., ToolResult]) -> ToolSpec:
-        lc_tool = _lc_tool(name, description=description)(fn)
+        # ⚠️ description 必须在此显式清洗后传给 LangChain，不能依赖 LangChain 的
+        # 裸 docstring 回退：StructuredTool.from_function 在 parse_docstring=False
+        # 时直接取 `source_function.__doc__`，而 **Python 3.12 的 __doc__ 保留源码
+        # 缩进**（3.13 起编译器才自动去缩进）——不清洗则多行工具描述在 3.12 下
+        # 带缩进发给 LLM（CI 复现的 3.12/3.13 行为分叉，inspect.getdoc=cleandoc
+        # 在全版本确定）。显式 description 参数优先级不变。
+        desc = description if description is not None else inspect.getdoc(fn)
+        lc_tool = _lc_tool(name, description=desc)(fn)
         schema = convert_to_openai_tool(lc_tool)
         function = schema.get("function", {})
         parameters = function.get("parameters", {}) or {}

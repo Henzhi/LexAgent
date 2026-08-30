@@ -4,6 +4,8 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **fix（CI，Python 3.12/3.13 行为分叉）**：工具 description 在 Python 3.12 下带源码缩进发给 LLM——LangChain `StructuredTool.from_function` 在 `parse_docstring=False` 时直接取裸 `source_function.__doc__`，而 **3.13 起编译器自动去 docstring 缩进、3.12 保留**；本地 venv 是 3.13.5 所以测试全绿，CI 的 3.12 才暴露（`test_docstring_becomes_description` 失败）。修复：`@tool` 装饰器派生 description 时显式 `inspect.getdoc`（=cleandoc，全版本确定）再传给 LangChain，显式 `description=` 参数优先级不变。**影响面**：3.12 部署环境所有多行工具描述此前一直带缩进（LLM 路由引导信息受损，非崩溃）。Docker `python:3.12` 实测 18 项全过。教训入库 E-13。
+
 - **feat（F12 v1 完成 / D-M3-9a，M3 收官）**：B 类场景**进入图之前的一次人工确认**，路径 A 落地——确认发生在任何 LLM 调用之前（重跑零浪费），**零图改动、零新增依赖**（不接 `interrupt()`、不加 checkpointer，spike 结论兑现）。
   - 新增 `src/memory/confirmation_store.py::ConfirmationStore`：Redis `SETEX`（key=`lexagent:confirm:{user}:{session}`，value=已确认 query 原文防换题 R7，TTL `CONFIRMATION_TTL_SECONDS` 默认 600s=Q7 决策）；Redis 不可用退化进程内、读取异常 **fail-open 回落 A 类**（确认机制故障不阻断主链路，D-M3-8 同款原则）。
   - `ask()` / `stream()` 双路径同口径：场景分类后、FAQ 之前插入确认分支；B 类且未确认 → SSE 新事件 `confirmation_required`（scene/scene_name/prompt/options/confirm_id）或非流式 `ChatResponse.confirmation` 载荷，随即结束（`stream()` 增加 `session_id` 参数，`/api/chat`、`/api/chat/stream` 已透传）。

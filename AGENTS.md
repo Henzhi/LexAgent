@@ -85,6 +85,7 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 9. **北大法宝 MCP 官方法律源（M3+ / F9 扩展，决策 D-PKULAW）**：接入 pkulaw.com 高权威源（法条原文 + 类案全文 + 核验 + 超链），优先级与现有官方源同级（`verified_official`）。
    - **懒加载 `mcp` SDK**：`src/search/pkulaw_mcp.py` 仅在真正调用时才 `import mcp`，未安装不影响模块导入与单测（单测一律用 `tests/fakes.FakePkulawClient`）。
    - **运行时按用途解析工具名**：pkulaw 聚合端点（默认 `mcp-law-agg`）把 10 个工具挂在一个 URL 下、名字带服务前缀且会变；客户端 `tools/list` 后按「用途关键词」匹配 name+description 建 purpose→name 映射，不硬编码工具名（SKILL 同款原则）。
+     - ⚠️ **`_discover` 是协程，调用处必须 `await`**（历史 Bug）：漏 `await` **不报错**，只是 `_tool_map` 永远为空、静默退化为 `_FALLBACK_TOOL_NAMES`。而真端点实际工具名是**点分隔**（`mcp-law-search-service.search_article`），兜底快照是**下划线分隔**，一退化则**所有真实调用全部失败**且单测（Fake 绕过 `_a_call`）抓不到。回归测试见 `tests/test_pkulaw.py::TestPkulawToolDiscovery`。
      - 真端点已联调确认：10 个工具、8 个用途全部运行时命中零兜底；另有 `mcp-case.get_case_list`、`mcp-fatiao.get_law_item_content` 两个暂未映射用途，需要时再加进 `_PURPOSE_KEYWORDS`。
    - **参数平铺 + 结果按语义提取**：北大法宝工具 inputSchema 常声明包装体但后端只认平铺，一律传平铺；返回体形态不统一（裸数组/包裹体 `Data`/纯字符串），按字段语义而非名字取值，并清理链接锚点 `.0` 坏后缀。
    - **两条接入路径**：① 后端源——`PkulawLegalClient` 注册进 `LegalSourceClient` 门面，`legal_source_search` 自动融合（与既有国家库/案例库/小包公并列）；② ReAct 工具——`pkulaw_search`（检索）/ `pkulaw_verify`（核验+加链）按 `PKULAW_ENABLED` 与客户端可用性注册。

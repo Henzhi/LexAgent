@@ -60,6 +60,115 @@ class TestPkulawNormalization:
         assert "查明事实" in it["content"] and "结果" in it["content"]
 
 
+# ---------------------------------------------------------------------------
+# 运行时工具名解析（历史 Bug：_discover 漏 await）
+# ---------------------------------------------------------------------------
+
+class TestPkulawToolDiscovery:
+    """守护「运行时按用途解析工具名」不退化为静态兜底名。
+
+    历史 Bug：`_a_call` 里调用 `async def _discover` 漏了 `await`，协程从不执行，
+    `_tool_map` 永远为空 → 静默退化到 `_FALLBACK_TOOL_NAMES`。而真实端点的工具名
+    用 `.` 分隔（`mcp-law-search-service.search_article`），兜底快照用 `_` 分隔，
+    退化后真实调用必然全部失败，且不抛异常、极难发现。
+    """
+
+    def test_discover_maps_real_tool_names(self):
+        """list_tools 返回的真实名（点分隔）必须覆盖兜底名（下划线分隔）。"""
+        import asyncio
+
+        session = MagicMock()
+        listed = MagicMock()
+        listed.tools = [
+            MagicMock(name_="x", description=""),
+        ]
+        # MagicMock 的 name 需显式赋值（构造参数 name 有特殊含义）
+        tools = []
+        for real_name in [
+            "mcp-law-search-service.search_article",
+            "mcp-law-search-service.get_article",
+            "mcp-case-search-service.search_case",
+            "mcp-law.get_law_list",
+            "law_recognition.law_recognition",
+            "case_number_recognition.anhao_recognition",
+            "pku_citation_validator.adjust_provisions",
+            "add-doc-link.get_linked_content",
+        ]:
+            t = MagicMock()
+            t.name = real_name
+            t.description = ""
+            tools.append(t)
+        listed.tools = tools
+
+        async def _list_tools():
+            return listed
+
+        session.list_tools = _list_tools
+        client = PkulawMCPClient()
+        asyncio.run(client._discover(session))
+
+        assert client._tool_map, "_tool_map 为空说明 _discover 未生效（漏 await）"
+        # 8 个用途全部解析到点分隔真实名，无一退化为下划线兜底名
+        assert client._tool_map["article_search"] == "mcp-law-search-service.search_article"
+        assert client._tool_map["article_exact"] == "mcp-law-search-service.get_article"
+        assert client._tool_map["case_search"] == "mcp-case-search-service.search_case"
+        assert client._tool_map["law_list"] == "mcp-law.get_law_list"
+        assert client._tool_map["verify_law"] == "law_recognition.law_recognition"
+        assert client._tool_map["verify_case"] == "case_number_recognition.anhao_recognition"
+        assert client._tool_map["verify_provision"] == "pku_citation_validator.adjust_provisions"
+        assert client._tool_map["add_links"] == "add-doc-link.get_linked_content"
+
+    def test_discover_is_awaited_in_call_path(self):
+        """_a_call 必须 await _discover：调用时用运行时名而非兜底名。"""
+        import asyncio
+        from contextlib import asynccontextmanager
+        from unittest.mock import patch
+
+        called: dict = {}
+
+        session = MagicMock()
+
+        async def _initialize():
+            return None
+
+        async def _list_tools():
+            listed = MagicMock()
+            t = MagicMock()
+            t.name = "mcp-law-search-service.search_article"
+            t.description = ""
+            listed.tools = [t]
+            return listed
+
+        async def _call_tool(name, arguments):
+            called["name"] = name
+            result = MagicMock()
+            result.content = []
+            result.structuredContent = {"Data": []}
+            result.isError = False
+            return result
+
+        session.initialize = _initialize
+        session.list_tools = _list_tools
+        session.call_tool = _call_tool
+
+        @asynccontextmanager
+        async def fake_http(url, headers=None, timeout=None):
+            yield (MagicMock(), MagicMock(), None)
+
+        @asynccontextmanager
+        async def fake_session(read, write):
+            yield session
+
+        client = PkulawMCPClient()
+        with patch("mcp.client.streamable_http.streamablehttp_client", fake_http), patch(
+            "mcp.ClientSession", fake_session
+        ):
+            asyncio.run(client._a_call("article_search", {"text": "x"}))
+
+        assert called["name"] == "mcp-law-search-service.search_article", (
+            f"实际调用了 {called.get('name')!r}，说明 _discover 未 await 而退化为兜底名"
+        )
+
 
 # ---------------------------------------------------------------------------
 # PkulawLegalClient（门面子源适配）

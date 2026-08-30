@@ -211,7 +211,9 @@ class PkulawMCPClient:
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 if not self._tool_map:
-                    self._discover(session)
+                    # ⚠️ 必须 await：_discover 是协程，漏 await 不报错但映射永远为空，
+                    # 会静默退化为 _FALLBACK_TOOL_NAMES（前缀漂移即调用失败）。
+                    await self._discover(session)
                 tool_name = self._tool_for(purpose)
                 result = await session.call_tool(tool_name, arguments)
                 return self._parse_result(result)

@@ -15,6 +15,9 @@
     - 真实工具名为**点分隔**（`mcp-law-search-service.search_article`），与 SKILL 快照的下划线兜底名不同——运行时解析是必需的，不是优化。
     - 另有 `mcp-case.get_case_list`、`mcp-fatiao.get_law_item_content` 两个工具暂未映射用途，需要时加进 `_PURPOSE_KEYWORDS`。
 
+- **fix（D-PKULAW）**：`pkulaw_mcp._a_call` 调用 `async def _discover` 漏 `await`，协程从不执行 → `_tool_map` 恒空、静默退化为静态兜底名。因兜底名与真端点命名规则不同（下划线 vs 点），退化后**所有真实调用必然失败**，且不抛异常、Fake 单测绕过 `_a_call` 抓不到，属高危静默故障。
+  - 新增 `TestPkulawToolDiscovery` 两项回归（已反向验证：移除 `await` 即失败并报 `coroutine was never awaited`）。
+
 - **fix**：HybridRetriever 权重重定（w=3.0 → 0.5）——向量路排查（`docs/向量路质量排查-2026-08-29.md`）实证 w=3.0 的 BM25 词面排序在「法名+语义」查询上碾压向量排名，语义集净丢 6 条（"盗窃罪的立案标准"向量 top1 命中、生产链路丢失），恰好抵消 ArticleRouter 的全部收益。
   - 双集实验定值：语义集 Hit@5 62%→**67%**、MRR 0.469→**0.489**；法条级集（339 条）86.1%→**85.3%** 仅让 0.8 点——两集最优平衡
   - **"收紧激活条件"不可行**：受损查询与受益查询结构完全相同（法名+主题词），正则无法区分；激活本身合理，问题在权重

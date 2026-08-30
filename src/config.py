@@ -193,6 +193,10 @@ FAQ_CACHE_BACKEND = os.getenv("FAQ_CACHE_BACKEND", "redis").lower()
 # Redis 连接串（Redis Stack：redis:// 或 rediss://）
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
+# F12 v1 人工确认标记 TTL（秒，Q7 决策：10 分钟超时，超时需重新发起）。
+# 超时行为 = 取消（不自动按默认参数继续执行，B 类多为文书/合同，擅自代答有法律风险）
+CONFIRMATION_TTL_SECONDS = _safe_int("CONFIRMATION_TTL_SECONDS", 600)
+
 # ---------------------------------------------------------------------------
 # 网络搜索（F3 / Tavily）
 # ---------------------------------------------------------------------------

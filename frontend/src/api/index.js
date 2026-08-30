@@ -133,6 +133,21 @@ export async function rewriteQuery(query) {
   return resp.json()
 }
 
+// F12 人工确认：B 类场景（合同起草/审查、文书生成等）确认或取消。
+// 确认后前端需重新发起 streamChat（同一 sessionId），后端查到标记即正常执行。
+export const confirmScene = (sessionId, sceneId, query, approved, confirmId) =>
+  fetch(`${BASE}/chat/confirm`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      session_id: sessionId,
+      scene_id: sceneId,
+      query,
+      approved,
+      confirm_id: confirmId || '',
+    }),
+  }).then(handleError)
+
 // Crawl（在线更新法律：国家法律法规数据库增量爬取）
 export const listCrawlTypes = () =>
   fetch(`${BASE}/crawl/types`, { headers: authHeaders() }).then(handleError)

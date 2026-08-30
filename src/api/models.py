@@ -23,6 +23,20 @@ class CancelRequest(BaseModel):
     request_id: str = Field(..., min_length=1, max_length=64, description="要取消的请求 ID")
 
 
+class ConfirmRequest(BaseModel):
+    """F12 v1 人工确认请求（D-M3-9a）：B 类场景确认/取消
+
+    确认后前端重新发起 /api/chat/stream（同一 session_id），服务端查到
+    确认标记即正常执行；标记 TTL 默认 10 分钟（Q7）。
+    """
+
+    session_id: str = Field(..., min_length=1, max_length=128, description="会话 ID（与 stream 请求一致）")
+    scene_id: str = Field(..., min_length=1, max_length=64, description="confirmation_required 事件返回的场景 id")
+    query: str = Field(..., min_length=1, max_length=2000, description="待确认的原始提问（标记比对防换题）")
+    approved: bool = Field(default=True, description="True=确认执行；False=取消")
+    confirm_id: str = Field(default="", description="confirmation_required 事件回传的 confirm_id")
+
+
 class RewriteRequest(BaseModel):
     """查询改写请求：把口语化问题规范化为法律检索查询"""
 
@@ -43,6 +57,10 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[dict] = Field(default_factory=list)
     is_casual: bool = False
+    # F12 v1（D-M3-9a）：非空表示 B 类场景需人工确认后才能执行，本次不给 answer
+    confirmation: dict | None = Field(
+        default=None, description="确认载荷 {scene, scene_name, prompt, options, confirm_id}"
+    )
 
     @classmethod
     def from_rag_answer(cls, query: str, answer: str, sources: list, is_casual: bool = False) -> "ChatResponse":

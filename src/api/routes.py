@@ -24,6 +24,7 @@ from .models import (
     ChatRequest,
     ChatResponse,
     CancelRequest,
+    ConfirmRequest,
     HealthResponse,
     RegisterRequest,
     LoginRequest,
@@ -35,9 +36,11 @@ from .models import (
 )
 from .auth import get_current_user, require_registered_user, register_user, login_user
 from src.config import AGENT_ENABLED, LLM_MAX_CONCURRENCY
+from src.memory.confirmation_store import get_confirmation_store
 from src.observability.cost_budget import get_budget
 from src.rag.engine import needs_retrieval
 from src.rag.intent import sanitize_input, is_capability_query, get_capability_reply
+from src.rag.scenes import KIND_B, get_scene
 from src.llm.client import Message
 
 router = APIRouter()
@@ -197,8 +200,13 @@ def chat(req: ChatRequest):
     try:
         if AGENT_ENABLED:
             agent = get_agent()
-            result = agent.ask(safe_query, history=_sanitize_history(req.history))
+            result = agent.ask(safe_query, history=_sanitize_history(req.history), session_id=req.session_id)
             elapsed = (time.perf_counter() - t_start) * 1000
+            # F12 v1（D-M3-9a）：B 类场景需人工确认 → 返回确认载荷，不给 answer
+            confirmation = result.get("confirmation_required")
+            if confirmation:
+                perf_logger.info(f"[chat] confirmation_required scene={confirmation['scene']}")
+                return ChatResponse(query=req.query, answer="", sources=[], confirmation=confirmation)
             ret_docs = result.get("retrieved_docs", [])
             # M2 / F10：优先用融合后的 fused_sources（去重 + 来源加权排序 + verification
             # 验证状态标注），与流式路径行为一致；融合不可用时回退原始检索结果。
@@ -307,6 +315,30 @@ def cancel_chat(req: CancelRequest):
         ev = _CANCEL_FLAGS.pop(req.request_id, None)
     if ev is not None:
         ev.set()
+    return {"ok": True}
+
+
+@router.post("/chat/confirm")
+def confirm_chat(req: ConfirmRequest):
+    """F12 v1 人工确认（D-M3-9a）：B 类场景的确认 / 取消标记。
+
+    确认点在进图之前（此时未发生任何 LLM 调用），approved=True 写入确认标记
+    （Redis TTL，默认 10 分钟），前端随后重新发起 /api/chat/stream（同
+    session_id）即正常执行；approved=False 清除既有标记。
+
+    场景必须是 F11 清单中的 B 类；存储失败返回 ok=False 供前端提示重试
+    （确认机制故障不阻断主链路，见 ConfirmationStore 的 fail-open 语义）。
+    """
+    scene = get_scene(req.scene_id)
+    if scene is None or scene.kind != KIND_B:
+        raise HTTPException(400, f"非法确认场景: {req.scene_id}（仅接受 B 类场景 id）")
+    store = get_confirmation_store()
+    if not req.approved:
+        store.clear("", req.session_id)
+        return {"ok": True}
+    ok = store.confirm("", req.session_id, req.query)
+    if not ok:
+        return JSONResponse(status_code=503, content={"ok": False, "message": "确认写入失败，请重试"})
     return {"ok": True}
 
 
@@ -516,7 +548,7 @@ async def chat_stream(req: ChatRequest, request: Request):
 
         def _agent_gen() -> Iterator[dict]:
             # SSE 桥接已通用透传任意 dict 事件；此处仅对 tool_result 失败做日志埋点（F4）
-            for event in agent.stream(safe_query, history=safe_history):
+            for event in agent.stream(safe_query, history=safe_history, session_id=req.session_id):
                 if event.get("type") == "tool_result" and not event.get("ok", True):
                     perf_logger.warning(
                         f"[stream] tool_result failed: tool={event.get('tool')} "

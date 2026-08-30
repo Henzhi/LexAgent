@@ -108,6 +108,21 @@
         </div>
       </div>
 
+      <!-- F12 人工确认（B 类场景）：确认后重新发起生成，取消则结束本次请求 -->
+      <div v-if="confirmState.open" class="rewrite-confirm">
+        <div class="rewrite-card">
+          <div class="rewrite-head">
+            <span class="rewrite-badge">人工确认 · {{ confirmState.sceneName }}</span>
+            <span class="rewrite-hint">该场景会基于您的描述生成正式内容，请确认执行范围后再继续</span>
+          </div>
+          <div class="rewrite-note">{{ confirmState.prompt }}</div>
+          <div class="rewrite-actions">
+            <button class="btn-confirm" @click="confirmProceed">确认执行</button>
+            <button class="btn-original" @click="confirmCancel">取消</button>
+          </div>
+        </div>
+      </div>
+
       <!-- 输入区：底部常驻 + 智能改写开关 -->
       <div class="input-wrap">
         <div class="rewrite-switch">
@@ -127,7 +142,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
-import { loadHistory, listConversations, saveSession, streamChat, rewriteQuery, deleteConversation, cancelChat } from '../api'
+import { loadHistory, listConversations, saveSession, streamChat, rewriteQuery, deleteConversation, cancelChat, confirmScene } from '../api'
 import Sidebar from '../components/Sidebar.vue'
 import ChatMessage from '../components/ChatMessage.vue'
 import ChatInput from '../components/ChatInput.vue'
@@ -160,6 +175,31 @@ const suggestions = [
 const rewriteEnabled = ref(localStorage.getItem('lawrag_rewrite') === '1')
 const rewriteState = ref({ open: false, loading: false, original: '', proposed: '', acknowledged: false, changed: false })
 watch(rewriteEnabled, v => localStorage.setItem('lawrag_rewrite', v ? '1' : '0'))
+
+// F12 人工确认（B 类场景：合同起草/审查、文书生成等）：
+// 后端产出 confirmation_required 事件并结束流，用户确认后重新发起 stream
+const confirmState = ref({ open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '' })
+
+async function confirmProceed() {
+  const st = confirmState.value
+  confirmState.value = { ...st, open: false }
+  try {
+    await confirmScene(chat.sessionId, st.scene, st.query, true, st.confirmId)
+  } catch (e) {
+    chat.messages.push({ role: 'assistant', content: `确认失败: ${e.message}` })
+    return
+  }
+  await runStream(st.query, chat.messages.slice(-20))
+}
+
+async function confirmCancel() {
+  const st = confirmState.value
+  confirmState.value = { ...st, open: false }
+  try {
+    await confirmScene(chat.sessionId, st.scene, st.query, false, st.confirmId)
+  } catch { /* 取消标记失败可忽略 */ }
+  chat.messages.push({ role: 'assistant', content: '已取消该操作。需要时请重新发起。' })
+}
 
 // 找到最后一个 user 消息的索引，思考过程跟在这个消息后面
 const lastUserMsgIndex = computed(() => {
@@ -298,6 +338,16 @@ async function runStream(query, recent) {
         answer = ''
       } else if (msg.type === 'meta') {
         if (msg.sources?.length) sources = msg.sources
+      } else if (msg.type === 'confirmation_required') {
+        // F12：B 类场景需人工确认，本次流到此结束，等待用户决策后重新发起
+        confirmState.value = {
+          open: true,
+          scene: msg.scene || '',
+          sceneName: msg.scene_name || '',
+          prompt: msg.prompt || '该流程需要您确认后继续。',
+          confirmId: msg.confirm_id || '',
+          query,
+        }
       } else if (msg.type === 'token') {
         if (!answered.value) {
           answered.value = true
@@ -314,7 +364,9 @@ async function runStream(query, recent) {
         scrollBottom()
       }
     }
-    if (!answer) {
+    if (confirmState.value.open) {
+      // F12 等待确认：本次流无回答，不保存会话（确认后重新发起的流正常保存）
+    } else if (!answer) {
       chat.messages.push({ role: 'assistant', content: '抱歉，没有生成回答，请重试。' })
     } else {
       chat.messages[chat.messages.length - 1] = { role: 'assistant', content: answer, thinking: [...thinkingTraces.value], sources }
@@ -342,6 +394,7 @@ async function handleNewChat() {
   chat.messages = []
   thinkingTraces.value = []
   answered.value = false
+  confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '' }
   await refreshSessions()
 }
 
@@ -353,6 +406,7 @@ async function handleSelect(sessionId) {
   chat.messages = []
   thinkingTraces.value = []
   answered.value = false
+  confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '' }
   await loadCurrentSession()
 }
 

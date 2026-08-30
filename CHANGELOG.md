@@ -2,7 +2,15 @@
 
 > 记录有意义的变更，帮助 AI 快速了解最新动态、避免回归。格式参考 Keep a Changelog，新条目放最上面。
 
-## [Unreleased] — M3 分场景确认（进行中）
+## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
+
+- **feat（F12 v1 完成 / D-M3-9a，M3 收官）**：B 类场景**进入图之前的一次人工确认**，路径 A 落地——确认发生在任何 LLM 调用之前（重跑零浪费），**零图改动、零新增依赖**（不接 `interrupt()`、不加 checkpointer，spike 结论兑现）。
+  - 新增 `src/memory/confirmation_store.py::ConfirmationStore`：Redis `SETEX`（key=`lexagent:confirm:{user}:{session}`，value=已确认 query 原文防换题 R7，TTL `CONFIRMATION_TTL_SECONDS` 默认 600s=Q7 决策）；Redis 不可用退化进程内、读取异常 **fail-open 回落 A 类**（确认机制故障不阻断主链路，D-M3-8 同款原则）。
+  - `ask()` / `stream()` 双路径同口径：场景分类后、FAQ 之前插入确认分支；B 类且未确认 → SSE 新事件 `confirmation_required`（scene/scene_name/prompt/options/confirm_id）或非流式 `ChatResponse.confirmation` 载荷，随即结束（`stream()` 增加 `session_id` 参数，`/api/chat`、`/api/chat/stream` 已透传）。
+  - 新接口 `POST /api/chat/confirm`（approved=True 写标记 / False 清标记；校验仅接受 B 类场景 id）。
+  - 前端确认卡：ChatView 复用改写卡样式，`confirmation_required` → 展示确认/取消 → `/chat/confirm` → 重新发起 stream（同 session_id）。
+  - 新增 `tests/test_f12_confirmation.py`（18 项：存储 TLL/换题/fail-open、A 类不受影响、B 类拦截零消耗、确认后执行、会话隔离、接口校验）；`test_ask_writes_scene_into_state` 因 B 类查询被门闸拦截改为预确认后进图。
+  - **已知边界**：确认标记在进程内回退模式下重启丢失（Redis 模式有 TTL）；B 类拦截依赖 F11 关键词准确率（R8，回落策略保守）。
 
 - **docs（M4 立项 / D-M4-1）**：多 Agent 演进路线图定稿——D-M3-11 重启条件因产品方向（多 Agent 多场景、意图识别中的规划）正式满足。两条核心原则：**生长式迁移**（新 Agent 用生态标准件长成编译子图，主 Agent 自有循环不重写）、**按场景拆出口不按工具拆内脏**（检索/搜索/核验保持为工具）。阶段 0=M3 收尾 → 1=plan 对象+场景白名单（搭车切 BaseTool 绑定）→ 2=审核子图+类案子图 → 3=supervisor 定型。新增 `docs/M4-多Agent路线图.md`；前置条件：eval_answer_quality 基线先于阶段 2。
 - **docs**：新增 `docs/常见错误清单.md`——复发错误知识库（症状→根因→预防），收录规则：同类错误第二次或高危静默故障。首发 13 条（E-00~E-12），含当日新教训 E-12「删兼容分支前必须追运行时数据流，grep 调用点证明不了数据形态」。

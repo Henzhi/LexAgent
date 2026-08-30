@@ -32,6 +32,7 @@ from src.rag.engine import RAG_PROMPT_TEMPLATE
 from src.rag.intent import classify_query_type, is_capability_query, get_capability_reply
 from src.rag.scenes import KIND_B, classify_scene
 from src.memory.hallucination_guard import HallucinationGuard
+from src.memory.confirmation_store import get_confirmation_store
 from src.search.fusion import fuse_evidence
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ class LawAgentGraph:
         faq_cache=None,  # FAQCache | None
         query_logger=None,  # QueryLogger | None
         registry: ToolRegistry | None = None,  # M1：工具注册表（默认注册内置工具）
+        confirmation_store=None,  # F12 v1：人工确认标记存储（默认全局单例）
     ):
         self.retriever = retriever
         self.llm = llm
@@ -92,6 +94,7 @@ class LawAgentGraph:
         self._faq_cache = faq_cache
         self._qlog = query_logger
         self.registry = registry or build_default_tools(retriever)
+        self._confirmation = confirmation_store or get_confirmation_store()
 
         # 通过工厂函数注入依赖，节点本身无状态
         nodes = make_nodes(llm, retriever, memory_manager, top_k, max_retries)
@@ -233,7 +236,29 @@ class LawAgentGraph:
     # 公开接口
     # ------------------------------------------------------------------
 
-    def ask(self, query: str, history: list[dict] | None = None, user_id: str = "") -> dict:
+    def _pending_confirmation(self, user_id: str, session_id: str, query: str, scene) -> dict | None:
+        """F12 v1（D-M3-9a）：B 类场景未确认时返回 confirmation_required 载荷，已确认返回 None。
+
+        确认点在进图之前——此时未发生任何 LLM 调用，确认后由前端重新发起请求，
+        重跑零浪费（不需要 checkpointer / interrupt）。
+        """
+        if self._confirmation.is_confirmed(user_id, session_id, query):
+            return None
+        return {
+            "scene": scene.scene_id,
+            "scene_name": scene.name,
+            "prompt": f"即将执行「{scene.name}」流程，请确认后继续。",
+            "options": ["确认", "取消"],
+            "confirm_id": f"{user_id or 'anon'}:{session_id or 'anon'}:{scene.scene_id}",
+        }
+
+    def ask(
+        self,
+        query: str,
+        history: list[dict] | None = None,
+        user_id: str = "",
+        session_id: str = "",
+    ) -> dict:
         """同步问答 — 含 FAQ 缓存检查（与 stream() 路径行为一致）"""
         qlog = self._qlog
         with qlog.trace(user_id or "", query) if qlog else _null_trace() as trace:
@@ -246,6 +271,23 @@ class LawAgentGraph:
             # 场景分类（M3 / F11，REQ-E1）：A 类全自动 / B 类需人工确认（F12 判据）
             # 纯字符串匹配，无外部依赖；未命中保守回落 A 类，不阻断回答（REQ-UW）
             scene = classify_scene(query)
+
+            # F12 v1 人工确认（D-M3-9a）：B 类且未确认 → 返回确认载荷，不进图
+            # （双路径口径与 stream() 一致：确认分支都在场景分类后、FAQ 之前）
+            if scene.kind == KIND_B:
+                confirmation = self._pending_confirmation(user_id, session_id, query, scene)
+                if confirmation is not None:
+                    if trace is not None:
+                        trace.finalize(faq_cache_hit=False, retrieved_count=0)
+                    return {
+                        "query": query,
+                        "answer": "",
+                        "retrieved_docs": [],
+                        "is_legal_query": True,
+                        "cached": False,
+                        "tool_log": [],
+                        "confirmation_required": confirmation,
+                    }
 
             # FAQ 缓存检查
             if self._faq_cache:
@@ -335,7 +377,13 @@ class LawAgentGraph:
                 )
             return result
 
-    def stream(self, query: str, history: list[dict] | None = None, user_id: str = "") -> Iterator[dict]:
+    def stream(
+        self,
+        query: str,
+        history: list[dict] | None = None,
+        user_id: str = "",
+        session_id: str = "",
+    ) -> Iterator[dict]:
         """流式问答 - 手动步进 + LLM 真实流式输出（含可观测性埋点）"""
         trace = None
         if self._qlog:
@@ -377,6 +425,17 @@ class LawAgentGraph:
             scene = classify_scene(query)
             scene_label = "需确认" if scene.kind == KIND_B else "全自动"
             yield {"type": "thinking", "content": f"📋 场景识别: {scene.name}（{scene.kind} 类 · {scene_label}）"}
+
+            # 1.6 F12 v1 人工确认（D-M3-9a）：B 类且未确认 → 产出确认事件并结束流。
+            # 确认点在进图之前，未发生任何 LLM 调用（零消耗）；前端确认后
+            # 重新发起 /api/chat/stream（同 session_id），查到标记即正常执行。
+            if scene.kind == KIND_B:
+                confirmation = self._pending_confirmation(user_id, session_id, query, scene)
+                if confirmation is not None:
+                    yield {"type": "confirmation_required", **confirmation}
+                    if trace is not None:
+                        trace.finalize(faq_cache_hit=False, retrieved_count=0)
+                    return
 
             # 2. FAQ 缓存检查（命中则直接返回，未命中继续 RAG 流程）
             if self._faq_cache:

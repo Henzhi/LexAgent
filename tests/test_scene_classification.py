@@ -298,9 +298,14 @@ class TestSceneInGraph:
         assert scene_events == []
 
     def test_ask_writes_scene_into_state(self, monkeypatch):
-        """非流式路径把场景分类结果写入 state"""
+        """非流式路径把场景分类结果写入 state
+
+        F12 起 B 类查询需先确认才进图，这里预写确认标记以覆盖图执行路径
+        （B 类未确认时的拦截行为见 test_f12_confirmation.py）。
+        """
         monkeypatch.setattr("src.agents.graph.AGENT_REACT_ENABLED", True)
         agent = _build_agent(FakeToolLLM([_final_response()]))
+        agent._confirmation.confirm("", "", "帮我审查一下这份劳动合同有没有问题")
 
         result = agent.ask("帮我审查一下这份劳动合同有没有问题")
         assert result.get("scene_id") == "contract_review"

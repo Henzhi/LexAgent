@@ -6,7 +6,7 @@
 
 LexAgent 是一套**法律 RAG 智能问答系统**，正从固定管线 RAG 重构为**工具调用型自主 Agent**（详见 `docs/自主Agent重构PRD.md`）。
 
-- 里程碑：M1 工具调用型 Agent（已完成）→ M2 双路融合（已完成，2026-08-28）→ M3 分场景人工确认（进行中：F14 预算熔断已完成、F11 场景分类已完成、F12 方案已定稿待开发、F13 已收尾）→ M4 多 Agent 演进（**已立项 D-M4-1**，路线见 `docs/M4-多Agent路线图.md`，先完成 M3 收尾再启动）
+- 里程碑：M1 工具调用型 Agent（已完成）→ M2 双路融合（已完成，2026-08-28）→ **M3 分场景人工确认（已完成，2026-08-30：F14/F11/F12/F13 全部收尾）** → M4 多 Agent 演进（**已立项 D-M4-1**，路线见 `docs/M4-多Agent路线图.md`，M4 代码未启动）
 - 双 LLM 后端：外接 API（DeepSeek，OpenAI 兼容）为主，Ollama 本地为降级
 - 双路检索：内部 pgvector 知识库（最高优先级法律依据）+ 网络搜索（Tavily，仅作线索）+ 官方法律源二次验证
 - 姊妹仓库 `Law-RAG-Agent` 为干净上游，**所有新代码只写在 LexAgent**
@@ -72,7 +72,7 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 9. **场景分类与人工确认（F11/F12，D-M3-9 / D-M3-10）**：
    - **场景清单是数据、分类逻辑是代码**：`src/rag/scenes.py` 的 `SCENES` 元组即清单（id/名称/A\|B/关键词/工具），`classify_scene()` 是逻辑。产品调整场景只改 `SCENES`，**不动任何函数**。打分用三级权重（正则 3.0 > 强特征词 2.0 > 普通关键词 1.0）——三级是必需的：中文查询里「合同」这类通用词会同时命中起草/审查/检索多个场景，必须让强特征词与「第X条」正则压过通用词，否则查个法条也会被判成 B 类要确认。
    - **分类在进图之前完成**：`ask()` / `stream()` 在意图识别后调用 `classify_scene()`，结果写入 `scene_id` / `scene_kind` / `scene_matched`。**不新增图节点、不改图结构**。
-   - **F12 v1 确认点同样在进图之前**：B 类且未确认 → 产出 `confirmation_required` 事件并结束流；用户确认后前端重新发起请求。**v1 不接 `interrupt()`、不加 checkpointer、不改图**（理由见 `docs/M3-F12-人工确认技术方案.md`）。
+   - **F12 v1 已实现（2026-08-30）——确认点同样在进图之前**：B 类且未确认 → `ask()`/`stream()` 在场景分类后产出 `confirmation_required`（载荷含 scene/scene_name/prompt/options/confirm_id）并结束流，**零 LLM 消耗**；确认标记存 `src/memory/confirmation_store.py` 的 `ConfirmationStore`（Redis `SETEX` key=`lexagent:confirm:{user}:{session}`，value=已确认 query 防换题 R7，TTL `CONFIRMATION_TTL_SECONDS` 默认 600s=Q7 决策）；Redis 不可用退化进程内、**读取异常 fail-open 回落 A 类**（确认机制故障不阻断主链路）。新接口 `POST /api/chat/confirm`（校验仅 B 类场景 id；approved=False 清标记）。**v1 不接 `interrupt()`、不加 checkpointer、不改图**（理由见 `docs/M3-F12-人工确认技术方案.md`）。测试 `tests/test_f12_confirmation.py`（18 项）。
    - ⚠️ 若将来要上「逐步骤确认」（v2，需在循环内中断），**必须先读该文档的风险 R1**：无 checkpointer 时 `interrupt()` **不报错**，图静默停住、答案为空，前端永远等不到结果而后端日志无任何异常。必须在图构建处加自检断言。
    - 未命中场景时**保守回落 A 类**（`matched=False`），绝不因分类失败阻断回答。
 10. **LangChain 标准生态（D-M3-13）**：

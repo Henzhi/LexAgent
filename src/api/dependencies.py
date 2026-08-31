@@ -8,6 +8,7 @@ v0.6: 纯 PG 架构，检索后端统一为 pgvector（已移除 FAISS）。
 from __future__ import annotations
 
 import logging
+import time
 
 from src.config import (
     LLM_MODEL,
@@ -33,6 +34,7 @@ from src.config import (
     HYBRID_RRF_K,
     HYBRID_BM25_WEIGHT,
     HYBRID_ALWAYS_ON,
+    BM25_PRELOAD,
     LAW_NAME_BOOST_ENABLED,
     LAW_NAME_BOOST,
     LAW_NAME_BOOST_TOP_LAWS,
@@ -53,6 +55,8 @@ logger = logging.getLogger(__name__)
 
 _engine: RAGEngine | None = None
 _agent: LawAgentGraph | None = None
+_bm25: object | None = None  # Bm25Retriever 实例，供启动预热 warmup_bm25() 使用
+_embedder: object | None = None  # EmbeddingAdapter 实例，供启动预热 warmup_embedder() 使用
 _llm: object | None = None  # LLMAdapter，兼容旧 LawLLM 接口
 _memory_mgr: object | None = None  # ConversationMemoryManager | None
 _query_logger: object | None = None  # QueryLogger | None（可观测性）
@@ -114,6 +118,9 @@ def _create_retriever(embedder):
     v0.6 起强制 pgvector，不再支持 FAISS 回退。
     PG 连接失败将直接抛错（不静默降级），保证部署配置正确性。
     """
+    global _bm25, _embedder
+    _embedder = embedder  # 留存引用，供启动预热
+
     from pathlib import Path
 
     from src.knowledge.pgvector_store import PgvectorStore
@@ -165,6 +172,7 @@ def _create_retriever(embedder):
         from src.rag.hybrid_retriever import HybridRetriever
 
         bm25 = Bm25Retriever(store)
+        _bm25 = bm25  # 留存引用，供启动预热
         retriever = HybridRetriever(
             base_retriever=retriever,
             bm25_retriever=bm25,
@@ -195,11 +203,50 @@ def _create_retriever(embedder):
             recall_k=REWRITE_FUSION_RECALL_K,
             rrf_k=REWRITE_FUSION_RRF_K,
         )
-        logger.info(
-            f"改写融合就绪: 每路 recall_k={REWRITE_FUSION_RECALL_K}, RRF k={REWRITE_FUSION_RRF_K}"
-        )
+        logger.info(f"改写融合就绪: 每路 recall_k={REWRITE_FUSION_RECALL_K}, RRF k={REWRITE_FUSION_RRF_K}")
 
     return retriever
+
+
+def warmup_embedder() -> float:
+    """预热 Embedding 后端：首次 embed_query 会触发 Ollama 加载 bge-m3
+    （实测 ~8s，稳态仅 0.19s），提前用一次查询消耗掉，避免落到用户首查。
+
+    返回预热耗时（秒）；无实例时返回 0.0，失败只记日志不抛出。
+    """
+    if _embedder is None:
+        return 0.0
+    t0 = time.perf_counter()
+    try:
+        _embedder.embed_query("预热")
+    except Exception as e:
+        logger.warning(f"Embedding 预热失败，将由首次查询触发加载: {e}")
+        return 0.0
+    cost = time.perf_counter() - t0
+    logger.info(f"Embedding 预热完成，耗时 {cost:.1f}s（首次查询不再等待模型加载）")
+    return cost
+
+
+def warmup_bm25() -> float:
+    """提前构建 BM25 索引，避免首次查询被同步构建阻塞（实测 ~38s）。
+
+    返回构建耗时（秒）；未启用 / 已就绪 / 无实例时返回 0.0。
+    失败只记日志不抛出——预热失败应降级为懒加载，不影响服务可用性。
+    """
+    if _bm25 is None or not BM25_PRELOAD:
+        return 0.0
+    is_ready = getattr(_bm25, "is_ready", None)
+    if callable(is_ready) and is_ready():
+        return 0.0
+    t0 = time.perf_counter()
+    try:
+        _bm25.load_index()
+    except Exception as e:
+        logger.warning(f"BM25 索引预热失败，将降级为首次查询时懒加载: {e}")
+        return 0.0
+    cost = time.perf_counter() - t0
+    logger.info(f"BM25 索引预热完成，耗时 {cost:.1f}s（首次查询不再阻塞）")
+    return cost
 
 
 def get_engine() -> RAGEngine:

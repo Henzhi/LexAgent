@@ -97,16 +97,34 @@ async def lifespan(app: FastAPI):
         get_engine()
         logger.info("RAG 引擎已预热")
 
+    # 检索层预热：Embedding 首次调用触发 Ollama 加载 bge-m3（~8s），BM25 懒加载
+    # 同步构建索引（~33s）——两者叠加曾让首查阻塞 38s+。用后台线程提前消耗掉，
+    # 服务不被阻塞；两侧各自的懒加载仍保留为兜底。
+    from src.config import BM25_PRELOAD
+
+    warmup_task = None
+    if BM25_PRELOAD:
+        from .dependencies import warmup_bm25, warmup_embedder
+
+        def _warmup_all() -> None:
+            warmup_embedder()
+            warmup_bm25()
+
+        warmup_task = asyncio.create_task(asyncio.to_thread(_warmup_all))
+
     # 后台任务：过期 FAQ 缓存 + 过期对话记忆定时清理
     cleanup_task = asyncio.create_task(_cleanup_loop())
     try:
         yield
     finally:
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            pass
+        for task in (warmup_task, cleanup_task):
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(

@@ -20,6 +20,7 @@ docs/B2-法名推断spike报告-2026-08-30.md §6）：改写注入的是 **LLM 
 成本：仅触发查询 +1 次 LLM 调用（走 LLMBackend 公开入口，预算 callback
 正常计数）+1 路检索。
 """
+
 from __future__ import annotations
 
 import logging
@@ -76,7 +77,7 @@ class RewriteFusionRetriever(BaseRetriever):
         self._base = base_retriever
         self._llm = llm
         self._centroids = centroids
-        self._recall_k = max(top_k := 5, int(recall_k))
+        self._recall_k = max(5, int(recall_k))
         self._rrf_k = int(rrf_k)
 
     def is_ready(self) -> bool:

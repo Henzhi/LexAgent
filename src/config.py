@@ -154,6 +154,12 @@ HYBRID_BM25_WEIGHT = _safe_float("HYBRID_BM25_WEIGHT", 0.5)  # BM25 路权重（
 # 是否常开需双集评测决定，见 docs/向量路质量排查-2026-08-29.md §5.4
 HYBRID_ALWAYS_ON = os.getenv("HYBRID_ALWAYS_ON", "false").lower() == "true"
 
+# BM25 索引启动预热：构建耗时实测 ~38s（50867 chunks，见
+# docs/检索质量与响应性能评估-2026-08-31.md §4.3）。懒加载会把这 38s 落到
+# **首次查询**上，是首响头号瓶颈。默认开启：启动时用后台线程提前构建，
+# 服务不被阻塞，懒加载保留为兜底（load_index 内部有锁，并发安全）。
+BM25_PRELOAD = os.getenv("BM25_PRELOAD", "true").lower() == "true"
+
 
 # ---------------------------------------------------------------------------
 # 向量索引

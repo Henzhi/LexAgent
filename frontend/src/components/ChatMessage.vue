@@ -120,7 +120,9 @@ function toggleSrc(i) {
   else expandedSources.value.push(i)
 }
 
-// 先转义 HTML 特殊字符，再应用轻量 markdown 渲染，避免 LLM 输出注入 <script>/事件属性等（存储型 XSS）
+// 先整体转义 HTML 特殊字符，再按行解析生成**受控标签**——LLM/用户无法注入任何原始
+// HTML（存储型 XSS 防御，同旧版原则；escapeHtml 后 `>` 变为 &gt;，引用行按此匹配）。
+// 支持语法：##/### 标题、> 引用、- / * 无序列表、1. / 1、有序列表、**加粗**、--- 分隔线、段落。
 function escapeHtml(str) {
   return str
     .replace(/&/g, '&amp;')
@@ -130,14 +132,79 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;')
 }
 
+// 行内标记：**加粗**（escapeHtml 不转义 *，可安全匹配；未闭合的 ** 流式过程中原样显示，结束后自愈）
+function renderInline(s) {
+  return s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+}
+
 const renderedContent = computed(() => {
-  const text = props.message.content || ''
-  // 先转义：所有用户/LLM 可控内容均变为纯文本
-  const escaped = escapeHtml(text)
-  // 再应用白名单标记：**加粗** 与 换行
-  return escaped
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\n/g, '<br>')
+  const lines = escapeHtml(props.message.content || '').split('\n')
+  const out = []
+  let openList = null // 'ul' | 'ol' | 'blockquote'
+  const closeList = () => {
+    if (openList) {
+      out.push(`</${openList}>`)
+      openList = null
+    }
+  }
+  for (const line of lines) {
+    const t = line.trim()
+    if (!t) {
+      closeList()
+      continue
+    }
+    // 分隔线
+    if (/^(-{3,}|\*{3,})$/.test(t)) {
+      closeList()
+      out.push('<hr class="md-hr">')
+      continue
+    }
+    // 标题：# ~ ####；# 视为 h3 起，避免与页面主标题层级冲突
+    const h = t.match(/^(#{1,4})\s+(.+)$/)
+    if (h) {
+      closeList()
+      const level = Math.min(h[1].length + 2, 5)
+      out.push(`<h${level} class="md-h">${renderInline(h[2])}</h${level}>`)
+      continue
+    }
+    // 引用块（escapeHtml 后 > = &gt;）
+    if (/^&gt;/.test(t)) {
+      if (openList !== 'blockquote') {
+        closeList()
+        out.push('<blockquote class="md-quote">')
+        openList = 'blockquote'
+      }
+      out.push(`<p>${renderInline(t.replace(/^&gt;\s?/, ''))}</p>`)
+      continue
+    }
+    // 无序列表
+    const ul = t.match(/^[-*]\s+(.+)$/)
+    if (ul) {
+      if (openList !== 'ul') {
+        closeList()
+        out.push('<ul class="md-ul">')
+        openList = 'ul'
+      }
+      out.push(`<li>${renderInline(ul[1])}</li>`)
+      continue
+    }
+    // 有序列表（1. / 1、/ 1)）
+    const ol = t.match(/^\d+[.、)]\s*(.+)$/)
+    if (ol) {
+      if (openList !== 'ol') {
+        closeList()
+        out.push('<ol class="md-ol">')
+        openList = 'ol'
+      }
+      out.push(`<li>${renderInline(ol[1])}</li>`)
+      continue
+    }
+    // 普通段落
+    closeList()
+    out.push(`<p>${renderInline(t)}</p>`)
+  }
+  closeList()
+  return out.join('')
 })
 </script>
 
@@ -173,6 +240,37 @@ const renderedContent = computed(() => {
   word-break: break-word;
 }
 .msg.assistant .bubble :deep(strong) { color: var(--color-text); font-weight: 600; }
+
+/* ---- Markdown 渲染元素（v-html 注入，须经 :deep 穿透 scoped） ---- */
+.msg .bubble :deep(p) { margin: 6px 0; }
+.msg .bubble :deep(.md-h) {
+  margin: 16px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+.msg .bubble :deep(.md-h:first-child) { margin-top: 0; }
+.msg .bubble :deep(.md-quote) {
+  margin: 8px 0;
+  padding: 8px 14px;
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-surface-soft, #f7f8fa);
+  border-radius: 0 8px 8px 0;
+  color: var(--color-text-secondary);
+}
+.msg .bubble :deep(.md-quote p) { margin: 4px 0; }
+.msg .bubble :deep(.md-ul),
+.msg .bubble :deep(.md-ol) { margin: 6px 0; padding-left: 24px; }
+.msg .bubble :deep(.md-ul li),
+.msg .bubble :deep(.md-ol li) { margin: 4px 0; line-height: 1.7; }
+.msg .bubble :deep(.md-hr) {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 14px 0;
+}
+/* 用户消息气泡内不留段间距（保持紧凑气泡外观） */
+.msg.user .bubble :deep(p) { margin: 0; }
 .msg.assistant .bubble :deep(br) + :deep(br) { display: block; margin-top: 4px; }
 
 /* 引用条文卡片 */

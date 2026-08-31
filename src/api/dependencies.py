@@ -36,6 +36,9 @@ from src.config import (
     LAW_NAME_BOOST_ENABLED,
     LAW_NAME_BOOST,
     LAW_NAME_BOOST_TOP_LAWS,
+    REWRITE_FUSION_ENABLED,
+    REWRITE_FUSION_RECALL_K,
+    REWRITE_FUSION_RRF_K,
     FAQ_CACHE_BACKEND,
     REDIS_URL,
 )
@@ -178,6 +181,23 @@ def _create_retriever(embedder):
     from src.rag.article_router import ArticleRouter
 
     retriever = ArticleRouter(base_retriever=retriever, store=store)
+
+    # LLM 查询改写 + 双路 RRF 融合（最外层）：无法名口语查询的正交信号。
+    # 两条路径都经过完整链（含 ArticleRouter/Hybrid），融合在最终排序上做
+    if REWRITE_FUSION_ENABLED:
+        from src.rag.law_centroids import get_law_centroids
+        from src.rag.rewrite_fusion import RewriteFusionRetriever, make_default_llm
+
+        retriever = RewriteFusionRetriever(
+            base_retriever=retriever,
+            llm=make_default_llm(),
+            centroids=get_law_centroids(),
+            recall_k=REWRITE_FUSION_RECALL_K,
+            rrf_k=REWRITE_FUSION_RRF_K,
+        )
+        logger.info(
+            f"改写融合就绪: 每路 recall_k={REWRITE_FUSION_RECALL_K}, RRF k={REWRITE_FUSION_RRF_K}"
+        )
 
     return retriever
 

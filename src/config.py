@@ -211,6 +211,11 @@ LAW_NAME_BOOST_ENABLED = os.getenv("LAW_NAME_BOOST_ENABLED", "false").lower() ==
 LAW_NAME_BOOST = _safe_float("LAW_NAME_BOOST", 0.1)
 LAW_NAME_BOOST_TOP_LAWS = _safe_int("LAW_NAME_BOOST_TOP_LAWS", 3)
 
+# 无法名口语查询的正交信号：LLM 改写 + 双路 RRF 融合（仅无 法名/条号查询触发）
+REWRITE_FUSION_ENABLED = os.getenv("REWRITE_FUSION_ENABLED", "false").lower() == "true"
+REWRITE_FUSION_RECALL_K = _safe_int("REWRITE_FUSION_RECALL_K", 20)
+REWRITE_FUSION_RRF_K = _safe_int("REWRITE_FUSION_RRF_K", 60)
+
 # ---------------------------------------------------------------------------
 # 网络搜索（F3 / Tavily）
 # ---------------------------------------------------------------------------

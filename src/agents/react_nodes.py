@@ -35,12 +35,33 @@ logger = logging.getLogger(__name__)
 # （达到轮数上限被强制作答时），兜底清除保证最终答案是自然语言。
 _DSML_TOOL_CALLS_RE = re.compile(r"<｜｜DSML｜｜tool_calls>.*?</｜｜DSML｜｜tool_calls>", re.DOTALL)
 
+# 强制作答轮模型仍可能输出"让我进一步检索……"式过渡语而非答案
+# （历史案例：输出一句检索计划被当成最终答案推给用户）。检测模式：
+# 短文本 + 意图动词，且不含任何法条引用特征。
+_TRANSITION_RE = re.compile(r"(让我|我来|我将|需要|再|先)(进一步)?(检索|查询|搜索|调用|查看|获取|核实)")
+
 
 def _strip_dsml_tool_calls(text: str) -> str:
     """清除文本中的 DSML 工具调用块（轮数上限强制作答的兜底清洗）。"""
     if not text or "DSML" not in text:
         return text
     return _DSML_TOOL_CALLS_RE.sub("", text).strip()
+
+
+def _looks_like_transition(text: str) -> bool:
+    """是否为"准备去做某事"的过渡语而非答案（仅用于强制作答轮兜底）。"""
+    if not text or len(text) > 120:
+        return False
+    return bool(_TRANSITION_RE.search(text))
+
+
+# 强制作答轮检测到过渡语时的重试指令（追加在消息末尾，再调一次 LLM）
+_FORCED_FINAL_ANSWER_PROMPT = (
+    "你上一条回复是『准备去做某事』的过渡语，不是对用户问题的回答，且现在已没有工具可用。"
+    "请立即输出面向用户的最终法律解答：直接给出结论、法律依据（引用你已检索到的法条名称与条款号）"
+    "与简要分析。若确有个别信息缺口，基于现有证据回答并说明局限。"
+    "禁止再输出『让我检索』『我将查询』等任何过渡语或后续计划。"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -182,14 +203,17 @@ def make_react_nodes(
         # 达到轮数上限 → 移除工具，强制模型产出最终答案（REQ-UW4）
         schemas = registry.to_openai_schemas() if turns < max_turns else []
         if not schemas:
-            # 明确告知模型不能再调工具，否则 DeepSeek 会在纯文本里
-            # 输出 DSML 工具调用语法而非自然语言答案
+            # 明确告知模型不能再调工具：不仅禁 DSML 语法，还要禁"过渡语"——
+            # 历史案例：模型被强制作答时输出"让我进一步检索……"一句空话，
+            # 被当成最终答案推给用户
             messages.append(
                 {
                     "role": "system",
                     "content": (
-                        "你已达到工具调用轮数上限。请立即基于已获取的工具结果直接回答用户问题，"
-                        "禁止再输出任何工具调用语法。"
+                        "你已达到工具调用轮数上限，无法再调用任何工具。请立即基于已获取的工具结果，"
+                        "输出面向用户的最终法律解答（结论 + 法条依据 + 简要分析）。"
+                        "禁止输出'让我进一步检索'之类的过渡语或后续计划；若信息不足，"
+                        "基于现有证据回答并明确说明局限。"
                     ),
                 }
             )
@@ -226,7 +250,21 @@ def make_react_nodes(
             ]
         else:
             # 无工具可用 / 模型未返回工具调用 → content 即最终答案
-            answer = _strip_dsml_tool_calls((resp.content or "").strip()) or "抱歉，暂时无法回答该问题。"
+            answer = _strip_dsml_tool_calls((resp.content or "").strip())
+            # 强制作答轮兜底：模型仍输出过渡语而非答案时，追加明确指令重试一次。
+            # 仅在强制作答轮触发（schemas 为空）；正常轮的过渡语随 tool_calls 走，不受影响。
+            if not schemas and _looks_like_transition(answer):
+                logger.warning(f"强制作答轮输出过渡语，重试一次: {answer[:60]}")
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "system", "content": _FORCED_FINAL_ANSWER_PROMPT})
+                try:
+                    resp2 = llm.chat_with_tools(messages, [])
+                    retry = _strip_dsml_tool_calls((resp2.content or "").strip())
+                    if retry and len(retry) > len(answer):
+                        answer = retry
+                except Exception as e:
+                    logger.warning(f"强制作答重试失败，沿用原输出: {e}")
+            answer = answer or "抱歉，暂时无法回答该问题。"
             update["tool_calls"] = []
             update["answer"] = answer
             update["messages"] = [{"role": "assistant", "content": answer}]

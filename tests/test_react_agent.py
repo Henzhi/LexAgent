@@ -322,3 +322,77 @@ class TestAgentNodeCallSemantics:
         assert update["answer"] == "公开入口回答"
         assert llm.calls, "agent_node 应通过 chat_with_tools 公开入口调用"
         assert llm.calls[0]["tools"], "第一轮应携带工具 schema"
+
+
+# ---------------------------------------------------------------------------
+# 强制作答轮"过渡语"兜底（2026-08-31 体验联调发现：最终答案是一句检索计划）
+# ---------------------------------------------------------------------------
+
+
+class TestForcedAnswerTransitionGuard:
+    """达到轮数上限被强制作答时，模型可能输出"让我进一步检索……"式过渡语。
+
+    该过渡语会被当成最终答案推给用户（审核器只查幻觉、不查"是否回答了问题"）。
+    修复：强制作答轮检测到过渡语 → 追加明确指令重试一次，取更完整的回答。
+    """
+
+    def _react(self, backend, max_turns=2):
+        from src.agents.react_nodes import make_react_nodes
+
+        return make_react_nodes(backend, build_default_tools(FakeRetriever()), max_tool_turns=max_turns)
+
+    def _state(self, turns):
+        return {
+            "query": "测试问题",
+            "messages": [],
+            "agent_turns": turns,
+            "tool_calls": [],
+            "tool_results": [],
+            "tool_log": [],
+        }
+
+    def test_transition_answer_retried(self):
+        """强制作答轮输出过渡语 → 重试一次并采纳更完整的回答。"""
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(content="让我进一步检索相关司法解释以便全面回答您的问题。", tool_calls=[]),
+                _final_response("根据《刑法》第二十条，正当防卫不负刑事责任（来源：内部知识库）。"),
+            ]
+        )
+        update = self._react(llm)["agent"](self._state(2))  # turns=2 >= max_turns=2
+        assert "正当防卫" in update["answer"]
+        assert "让我" not in update["answer"]
+        assert len(llm.calls) == 2, "应触发一次重试"
+
+    def test_retry_result_not_adopted_when_shorter(self):
+        """重试输出比原过渡语更短时，不采纳（保留原输出）。"""
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(content="让我进一步检索相关司法解释以便全面回答您的问题。", tool_calls=[]),
+                ToolCallResponse(content="好的。", tool_calls=[]),
+            ]
+        )
+        update = self._react(llm)["agent"](self._state(2))
+        assert update["answer"].startswith("让我")
+
+    def test_normal_round_transition_not_retried(self):
+        """正常轮的过渡语 content 随 tool_calls 回灌，不触发重试。"""
+        llm = FakeToolLLM(
+            [
+                ToolCallResponse(
+                    content="让我检索相关法条。",
+                    tool_calls=[ToolCall(id="c1", name="retrieve_knowledge", arguments={"query": "正当防卫"})],
+                ),
+            ]
+        )
+        update = self._react(llm)["agent"](self._state(0))
+        assert update.get("answer") is None
+        assert update["tool_calls"], "正常轮应路由去 tools"
+        assert len(llm.calls) == 1, "不应触发重试"
+
+    def test_transition_detector(self):
+        from src.agents.react_nodes import _looks_like_transition
+
+        assert _looks_like_transition("让我进一步检索相关司法解释以便全面回答您的问题。")
+        assert _looks_like_transition("我将查询更多资料")
+        assert not _looks_like_transition("根据《刑法》第二十条，正当防卫不负刑事责任。")

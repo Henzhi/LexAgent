@@ -129,8 +129,15 @@ RETRIEVAL_SIM_THRESHOLD = _safe_float("RETRIEVAL_SIM_THRESHOLD", 0.0)
 # 纯 CPU 推理会增加少量延迟，有 GPU 更佳。默认开启以对齐评测验证过的配置。
 RERANK_ENABLED = os.getenv("RERANK_ENABLED", "true").lower() == "true"
 RERANK_MODEL = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
-RERANK_RECALL_K = _safe_int("RERANK_RECALL_K", 15)  # 粗排召回数
+# 40（2026-08-31 转正，手册 §6.1 流程）：colloq148 Hit@5 73.0%→79.7%、
+# multi100 92.0% 不回归且 MRR 0.7379→0.8006（docs/检索质量与响应性能评估-2026-08-31.md）。
+# ⚠️ 必须 > RERANK_TOP_K：相等时 reranker.py 的短路返回会让 rerank 静默不执行
+# （历史坑：15==15 导致生产精排长期未生效），RerankRetriever 构造时会打告警。
+RERANK_RECALL_K = _safe_int("RERANK_RECALL_K", 40)  # 粗排召回数
 RERANK_TOP_K = _safe_int("RERANK_TOP_K", 15)  # 精排后返回数
+# rerank 打分输入单条截断：CrossEncoder 耗时对文本长度 O(n²)（实测 2000 字 40 对 ~20s）；
+# 库内 chunk P99=480 字，800 字上限覆盖 99%+ 且耗时安全，只截打分输入不改返回内容
+RERANK_MAX_CHARS = _safe_int("RERANK_MAX_CHARS", 800)
 
 # 连续片段扩展：检索后自动拉取相邻 ±N 条条文
 ADJACENT_ENABLED = os.getenv("ADJACENT_ENABLED", "true").lower() == "true"

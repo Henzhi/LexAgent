@@ -78,6 +78,33 @@ def _range_contains(article_range: str, num: int) -> bool:
     return num in nums
 
 
+def extract_law_hint(query: str) -> Optional[str]:
+    """提取法名线索：优先《书名号》，否则取法律类后缀词。
+
+    模块级函数，供 ArticleRouter 与 reranker 分级召回共用。
+    """
+    mb = _BOOK_RE.search(query)
+    if mb:
+        return mb.group(1).strip()
+    # 去掉条款号片段后，再匹配法律后缀词，避免把"第十条"一起吞掉
+    cleaned = _ARTICLE_RE.sub("", query)
+    mh = _LAW_HINT_RE.search(cleaned)
+    if mh:
+        return mh.group(1).strip()
+    return None
+
+
+def is_article_routed_query(query: str) -> bool:
+    """查询是否为「法名+第X条」精确路由类（ArticleRouter 将接管置顶）。
+
+    供 reranker 分级召回使用：这类查询的目标条文会被精确置顶，
+    rerank 对其召回无增益，跳过可省 ~1.3s、把精排成本留给模糊查询
+    （docs/检索质量与响应性能评估-2026-08-31.md §5 P1b）。
+    """
+    q = query or ""
+    return bool(_ARTICLE_RE.search(q)) and extract_law_hint(q) is not None
+
+
 class ArticleRouter(BaseRetriever):
     """条款号精确路由：把含'第X条'的查询精确命中的条文置顶。"""
 
@@ -119,22 +146,10 @@ class ArticleRouter(BaseRetriever):
         if not m:
             return []
         num = _cn2int(m.group(1))
-        law_hint = self._extract_law_hint(query)
+        law_hint = extract_law_hint(query)
         if not law_hint:
             return []
         return self._query_db(law_hint, num, limit=4)
-
-    def _extract_law_hint(self, query: str) -> Optional[str]:
-        """提取法名线索：优先《书名号》，否则取法律类后缀词。"""
-        mb = _BOOK_RE.search(query)
-        if mb:
-            return mb.group(1).strip()
-        # 去掉条款号片段后，再匹配法律后缀词，避免把"第十条"一起吞掉
-        cleaned = _ARTICLE_RE.sub("", query)
-        mh = _LAW_HINT_RE.search(cleaned)
-        if mh:
-            return mh.group(1).strip()
-        return None
 
     def _query_db(self, law_hint: str, num: int, limit: int) -> list[RetrievedDoc]:
         """按法名模糊 + 条款号精确查库。

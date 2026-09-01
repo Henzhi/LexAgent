@@ -397,6 +397,18 @@ _CANCEL_LOCK = threading.Lock()
 # 重连重放完即止（生成已不在进行）。
 _ACTIVE_STREAMS: dict[str, float] = {}
 
+# 后台任务强引用集合（2026-09-01 审查整改）：asyncio 只持任务弱引用，
+# fire-and-forget 的返回值丢弃后任务可能在完成前被 GC。add + 完成时 discard。
+_BACKGROUND_TASKS: set = set()
+
+
+def _spawn_background(coro) -> asyncio.Task:
+    """创建后台任务并持强引用，完成时自动移除（防 GC + 防集合膨胀）。"""
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
 
 @router.post("/chat/cancel")
 def cancel_chat(req: CancelRequest):
@@ -1036,6 +1048,14 @@ async def upload_document(
     status: str = Form("active"),
     _user: str = Depends(require_registered_user),
 ):
+    """上传法律文档（PDF/DOCX/TXT）—— 需登录
+
+    文件被保存到临时目录后由解析管道处理，
+    返回 task_id 用于查询处理进度。
+
+    （2026-09-01 审查整改：docstring 原来写在两次校验之后，成了永不生效的
+    死字符串——docstring 必须是函数体第一条语句才会被识别。）
+    """
     # 归一到规范 doc_type（兼容前端旧别名 interpretation/local/judicial）
     from src.knowledge.doc_types import normalize_doc_type
 
@@ -1044,11 +1064,6 @@ async def upload_document(
     # 校验效力状态（防止伪造非法值）
     if status not in _UPLOAD_ALLOWED_STATUS:
         raise HTTPException(400, f"无效的效力状态: {status}，可选 {sorted(_UPLOAD_ALLOWED_STATUS)}")
-    """上传法律文档（PDF/DOCX/TXT）—— 需登录
-
-    文件被保存到临时目录后由解析管道处理，
-    返回 task_id 用于查询处理进度。
-    """
     import tempfile
     import asyncio
 
@@ -1080,8 +1095,10 @@ async def upload_document(
         status=status,
     )
 
-    # 后台异步处理 — to_thread 避免同步解析阻塞事件循环
-    asyncio.create_task(asyncio.to_thread(_run_ingestion_sync, pipeline, task_id, tmp_path))
+    # 后台异步处理 — to_thread 避免同步解析阻塞事件循环。
+    # 持强引用（2026-09-01 审查整改）：asyncio 对任务只持弱引用，返回值丢弃后
+    # 任务可能在完成前被 GC——文档解析静默消失、状态永远停在 pending。
+    _spawn_background(asyncio.to_thread(_run_ingestion_sync, pipeline, task_id, tmp_path))
 
     return {
         "task_id": task_id,
@@ -1278,7 +1295,9 @@ async def crawl_laws(req: CrawlRequest, _user: str = Depends(require_registered_
         "result": None,
         "rebuild": None,
     }
-    asyncio.create_task(asyncio.to_thread(_run_crawl, task_id, req))
+    # 持强引用（2026-09-01 审查整改），理由见 upload 处注释：弱引用任务可能
+    # 被提前 GC，爬虫任务静默消失、进度永远停在 pending。
+    _spawn_background(asyncio.to_thread(_run_crawl, task_id, req))
     return CrawlTaskResponse(
         task_id=task_id,
         status="pending",

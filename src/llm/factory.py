@@ -154,8 +154,9 @@ def _create_openai(**kwargs) -> OpenAICompatibleBackend:
     if not api_key:
         raise ValueError("使用 OpenAI 兼容后端必须设置 OPENAI_API_KEY 环境变量")
 
-    safe_key = api_key[:8] + "..." if len(api_key) > 8 else "***"
-    logger.info(f"创建 OpenAI 兼容后端: model={model}, base_url={base_url}, api_key={safe_key}")
+    # 只打长度，不打任何密钥材料（2026-09-01 审查整改：前 8 位含 "sk-" 后的
+    # 明文密钥片段，日志泄露即可冒用；DeepSeek key 形如 sk-xxxx...）
+    logger.info(f"创建 OpenAI 兼容后端: model={model}, base_url={base_url}, api_key_len={len(api_key)}")
     return OpenAICompatibleBackend(
         model=model,
         api_key=api_key,

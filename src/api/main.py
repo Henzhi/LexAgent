@@ -126,6 +126,12 @@ async def lifespan(app: FastAPI):
             except asyncio.CancelledError:
                 pass
 
+        # 知识库 store 进程级单例的 PG 连接（2026-09-01 审查整改：_get_store
+        # 单例化后，连接的生命周期与应用一致，关闭时显式释放）
+        from .routes import close_store
+
+        close_store()
+
 
 app = FastAPI(
     title="Law-RAG-Agent",

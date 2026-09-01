@@ -1127,14 +1127,46 @@ async def get_ingestion_status(task_id: str, _user: str = Depends(require_regist
 # ---------------------------------------------------------------------------
 
 
-def _get_store():
-    """获取 pgvector store 单例"""
-    from src.knowledge.pgvector_store import PgvectorStore
-    from src.config import PG_CONN as _pg_conn
+_STORE_SINGLETON = None  # PgvectorStore | None（避免仅为注解引入导入开销）
+_STORE_LOCK = threading.Lock()
 
-    store = PgvectorStore(_pg_conn)
-    store.ensure_tables()
-    return store
+
+def _get_store():
+    """获取 pgvector store 进程级单例（2026-09-01 审查整改）。
+
+    原来：每次调用 new 一个 `PgvectorStore`（每请求 `psycopg2.connect` 新建
+    PG 连接）且从不关闭——并发下连接数随请求线性增长，直至 PG
+    max_connections 耗尽；`ensure_tables()` 的存在性查询也每请求白跑一次。
+    现在：模块级单例 + 双检锁。连接自身有 `_ensure_connection()` 断线自动
+    重连（`_locked` 串行化保护共享连接），单例不会被断连拖死。
+    """
+    global _STORE_SINGLETON
+    if _STORE_SINGLETON is None:
+        with _STORE_LOCK:
+            if _STORE_SINGLETON is None:
+                from src.knowledge.pgvector_store import PgvectorStore
+                from src.config import PG_CONN as _pg_conn
+
+                store = PgvectorStore(_pg_conn)
+                store.ensure_tables()
+                _STORE_SINGLETON = store
+    return _STORE_SINGLETON
+
+
+def close_store() -> None:
+    """应用关闭时释放知识库 PG 连接（main.lifespan 的 finally 调用）。
+
+    关闭失败不抛出——进程退出路径上的清理不应反过来制造新故障。
+    """
+    global _STORE_SINGLETON
+    with _STORE_LOCK:
+        if _STORE_SINGLETON is not None:
+            try:
+                _STORE_SINGLETON.close()
+            except Exception as e:
+                logger.debug(f"关闭知识库 PG 连接失败（可忽略）: {e}")
+            finally:
+                _STORE_SINGLETON = None
 
 
 @router.get("/knowledge/documents")

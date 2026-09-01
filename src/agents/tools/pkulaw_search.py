@@ -65,7 +65,9 @@ def build_pkulaw_search_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
         title: Annotated[str, "法规名（article_exact/law_list 用），如 '民法典'"] = "",
         number: Annotated[str, "条号（article_exact 用），中文或数字均可，如 '第一千零七十七条'"] = "",
         lib: Annotated[str, "法条检索辖区，默认 '中央'（避免地方文件）"] = "中央",
-        effectiveness: Annotated[list[str], "法规列表效力位阶筛选（law_list 用），如 ['法律','行政法规']"] = [],
+        effectiveness: Annotated[
+            list[str] | None, "法规列表效力位阶筛选（law_list 用），如 ['法律','行政法规']"
+        ] = None,
         top_k: Annotated[int, "返回条数，默认 5"] = 5,
     ) -> ToolResult:
         """检索北大法宝官方法律权威源（法条原文 / 类案全文 / 法规目录）。
@@ -74,6 +76,12 @@ def build_pkulaw_search_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
         结果为官方源（verified_official），可信度高于网络搜索；
         网络线索需以本结果二次验证。法条语义检索建议带 lib='中央'。
         """
+        # top_k 是 LLM 生成的参数，等同不可信输入：钳制到 [1, 50]，防止
+        # LLM 传 100000 之类把法宝端点/响应体打爆（2026-09-01 审查整改）
+        try:
+            top_k = max(1, min(int(top_k), 50))
+        except (TypeError, ValueError):
+            top_k = 5
         if not pk.is_available():
             return ToolResult(
                 tool="pkulaw_search",
@@ -146,10 +154,12 @@ def build_pkulaw_verify_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
             "（验真伪）；provision=法条正文对照（AI 自写 vs 权威原文）；add_links=批量加超链",
         ],
         text: Annotated[str, "待核验/待处理的整段文本（law_name/case_number/add_links 用）"] = "",
-        userlaw: Annotated[list[dict], "法条核验-待核对条文，每项 {title, article_number, text}（provision 用）"] = [],
+        userlaw: Annotated[
+            list[dict] | None, "法条核验-待核对条文，每项 {title, article_number, text}（provision 用）"
+        ] = None,
         answerlaw: Annotated[
-            list[dict], "法条核验-AI 自写条文，每项 {title, article_number, text}（provision 用）"
-        ] = [],
+            list[dict] | None, "法条核验-AI 自写条文，每项 {title, article_number, text}（provision 用）"
+        ] = None,
         prompt: Annotated[str, "法条核验补充说明（可选）"] = "",
     ) -> ToolResult:
         """核验法律引用真伪与加可点击链接（反幻觉闭环）。
@@ -175,7 +185,8 @@ def build_pkulaw_verify_spec(client: PkulawMCPClient | None = None) -> ToolSpec:
             elif mode == "case_number":
                 raw = pk.verify_case(text)
             elif mode == "provision":
-                raw = pk.verify_provision(userlaw=userlaw, answerlaw=answerlaw, prompt=prompt)
+                # None 兜底：默认值改为 None（可变默认参数 [] 跨请求共享，审查整改）
+                raw = pk.verify_provision(userlaw=userlaw or [], answerlaw=answerlaw or [], prompt=prompt)
             elif mode == "add_links":
                 linked = pk.add_links(text)
                 return ToolResult(

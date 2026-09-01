@@ -196,6 +196,16 @@ class TestBridgeExitSemantics:
 
 
 class TestResumeEndpoint:
+    @pytest.fixture(autouse=True)
+    def _auth_ok(self, client):
+        """2026-09-01 审查整改后 resume 已要求登录；覆写依赖以离线通过。"""
+        from src.api.auth import require_registered_user
+        from src.api.main import app
+
+        app.dependency_overrides[require_registered_user] = lambda: "test-user"
+        yield
+        app.dependency_overrides.pop(require_registered_user, None)
+
     def test_400_without_request_id(self, client):
         assert client.get("/api/chat/stream/resume").status_code == 400
 

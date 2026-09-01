@@ -131,7 +131,7 @@ export async function* resumeChat(requestId, afterSeq, { signal } = {}) {
   if (!requestId) throw new Error('缺少 request_id，无法重连')
   const resp = await fetch(
     `${BASE}/chat/stream/resume?request_id=${encodeURIComponent(requestId)}&after_seq=${afterSeq}`,
-    { signal },
+    { headers: authHeaders(), signal },
   )
   if (!resp.ok) throw new Error(resp.status === 404 ? '重连失败：事件日志已过期' : `重连失败: ${resp.status}`)
   yield* consumeSSE(resp)

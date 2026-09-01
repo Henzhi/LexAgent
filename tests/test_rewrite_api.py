@@ -22,6 +22,11 @@ class _FakeLLM:
 
 _app = FastAPI()
 _app.include_router(router, prefix="/api")  # 镜像 main.py 的挂载方式
+
+# 2026-09-01 审查整改后 /api/rewrite 已要求登录；测试中覆写依赖以离线通过
+from src.api.auth import require_registered_user  # noqa: E402
+
+_app.dependency_overrides[require_registered_user] = lambda: "test-user"
 _client = TestClient(_app)
 
 

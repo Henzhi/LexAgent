@@ -59,6 +59,68 @@ _HISTORY_MAX_TURNS = 10
 _HISTORY_MAX_CHARS = 2000
 
 
+# ---------------------------------------------------------------------------
+# 频率限制（代码审查整改）：承载付费 LLM 调用的接口需要 IP 级滑动窗口限流。
+#
+# 为什么不用 slowapi / fastapi-limiter：项目无 Redis 强依赖（预算统计在 Redis
+# 不可用时退进程内），引入外部限流库会把限流也绑到 Redis 上。这里用进程内
+# 滑动窗口即可——单进程部署（Dockerfile 现状）下够用，多 worker 时退化为
+# 「每 worker N 次/分钟」，仍远好于无限。
+# ---------------------------------------------------------------------------
+_RATE_WINDOWS: dict[str, tuple[str, list[float]]] = {}
+_RATE_LOCK = threading.Lock()
+
+# (最大次数, 窗口秒数) —— 按接口分别配置
+_RATE_LIMITS = {
+    "rewrite": (20, 60),  # 改写：每分钟 20 次（每次 1 次 LLM 调用）
+}
+
+
+def _client_ip(request: Request) -> str:
+    """取客户端 IP（反向代理下优先 X-Forwarded-For 首跳）。
+
+    注意：XFF 可伪造，仅在有可信反代时才应信任；这里只用于限流的粗粒度
+    分桶，不作为鉴权依据。
+    """
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip() or "unknown"
+    return (request.client.host if request.client else "") or "unknown"
+
+
+def _rate_limit(request: Request, bucket: str) -> None:
+    """滑动窗口限流：超限时抛 429（带 Retry-After）。
+
+    限流状态自身出任何问题都放行——监控类设施故障不拖垮主链路（D-M3-8 同款原则）。
+    """
+    max_calls, window = _RATE_LIMITS.get(bucket, (0, 60))
+    if max_calls <= 0:
+        return
+    key = f"{bucket}:{_client_ip(request)}"
+    now = time.monotonic()
+    try:
+        with _RATE_LOCK:
+            _, hits = _RATE_WINDOWS.get(key, ("", []))
+            hits = [t for t in hits if now - t < window]
+            if len(hits) >= max_calls:
+                retry_after = max(1, int(window - (now - hits[0])) + 1)
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"请求过于频繁，请 {retry_after} 秒后重试",
+                    headers={"Retry-After": str(retry_after)},
+                )
+            hits.append(now)
+            _RATE_WINDOWS[key] = (key, hits)
+            # 顺手清理过期桶，防止长期运行内存膨胀（O(桶数)，桶数通常个位数）
+            if len(_RATE_WINDOWS) > 512:
+                for k in [k for k, (_, h) in _RATE_WINDOWS.items() if not h or now - h[-1] > window * 10]:
+                    _RATE_WINDOWS.pop(k, None)
+    except HTTPException:
+        raise
+    except Exception as e:  # 限流器自身故障 → 放行
+        logger.warning(f"限流器异常（放行）: {e}")
+
+
 def _budget_block_message() -> str:
     """F14：LLM 预算超限时给用户的提示文案；未超限返回空串。
 
@@ -111,13 +173,23 @@ def _sanitize_history(history: list[dict] | None) -> list[dict]:
 
 
 @router.post("/rewrite")
-def rewrite(req: RewriteRequest):
+def rewrite(
+    req: RewriteRequest,
+    request: Request,
+    _user: str = Depends(require_registered_user),
+):
     """查询改写：把口语化问题规范化为法律检索查询。
 
     该接口是"查询改写节点"的实现，由前端开关控制是否调用：
     - 关闭（法条精确查找）：前端不调用，直接用原句检索，保证绝对精确。
     - 开启（案情分析）：前端调用，将 `proposed_query` 展示给用户确认/编辑，
       确认后才用于 /chat/stream。改写风险由此转移为"用户确认过的意图"。
+
+    鉴权说明（2026-09-01 审查整改）：本接口每次调用都会真实消耗一次 LLM，
+    原来既无鉴权也无预算检查——匿名可无限刷，**直接绕过 F14 熔断**。现补三道闸：
+    1) `require_registered_user`：401 拒绝匿名；
+    2) `_budget_block_message()`：与 /api/chat 同口径的预算前置检查；
+    3) `_rate_limit`：IP 级滑动窗口，防单账号短时高频。
     """
     from src.agents.rewrite import rewrite_query
     from src.rag.intent import sanitize_input
@@ -125,6 +197,13 @@ def rewrite(req: RewriteRequest):
     safe_query, is_safe, _ = sanitize_input(req.query)
     if not is_safe:
         return {"proposed_query": req.query, "changed": False, "skipped": True}
+
+    budget_msg = _budget_block_message()
+    if budget_msg:
+        perf_logger.warning("[rewrite] budget_exceeded: llm")
+        return {"proposed_query": req.query, "changed": False, "skipped": True}
+
+    _rate_limit(request, "rewrite")
     try:
         llm = get_llm()
         proposed = rewrite_query(llm, safe_query)
@@ -136,8 +215,12 @@ def rewrite(req: RewriteRequest):
 
 
 @router.get("/budget")
-def budget_status(user_id: str = Depends(get_current_user)):
+def budget_status(_user: str = Depends(require_registered_user)):
     """F14：当日外部 API 用量与熔断状态（运维监控用，需登录）。
+
+    鉴权说明（2026-09-01 审查整改）：原来用 `get_current_user`，它会在无 Token
+    时回退匿名 user id、不拒绝请求——docstring 写着"需登录"实际匿名可读。
+    改用 `require_registered_user`（硬鉴权，401）。
 
     返回 {enabled, enforce, date, storage, exceeded, detail:{llm, tavily}}，
     每项含 used / limit / remaining / exceeded。limit=0 表示不限制。
@@ -350,8 +433,17 @@ def confirm_chat(req: ConfirmRequest):
 
 
 @router.get("/chat/stream/resume")
-async def resume_stream(request: Request, request_id: str = "", after_seq: int = 0):
+async def resume_stream(
+    request: Request,
+    request_id: str = "",
+    after_seq: int = 0,
+    _user: str = Depends(require_registered_user),
+):
     """D-M3-12 断线重连：重放 after_seq 之后的事件，再跟进新事件直到终局。
+
+    鉴权说明（2026-09-01 审查整改）：重放的是用户自己的提问/回答全文，匿名可
+    枚举 request_id 拉取他人会话内容，必须登录。前端走 fetch 重连（非
+    EventSource），可正常携带 Authorization 头。
 
     事件来自 Redis/内存日志（`lexagent:stream:{request_id}:events`，TTL 默认
     10 分钟）。生成仍在进行（_ACTIVE_STREAMS 有登记）时轮询日志跟进新事件；
@@ -1017,8 +1109,12 @@ def _run_ingestion_sync(pipeline, task_id: str, tmp_path: str):
 
 
 @router.get("/knowledge/status/{task_id}")
-async def get_ingestion_status(task_id: str):
-    """查询文档解析任务状态"""
+async def get_ingestion_status(task_id: str, _user: str = Depends(require_registered_user)):
+    """查询文档解析任务状态 —— 需登录。
+
+    鉴权说明（2026-09-01 审查整改）：上传接口本身已要求登录，其任务状态属于
+    同一管理链路，匿名可枚举 task_id 探测他人上传内容。
+    """
     pipeline = _get_ingestion_pipeline()
     status = pipeline.get_status(task_id)
     if status is None:
@@ -1050,8 +1146,12 @@ def list_knowledge_documents(
     order: str = "desc",
     limit: int = 20,
     offset: int = 0,
+    _user: str = Depends(require_registered_user),
 ):
-    """列出知识库中的文档（分页 + 排序 + 关键词搜索）
+    """列出知识库中的文档（分页 + 排序 + 关键词搜索）—— 需登录。
+
+    鉴权说明（2026-09-01 审查整改）：原无任何 Depends，匿名可分页遍历下载
+    整个知识库正文。与同一资源的写接口（upload / delete）口径对齐，改为硬鉴权。
 
     Query:
         doc_type: 按类型过滤（flk 顶级分类规范值），不传则返回全部
@@ -1096,8 +1196,15 @@ def delete_knowledge_document(doc_id: str, _user: str = Depends(require_register
 
 
 @router.get("/knowledge/documents/{doc_id}/chunks")
-def get_document_chunks(doc_id: str, limit: int = 50, offset: int = 0):
-    """获取文档的文本块（分页，默认每页 50 条）
+def get_document_chunks(
+    doc_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    _user: str = Depends(require_registered_user),
+):
+    """获取文档的文本块（分页，默认每页 50 条）—— 需登录。
+
+    鉴权说明（2026-09-01 审查整改）：与列表接口同源，匿名可拉全文正文。
 
     Query:
         limit: 每页条数（默认 50，最大 500）
@@ -1222,8 +1329,8 @@ def _trigger_rebuild(task_id: str) -> None:
 
 
 @router.get("/crawl/status/{task_id}", response_model=CrawlStatusResponse)
-async def get_crawl_status(task_id: str):
-    """查询爬取任务状态与结果"""
+async def get_crawl_status(task_id: str, _user: str = Depends(require_registered_user)):
+    """查询爬取任务状态与结果 —— 需登录（与 POST /api/crawl 口径对齐）。"""
     state = _crawl_tasks.get(task_id)
     if state is None:
         raise HTTPException(404, "任务不存在")
@@ -1240,8 +1347,8 @@ async def get_crawl_status(task_id: str):
 
 
 @router.get("/crawl/types")
-async def list_crawl_types():
-    """列出支持的爬取类型与说明（分类对齐 flk 国家法律法规数据库顶级分类）"""
+async def list_crawl_types(_user: str = Depends(require_registered_user)):
+    """列出支持的爬取类型与说明（分类对齐 flk 国家法律法规数据库顶级分类）—— 需登录"""
     from src.knowledge.doc_types import crawlable_types
 
     types = crawlable_types()

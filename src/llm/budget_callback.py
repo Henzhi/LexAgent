@@ -39,6 +39,13 @@ class LLMBudgetCallbackHandler(BaseCallbackHandler):
         ChatOpenAI(..., callbacks=[LLMBudgetCallbackHandler()])
     """
 
+    # ⚠️ 关键（2026-09-01 代码审查修复）：BaseCallbackHandler 默认 raise_error=False，
+    # LangChain 的 CallbackManager 会 try/except 捕获 handler 异常后仅 logger.warning
+    # 后继续（langchain_core/callbacks/manager.py）。不开这一行，`on_llm_start` 抛出的
+    # BudgetExceededError 会被静默吞掉——单次请求内 18~20 次 LLM 调用全部放行，
+    # F14 只剩请求入口的 `_budget_block_message()` 前置检查兜底。
+    raise_error = True
+
     @property
     def name(self) -> str:
         return "llm_budget_callback"

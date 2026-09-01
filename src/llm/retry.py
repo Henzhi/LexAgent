@@ -30,12 +30,9 @@ _NON_RETRYABLE_STATUS = {400, 401, 403, 404, 405, 409, 413, 422}
 
 def _status_code_from(exc: BaseException) -> int | None:
     """尽量从异常对象中提取 HTTP 状态码（兼容 openai / ollama / requests / httpx）。"""
-    # openai SDK: RateLimitError / APIStatusError 等带 status_code
-    sc = getattr(exc, "status_code", None)
-    if isinstance(sc, int):
-        return sc
-
-    # ollama SDK: ResponseError.status_code
+    # openai SDK（RateLimitError / APIStatusError）与 ollama SDK（ResponseError）
+    # 都直接挂 status_code，一个分支覆盖（2026-09-01 审查整改：原有两个
+    # 完全相同的 getattr 分支，纯重复）
     sc = getattr(exc, "status_code", None)
     if isinstance(sc, int):
         return sc

@@ -10,7 +10,6 @@ D-M3-13：内部实现改为 LangChain 的 BaseChatModel，预算埋点移到
 
 from __future__ import annotations
 
-import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -34,22 +33,9 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
-
-    def to_message(self) -> dict:
-        """构造 assistant tool_calls 消息（OpenAI/DeepSeek/Ollama 兼容形态）。"""
-        return {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": self.id,
-                    "type": "function",
-                    "function": {
-                        "name": self.name,
-                        "arguments": json.dumps(self.arguments, ensure_ascii=False),
-                    },
-                }
-            ],
-        }
+    # 注：历史上曾有 to_message()（构造 OpenAI 形态 assistant tool_calls 消息），
+    # 全项目零调用，2026-09-01 审查整改时删除；消息转换统一走本模块的
+    # to_langchain_messages()。
 
 
 @dataclass

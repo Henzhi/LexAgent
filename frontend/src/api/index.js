@@ -5,8 +5,41 @@ function authHeaders() {
   return t ? { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }
 }
 
+// ---------------------------------------------------------------------------
+// 401 全局处理（2026-09-01 审查整改 B6）
+//
+// 此前路由守卫只校验 token 是否存在：token 过期后用户停留在页面，但列表 /
+// 历史 / 保存全部静默失败（调用处多为空 catch）。这里在响应侧统一收口：
+// 401 → 清会话并回登录页。
+//
+// - 登录 / 注册端点豁免：那里的 401 是「用户名或密码错误」的业务结果；
+// - router / auth store 用动态 import：避免 views → api → router 的循环依赖
+//   （首次 401 时模块图已初始化完毕，运行时加载安全）；
+// - 防抖窗口：并发请求同时 401 时只跳转一次。
+// ---------------------------------------------------------------------------
+const _AUTH_EXEMPT = ['/auth/login', '/auth/register']
+let _auth_redirecting = false
+
+function handleAuthExpired(url) {
+  if (_auth_redirecting) return
+  if (url && _AUTH_EXEMPT.some((u) => url.includes(u))) return
+  _auth_redirecting = true
+  Promise.all([import('../stores/auth'), import('../router')])
+    .then(([{ useAuthStore }, { default: router }]) => {
+      useAuthStore().logout()
+      if (router.currentRoute.value.path !== '/login') router.replace('/login')
+    })
+    .catch(() => { /* 动态加载失败则退化为仅抛错 */ })
+    .finally(() => {
+      setTimeout(() => { _auth_redirecting = false }, 1000)
+    })
+}
+
 function handleError(r) {
-  if (!r.ok) throw new Error(r.status === 401 ? '认证失败，请重新登录' : '请求失败')
+  if (!r.ok) {
+    if (r.status === 401) handleAuthExpired(r.url)
+    throw new Error(r.status === 401 ? '认证失败，请重新登录' : '请求失败')
+  }
   return r.json()
 }
 
@@ -39,10 +72,10 @@ export const loadHistory = (sessionId) =>
   fetch(`${BASE}/conversations/${sessionId}`, { headers: authHeaders() }).then(handleError)
 
 export const saveSession = (sessionId, messages) =>
-  fetch(`${BASE}/conversations/${sessionId}`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ messages }) }).then(r => { if (!r.ok) throw new Error('会话保存失败') })
+  fetch(`${BASE}/conversations/${sessionId}`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ messages }) }).then(r => { if (!r.ok) { handleAuthExpired(r.url); throw new Error('会话保存失败') } })
 
 export const deleteConversation = (sessionId) =>
-  fetch(`${BASE}/conversations/${sessionId}`, { method: 'DELETE', headers: authHeaders() }).then(r => { if (!r.ok) throw new Error('删除失败') })
+  fetch(`${BASE}/conversations/${sessionId}`, { method: 'DELETE', headers: authHeaders() }).then(r => { if (!r.ok) { handleAuthExpired(r.url); throw new Error('删除失败') } })
 
 // Knowledge
 export const uploadDocument = async (file, docType, source, effectiveDate, status = 'active') => {
@@ -53,7 +86,10 @@ export const uploadDocument = async (file, docType, source, effectiveDate, statu
   fd.append('effective_date', effectiveDate)
   fd.append('status', status)
   const resp = await fetch(`${BASE}/knowledge/upload`, { method: 'POST', headers: { Authorization: authHeaders().Authorization }, body: fd })
-  if (!resp.ok) throw new Error('上传失败')
+  if (!resp.ok) {
+    handleAuthExpired(resp.url)
+    throw new Error('上传失败')
+  }
   return resp.json()
 }
 
@@ -129,7 +165,10 @@ export async function* streamChat(query, history, sessionId, { signal, requestId
     body: JSON.stringify({ query, history, session_id: sessionId, request_id: requestId || '' }),
     signal,
   })
-  if (!resp.ok) throw new Error(`请求失败: ${resp.status}`)
+  if (!resp.ok) {
+    handleAuthExpired(resp.url)
+    throw new Error(`请求失败: ${resp.status}`)
+  }
   yield* consumeSSE(resp)
 }
 
@@ -141,7 +180,10 @@ export async function* resumeChat(requestId, afterSeq, { signal } = {}) {
     `${BASE}/chat/stream/resume?request_id=${encodeURIComponent(requestId)}&after_seq=${afterSeq}`,
     { headers: authHeaders(), signal },
   )
-  if (!resp.ok) throw new Error(resp.status === 404 ? '重连失败：事件日志已过期' : `重连失败: ${resp.status}`)
+  if (!resp.ok) {
+    handleAuthExpired(resp.url)
+    throw new Error(resp.status === 404 ? '重连失败：事件日志已过期' : `重连失败: ${resp.status}`)
+  }
   yield* consumeSSE(resp)
 }
 
@@ -152,7 +194,10 @@ export async function rewriteQuery(query) {
     headers: authHeaders(),
     body: JSON.stringify({ query }),
   })
-  if (!resp.ok) throw new Error(`改写请求失败: ${resp.status}`)
+  if (!resp.ok) {
+    handleAuthExpired(resp.url)
+    throw new Error(`改写请求失败: ${resp.status}`)
+  }
   return resp.json()
 }
 

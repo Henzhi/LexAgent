@@ -16,6 +16,13 @@ Redis List；被动断线后生成任务继续跑完并持续写入，重连请�
   只负责存取，该区分逻辑在 routes._bridge_sync_stream；
 - **降级**（D-M3-8 同款原则）：Redis 不可用退化进程内（单进程部署可用）；
   写入失败由调用方告警后继续投递在线链路，日志故障绝不阻断主链路。
+
+归属登记（2026-09-01 审查整改 B3）：
+- key = ``lexagent:stream:{request_id}:owner``（SETEX，TTL 与事件日志一致），
+  记录流创建者的 user_id；resume 接口据此做归属校验（不匹配 → 403），
+  防止硬鉴权之后仍可拿别人的 request_id 重放会话内容；
+- 无归属登记的流（升级窗口期 / 旧版本创建）视为未知，由调用方决定放行；
+- 登记失败只告警不抛出——归属信息缺失最多退回旧行为，绝不阻断发起提问。
 """
 
 from __future__ import annotations
@@ -46,6 +53,9 @@ class StreamEventLog:
         self._lock = threading.Lock()
         # 进程内回退：{stream_id: (events, expires_at)}，events 为带 seq 的 payload 列表
         self._memory: dict[str, tuple[list[dict[str, Any]], float]] = {}
+        # 归属登记（B3）：进程内回退 {stream_id: (owner_user_id, expires_at)}，
+        # 与事件分开放，避免破坏既有 _memory 元组结构（测试做白盒过期注入）
+        self._owners: dict[str, tuple[str, float]] = {}
 
         if redis_url:
             try:
@@ -117,6 +127,47 @@ class StreamEventLog:
             if entry is None:
                 return False
             return time.monotonic() < entry[1]
+
+    # ------------------------------------------------------------------
+    # 归属登记（B3：resume 归属校验的数据源）
+    # ------------------------------------------------------------------
+
+    def set_owner(self, stream_id: str, user_id: str) -> None:
+        """登记流创建者（发起 /chat/stream 时调用）。
+
+        失败只告警不抛出：归属登记是 resume 校验的依据，但登记故障不能阻断
+        用户发起提问——最坏情况是 resume 退回「无归属即放行」的旧行为。
+        """
+        try:
+            self._store_owner(stream_id, user_id)
+        except Exception as e:
+            logger.warning(f"流归属登记失败（不影响本次流式请求）: {e}")
+
+    def get_owner(self, stream_id: str) -> str:
+        """返回流创建者 user_id；无登记或已过期返回空串。"""
+        if self._client is not None:
+            try:
+                return self._client.get(f"{_KEY_PREFIX}:{stream_id}:owner") or ""
+            except Exception as e:
+                logger.warning(f"流归属读取失败（按无登记处理）: {e}")
+                return ""
+        with self._lock:
+            entry = self._owners.get(stream_id)
+            if entry is None:
+                return ""
+            owner, expires_at = entry
+            if time.monotonic() >= expires_at:
+                self._owners.pop(stream_id, None)
+                return ""
+            return owner
+
+    def _store_owner(self, stream_id: str, user_id: str) -> None:
+        """底层写入（供 set_owner 与测试注入故障）。"""
+        if self._client is not None:
+            self._client.setex(f"{_KEY_PREFIX}:{stream_id}:owner", self._ttl, user_id)
+            return
+        with self._lock:
+            self._owners[stream_id] = (user_id, time.monotonic() + self._ttl)
 
     # ------------------------------------------------------------------
 

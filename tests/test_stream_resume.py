@@ -230,3 +230,117 @@ class TestResumeEndpoint:
         assert "第0段" not in body  # after_seq=1：第一段不重放
         assert "第1段" in body and "第2段" in body
         assert "data: [DONE]" in body
+
+
+# ---------------------------------------------------------------------------
+# B3（2026-09-01 审查整改）：流归属登记与 resume 归属校验
+#
+# request_id 是 uuid4 前 8 位，枚举难度尚可但并非机密；resume 硬鉴权之后仍能
+# 读取"别人的"流——只要猜中/拿到 request_id。归属校验把流绑定到创建者。
+# ---------------------------------------------------------------------------
+
+
+class TestStreamEventLogOwner:
+    def test_set_and_get_owner(self):
+        log = StreamEventLog(redis_url="")
+        log.set_owner("r1", "user-A")
+        assert log.get_owner("r1") == "user-A"
+
+    def test_get_owner_unknown_returns_empty(self):
+        log = StreamEventLog(redis_url="")
+        assert log.get_owner("never-registered") == ""
+
+    def test_owner_expiry_follows_ttl(self):
+        import time as _time
+
+        log = StreamEventLog(redis_url="", ttl_seconds=60)
+        log.set_owner("r1", "user-A")
+        owner, expires_at = log._owners["r1"]  # 白盒：拨快过期时间
+        log._owners["r1"] = (owner, _time.monotonic() - 1)
+        assert log.get_owner("r1") == ""
+
+    def test_set_owner_failure_does_not_raise(self, monkeypatch):
+        """归属登记故障不阻断主链路（与本模块降级原则一致）。"""
+        log = StreamEventLog(redis_url="")
+        monkeypatch.setattr(log, "_store_owner", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        log.set_owner("r1", "user-A")  # 不抛异常即通过
+        assert log.get_owner("r1") == ""
+
+
+class TestResumeOwnership:
+    @pytest.fixture(autouse=True)
+    def _auth_user_a(self, client):
+        from src.api.auth import require_registered_user
+        from src.api.main import app
+
+        app.dependency_overrides[require_registered_user] = lambda: "user-A"
+        yield
+        app.dependency_overrides.pop(require_registered_user, None)
+
+    def test_owner_mismatch_403(self, client):
+        """创建者 user-B ≠ 请求者 user-A → 403，事件一条都不能重放。"""
+        log = get_stream_log()
+        log.append("rOwn1", {"type": "token", "content": "机密回答"})
+        log.set_owner("rOwn1", "user-B")
+
+        r = client.get("/api/chat/stream/resume", params={"request_id": "rOwn1", "after_seq": 0})
+        assert r.status_code == 403
+        assert "机密回答" not in r.text
+
+    def test_owner_match_replays(self, client):
+        log = get_stream_log()
+        log.append("rOwn2", {"type": "token", "content": "本人回答"})
+        log.append_end("rOwn2")
+        log.set_owner("rOwn2", "user-A")
+
+        r = client.get("/api/chat/stream/resume", params={"request_id": "rOwn2", "after_seq": 0})
+        assert r.status_code == 200
+        assert "本人回答" in r.text
+
+    def test_legacy_stream_without_owner_still_replays(self, client):
+        """无归属登记（升级窗口期 / 旧版本创建的流）→ 放行，不误伤断线重连。"""
+        log = get_stream_log()
+        log.append("rOld", {"type": "token", "content": "旧流回答"})
+        log.append_end("rOld")
+
+        r = client.get("/api/chat/stream/resume", params={"request_id": "rOld", "after_seq": 0})
+        assert r.status_code == 200
+        assert "旧流回答" in r.text
+
+
+class TestChatStreamRecordsOwner:
+    """发起流式请求时必须登记归属（漏登记 = 归属校验形同虚设）。"""
+
+    def test_chat_stream_records_creator(self, client, monkeypatch):
+        from src.api import routes
+        from src.api.auth import get_current_user
+        from src.api.main import app
+
+        monkeypatch.setattr(routes, "AGENT_ENABLED", False)
+        monkeypatch.setattr(routes, "get_engine", lambda: object())
+        monkeypatch.setattr(
+            routes, "_iter_engine_stream", lambda engine, q, h: iter([{"type": "token", "content": "hi"}])
+        )
+        app.dependency_overrides[get_current_user] = lambda: "user-A"
+        try:
+            r = client.post(
+                "/api/chat/stream",
+                json={"query": "测试", "history": [], "session_id": "s1", "request_id": "rReg"},
+            )
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+        assert r.status_code == 200
+        assert get_stream_log().get_owner("rReg") == "user-A"
+
+    def test_chat_stream_without_request_id_skips_registration(self, client, monkeypatch):
+        """未启用重连（request_id 为空）→ 无事件日志，也无归属登记。"""
+        from src.api import routes
+
+        monkeypatch.setattr(routes, "AGENT_ENABLED", False)
+        monkeypatch.setattr(routes, "get_engine", lambda: object())
+        monkeypatch.setattr(
+            routes, "_iter_engine_stream", lambda engine, q, h: iter([{"type": "token", "content": "hi"}])
+        )
+        r = client.post("/api/chat/stream", json={"query": "测试", "history": [], "session_id": "s1"})
+        assert r.status_code == 200

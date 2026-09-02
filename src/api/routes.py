@@ -468,6 +468,15 @@ async def resume_stream(
     if not log.exists(request_id):
         raise HTTPException(404, "无此流的事件日志（已过期或该请求未启用重连）")
 
+    # B3：归属校验——流是「重放提问与回答全文」的载体，登录用户之间也要隔离。
+    # 无归属登记（升级窗口期 / 旧版本创建的流）视为未知，放行保住断线重连可用性。
+    owner = log.get_owner(request_id)
+    if owner and owner != _user:
+        perf_logger.warning(f"[resume] 归属校验拒绝: user={_user[:8]}… owner={owner[:8]}…")
+        raise HTTPException(403, "无权访问该对话流")
+    if not owner:
+        logger.warning("[resume] 流无归属登记（旧版本创建），按旧行为放行重放")
+
     async def _gen():
         last = max(0, int(after_seq))
         # 兜底时限与日志 TTL 同量级：防止对端半开连接把协程挂死
@@ -708,8 +717,19 @@ def _iter_engine_stream(engine, query: str, history: list) -> Iterator[dict]:
 
 
 @router.post("/chat/stream")
-async def chat_stream(req: ChatRequest, request: Request):
+async def chat_stream(
+    req: ChatRequest,
+    request: Request,
+    # 软鉴权（产品决策：/api/chat* 匿名可用）；这里只为拿创建者身份做归属登记（B3），
+    # 匿名请求记为 anonymous 命名空间——resume 是硬鉴权，匿名创建的流本就无法重连。
+    user_id: str = Depends(get_current_user),
+):
     t_start = time.perf_counter()
+
+    # B3：登记流归属（resume 接口据此校验「请求者 == 创建者」，防拿别人的
+    # request_id 重放会话内容）。登记失败由 set_owner 内部告警吞掉，不阻断主链路。
+    if req.request_id:
+        get_stream_log().set_owner(req.request_id, user_id)
 
     # 输入安全过滤（Prompt 注入 + 敏感内容检测）
     safe_query, is_safe, reject_reason = sanitize_input(req.query)

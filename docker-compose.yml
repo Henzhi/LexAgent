@@ -5,9 +5,11 @@ services:
     environment:
       POSTGRES_DB: lawrag
       POSTGRES_USER: lawrag
-      POSTGRES_PASSWORD: lawrag123
-    ports:
-      - "5432:5432"
+      # 2026-09-01 审查整改：密码不再硬编码明文，必须经 .env 提供（无默认值，
+      # 未设置即启动失败，避免"忘了改默认弱口令"直接上生产）
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+    # 2026-09-01 审查整改：移除 5432 宿主映射——db 仅需在 compose 网络内被
+    # app 访问（db:5432），暴露到宿主等于把数据库口子开到局域网
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -38,12 +40,12 @@ services:
       - "8000:8000"
     environment:
       - PG_ENABLED=true  # 关键：Dockerfile 不 COPY .env，必须显式开启 pgvector（v0.6 纯 PG，无 FAISS 回退）
-      - PG_CONN=postgresql://lawrag:lawrag123@db:5432/lawrag
+      - PG_CONN=postgresql://lawrag:${POSTGRES_PASSWORD}@db:5432/lawrag
       - PG_HOST=db
       - PG_PORT=5432
       - PG_DATABASE=lawrag
       - PG_USER=lawrag
-      - PG_PASSWORD=lawrag123
+      - PG_PASSWORD=${POSTGRES_PASSWORD}
       - OLLAMA_URL=http://host.docker.internal:11434
       - EMBED_MODEL=${EMBED_MODEL:-bge-m3}
       - LLM_MODEL=${LLM_MODEL:-qwen2.5:7b}

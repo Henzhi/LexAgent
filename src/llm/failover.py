@@ -5,7 +5,8 @@
 - 组合主后端（OpenAI 兼容 / DeepSeek）与备用后端（Ollama），对外保持 LLMBackend 接口不变。
 - 创建期：主后端初始化失败（缺 Key / 网络不可达）→ 工厂直接构造已降级实例（degraded=True）。
 - 运行期：主后端调用抛出**不可重试**异常（4xx / 认证失败）→ 切换备用后端并记录降级标记；
-  可重试异常（429 / 5xx / 网络 / 超时）仍由 src.llm.retry 在底层后端内部处理，不触发降级。
+  可重试异常（429 / 5xx / 网络 / 超时）仍由 src.llm.retry 在底层后端内部处理，不触发降级；
+  重试**耗尽**后抛 `LLMRetryExhaustedError` → 触发降级（B1）。
 - 降级标记通过 `degraded` / `active_backend` 属性透出，供图/SSE 层展示"当前使用降级模型"。
 
 线程安全：降级切换用锁保护，多线程并发首败时只降级一次。
@@ -18,6 +19,7 @@ import threading
 from typing import Iterator
 
 from src.llm.base import LLMBackend, ToolCallResponse
+from src.llm.retry import LLMRetryExhaustedError
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +35,18 @@ def _backend_label(backend: LLMBackend) -> str:
 
 
 def _is_non_retryable_api_error(exc: BaseException) -> bool:
-    """判断是否为主后端不可恢复的 API 错误（4xx 业务/鉴权错误）。
+    """判断是否为主后端不可恢复的错误（4xx 业务/鉴权错误 或 重试耗尽）。
 
     规则：
     - 429 / 5xx 可重试（由底层后端 retry.py 处理），不触发降级；
     - 4xx（400/401/403/404/422 等，408 除外）属业务/鉴权错误 → 触发降级；
-    - 无 HTTP 状态码的异常（如重试耗尽后的 RuntimeError、编程错误）不触发降级，
-      避免把可恢复或内部错误误判为"后端不可用"。
+    - `LLMRetryExhaustedError`（重试耗尽哨兵，B1）→ 触发降级：持续 429/5xx
+      把重试次数用完，说明主后端在当前窗口内确实不可用，有备用就该用上；
+    - 其他无 HTTP 状态码的异常（编程错误等）不触发降级，避免把内部 bug 误判
+      成"后端不可用"而永久降级。
     """
+    if isinstance(exc, LLMRetryExhaustedError):
+        return True
     status = getattr(exc, "status_code", None)
     if status is None:
         resp = getattr(exc, "response", None)

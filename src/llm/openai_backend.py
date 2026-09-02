@@ -15,6 +15,8 @@ OpenAI 兼容 API LLM 后端实现。
   - 指数退避 + 全抖动 + 尊重 Retry-After 头，避免 429 惊群放大限流
   - 流式请求已产出内容后失败不再重试（避免重复 token / 重复计费），
     并在 finally 中关闭底层流以尽快释放连接
+  - 重试耗尽抛 `LLMRetryExhaustedError`（携带最后一次状态码），供 Failover
+    判定降级（2026-09-01 审查整改 B1：此前抛裸 RuntimeError 导致不降级）
 """
 
 from __future__ import annotations
@@ -32,7 +34,11 @@ from src.llm.base import (
     tool_calls_from_langchain,
 )
 from src.llm.budget_callback import budget_callbacks
-from src.llm.retry import is_retryable, wait_and_log
+from src.llm.retry import (
+    LLMRetryExhaustedError,
+    is_retryable,
+    wait_and_log,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +146,7 @@ class OpenAICompatibleBackend(LLMBackend):
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(f"OpenAI API 调用失败，已重试 {self.max_retries} 次: {last_error}")
+        raise LLMRetryExhaustedError(f"OpenAI API 调用失败，已重试 {self.max_retries} 次: {last_error}", last_error)
 
     def _stream_impl(self, messages: list[dict[str, str]]) -> Iterator[str]:
         lc_messages = to_langchain_messages(messages)
@@ -170,7 +176,7 @@ class OpenAICompatibleBackend(LLMBackend):
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(f"OpenAI API 流式调用失败，已重试 {self.max_retries} 次: {last_error}")
+        raise LLMRetryExhaustedError(f"OpenAI API 流式调用失败，已重试 {self.max_retries} 次: {last_error}", last_error)
 
     # ------------------------------------------------------------------
     # 工具调用实现（M1 / F2，D-M3-13 改为 LangChain bind_tools）
@@ -211,4 +217,4 @@ class OpenAICompatibleBackend(LLMBackend):
                     raise
                 wait_and_log(e, attempt, self.max_retries, logger_name=__name__)
 
-        raise RuntimeError(f"OpenAI API 工具调用失败，已重试 {self.max_retries} 次: {last_error}")
+        raise LLMRetryExhaustedError(f"OpenAI API 工具调用失败，已重试 {self.max_retries} 次: {last_error}", last_error)

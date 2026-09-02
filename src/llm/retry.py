@@ -13,6 +13,9 @@
    4xx 业务错误、鉴权失败不可重试）。
 2. `get_retry_after_seconds(exc)`：优先读取供应商返回的 Retry-After 头。
 3. `backoff_delay(...)`：指数退避 + 全抖动（jitter），避免惊群。
+
+外加 `LLMRetryExhaustedError`：重试耗尽时抛出的哨兵异常（2026-09-01 审查
+整改 B1），负责把「最后一次失败的状态码」带过重试边界交給 failover 判定。
 """
 
 from __future__ import annotations
@@ -46,6 +49,26 @@ def _status_code_from(exc: BaseException) -> int | None:
 
     # openai APIStatusError 的 response 也可取 headers
     return None
+
+
+class LLMRetryExhaustedError(RuntimeError):
+    """重试耗尽哨兵异常（2026-09-01 审查整改 B1）。
+
+    背景：此前重试耗尽抛裸 `RuntimeError`，最后一次失败的 HTTP 状态码在重试
+    边界处丢失，`failover` 只认状态码 → 判定「非 4xx」→ 不降级。DeepSeek 持续
+    429/5xx 时用户看到整条链路失败，明明有本地 Ollama 兜底却用不上。
+
+    约定：
+    - 继承 `RuntimeError`，既有 `except RuntimeError` 分支不受影响（向后兼容）；
+    - 携带 `last_error` 与其 `status_code`，供上层做降级 / 可观测性判定；
+    - 只有「重试耗尽」这一条路径抛它，编程错误等仍用普通 RuntimeError——
+      否则会把内部 bug 误判成后端不可用而降级。
+    """
+
+    def __init__(self, message: str, last_error: BaseException | None = None):
+        super().__init__(message)
+        self.last_error = last_error
+        self.status_code = _status_code_from(last_error) if last_error is not None else None
 
 
 def _is_network_error(exc: BaseException) -> bool:

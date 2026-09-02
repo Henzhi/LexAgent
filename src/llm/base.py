@@ -6,6 +6,9 @@ LLM 后端抽象基类。
 M1 新增：ToolCall / ToolCallResponse 数据结构 + chat_with_tools()（F2 工具调用）。
 D-M3-13：内部实现改为 LangChain 的 BaseChatModel，预算埋点移到
 `src/llm/budget_callback.py`（原 _budget_check / _budget_record 已删除）。
+2026-09-01 审查整改（B8）：`Message` 从死代码 `src/llm/client.py` 迁入
+（client.py 自建 ollama.Client、无预算埋点、无 Failover，误用即绕过 F14 与
+降级链路，删除中；Message 数据类是生产路径唯一仍在使用的东西）。
 """
 
 from __future__ import annotations
@@ -16,6 +19,34 @@ from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
+
+
+class Message:
+    """轻量消息封装（历史自 client.py 迁入，生产路径仍在使用）。
+
+    用途：会话历史 / 提示词构造时的消息载体，`to_dict()` 转 OpenAI 风格
+    dict（{"role", "content"}）。非 LangChain Message——跨 LLM 后端调用时
+    统一走 `to_langchain_messages()` 转换。
+    """
+
+    def __init__(self, role: str, content: str):
+        self.role = role
+        self.content = content
+
+    def to_dict(self) -> dict[str, str]:
+        return {"role": self.role, "content": self.content}
+
+    @staticmethod
+    def system(content: str) -> Message:
+        return Message("system", content)
+
+    @staticmethod
+    def user(content: str) -> Message:
+        return Message("user", content)
+
+    @staticmethod
+    def assistant(content: str) -> Message:
+        return Message("assistant", content)
 
 
 @dataclass

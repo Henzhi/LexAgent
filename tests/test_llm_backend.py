@@ -253,7 +253,7 @@ class TestAdapterHistoryNormalization:
 
     def test_normalize_llmmessage_list(self):
         from src.llm.adapter import _normalize_history
-        from src.llm.client import Message as LLMMessage
+        from src.llm.base import Message as LLMMessage
 
         history = [
             LLMMessage("user", "你好"),
@@ -282,7 +282,7 @@ class TestAdapterHistoryNormalization:
 
     def test_normalize_mixed_list(self):
         from src.llm.adapter import _normalize_history
-        from src.llm.client import Message as LLMMessage
+        from src.llm.base import Message as LLMMessage
 
         history = [
             LLMMessage("user", "问题"),
@@ -305,7 +305,7 @@ class TestAdapterHistoryNormalization:
     def test_adapter_passes_normalized_history(self):
         """端到端：适配器收到 LLMMessage 历史 → 后端收到 dict"""
         from src.llm.adapter import LLMAdapter
-        from src.llm.client import Message as LLMMessage
+        from src.llm.base import Message as LLMMessage
 
         # 用一个最小可调用的假后端
         class FakeBackend:

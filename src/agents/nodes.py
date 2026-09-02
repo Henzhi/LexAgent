@@ -13,7 +13,7 @@ from src.agents.state import AgentState
 from src.agents.prompts import VALIDATOR_PROMPT
 from src.rag.intent import classify_query_type, is_capability_query, get_capability_reply
 from src.rag.engine import RAG_PROMPT_TEMPLATE, CASUAL_SYSTEM_PROMPT
-from src.llm.client import Message as LLMMessage
+from src.llm.base import Message as LLMMessage
 from src.memory.token_budget import TokenBudget
 
 logger = logging.getLogger(__name__)

@@ -11,7 +11,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Iterator
 
-from src.llm.client import LawLLM, Message as LLMMessage
+from src.llm.base import LLMBackend, Message as LLMMessage
 from src.memory.token_budget import TokenBudget
 from .retriever import BaseRetriever, RetrievedDoc
 from .intent import needs_retrieval
@@ -132,7 +132,7 @@ class RAGEngine:
     def __init__(
         self,
         retriever: BaseRetriever,
-        llm: LawLLM,
+        llm: LLMBackend,  # B8：原为死代码 client.LawLLM 注解，实际注入的是 LLMBackend 后代
         top_k: int = 5,
         prompt_template: str = RAG_PROMPT_TEMPLATE,
         query_logger=None,  # QueryLogger | None

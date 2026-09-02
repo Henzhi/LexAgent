@@ -182,14 +182,16 @@ JUDGE_PROMPT = """你是一个法律问答质量评估员。请对比「标准�
 def judge_batch(items: list[dict], limit: int) -> list[dict]:
     """用 LLM 对随机抽样条目做质量评判"""
     import random
-    from src.llm.client import LawLLM, LLMConfig
+    from src.llm.factory import create_llm_backend
     from src.config import LLM_MODEL, LLM_BASE_URL
 
     sample = random.sample([i for i in items if i.get("model_output") and not i["model_output"].startswith("ERROR")],
                            min(limit, len(items)))
     print(f"LLM 评判: 抽样 {len(sample)} 条 ...")
 
-    llm = LawLLM(model=LLM_MODEL, base_url=LLM_BASE_URL, config=LLMConfig(temperature=0.0))
+    # B8（2026-09-01）：原用死代码 client.LawLLM（自建 ollama.Client、无预算/
+    # 降级），迁到统一后端工厂，语义等价（temperature 0.0 求稳定输出）
+    llm = create_llm_backend(backend_type="ollama", model=LLM_MODEL, base_url=LLM_BASE_URL, temperature=0.0)
     results = []
 
     for i, item in enumerate(sample):

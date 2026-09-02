@@ -42,7 +42,7 @@ from src.observability.stream_log import get_stream_log
 from src.rag.engine import needs_retrieval
 from src.rag.intent import sanitize_input, is_capability_query, get_capability_reply
 from src.rag.scenes import KIND_B, get_scene
-from src.llm.client import Message
+from src.llm.base import Message
 
 router = APIRouter()
 auth_router = APIRouter()

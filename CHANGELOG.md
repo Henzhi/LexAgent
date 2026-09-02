@@ -4,6 +4,26 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-02】审查整改收尾（B1–B8，9 commits，测试 784→810）**：按 `docs/代码审查报告-2026-09-01.md` 剩余未完成问题逐项 TDD 修复（每项红→绿→全量回归→独立 commit，新增守护测试均做过「回退转红」验证）。
+  - **fix（B1 降级盲区）**：重试耗尽此前抛裸 `RuntimeError` 丢状态码，failover 判定「非 4xx」不降级——持续 429/5xx 时整条链路失败，Ollama 兜底用不上。新增哨兵 `LLMRetryExhaustedError`（`retry.py`，携带 last_error 的 status_code），openai_backend 三处「已重试 N 次」改抛它，failover 视为主后端不可用 → 降级（裸 RuntimeError 仍不降级，防误判）。`tests/test_retry_exhausted_failover.py`（10 项）。
+  - **fix（B2 降级单向不可恢复）**：一次瞬时 401/403 就让进程永久切 Ollama，只能重启。failover 降级后进入冷却窗口（默认 300s，`recovery_cooldown_seconds`=0 禁用回切），冷却结束后**下一次真实请求兼作健康探测**——成功回切、失败继续降级并刷新冷却（不为探测单独发 ping，零额外 Token/RTT，探测失败由备用端无感应答）。⚠️ 复用真实请求做探测 = 探测期一次额外的主后端调用失败会被吞掉并走备用，属有意取舍。`graph.py::_react_enabled` 由构造期固化改**动态属性**（能力构造期定、降级实时求值），ReAct 图与固定管线图预构建、运行时切换——回切后 ReAct 能力自动回来。`tests/test_failover_recovery.py`（14 项）。
+  - **fix（B3 resume 跨用户重放）**：`/chat/stream/resume` 硬鉴权后仍可拿别人的 request_id 重放问答全文。`/chat/stream` 发起时登记创建者（`StreamEventLog.set_owner/get_owner`，Redis SETEX TTL 同事件日志，登记失败只告警不阻断），resume 校验「请求者==创建者」，不匹配 403；无归属登记的旧流放行保断线重连。`tests/test_stream_resume.py` +7 项。
+  - **fix（B4 工具参数零校验）**：`registry.execute()` 直接 `executor(**arguments)` 展开 LLM 生成的参数，schema 的枚举/类型约束只在发给模型时生效。带 `langchain_tool` 的工具执行前经 `tool_call_schema`（与发模型的同一份 pydantic 约束）`model_validate` 再调 executor，ValidationError 归一化为「参数校验失败」、幻觉参数白名单丢弃。⚠️ 不走 `langchain_tool.invoke()`：`BaseTool.run` 会把 ToolResult 拍平成字符串，破坏结构化结果契约。`tests/test_tools.py` +6 项。
+  - **fix（B5 前端资源泄漏）**：KnowledgeView 上传轮询 timer 仅存闭包（切路由后空转打到关标签页）→ timers Map 收集 + onBeforeUnmount 统一 clear（照搬 CrawlView）；ChatView 全文件无 onBeforeUnmount → 生成中跳路由时 abort SSE；`consumeSSE` 用 try/finally `reader.cancel()` 释放底层连接。
+  - **fix（B6 前端 401 静默失败）**：token 过期后路由守卫只校验存在性，用户停留页面但所有请求空 catch 静默失败。api 层响应侧统一收口：401 → logout + 回登录页（登录/注册端点豁免；router/auth store 动态 import 避循环依赖；1s 防抖防并发跳转）。
+  - **fix（B7 部署弱口令）**：docker-compose 三处明文 `lawrag123` → `${POSTGRES_PASSWORD:?required}`（未设置拒绝启动），**移除 db 5432 宿主映射**（db 仅需 compose 网络内被 app 访问）；`.env.example` 补变量与生产强口令提示。
+  - **refactor+chore（B8 死代码清除）**：删除 `src/llm/client.py`（392 行，自建 ollama.Client、无预算埋点、无 Failover——误用即绕过 F14 与降级链路）。`Message` 数据类迁入 `src/llm/base.py`，routes/nodes/engine 引用清零、engine `llm: LawLLM` 注解改 `LLMBackend`；`evaluation/scripts/eval_answer_quality.py` 的 judge_batch 迁统一 `create_llm_backend`；删除专属冒烟脚本 `evaluation/scripts/test_llm.py`。`tests/test_llm.py` 保留 Message 用例。
+  - 前端无测试框架，B5/B6 以 `vite build` 为门禁（46 模块）。
+
+- **【2026-09-01】代码审查整改（安全/资源管理，7 commits，测试 607→788）**：全库静态走查 + 实证验证（`docs/代码审查报告-2026-09-01.md`），先修高/中危：
+  - **fix（F14 熔断生效，高危）**：`LLMBudgetCallbackHandler.on_llm_start` 抛的 `BudgetExceededError` 被 LangChain 静默吞掉（callback `raise_error` 默认 False，实测 FakeListChatModel+抛异常 handler 照常返回）——请求内 18~20 次 LLM 调用无法中断，只有入口前置兜底。加类属性 `raise_error=True`。`tests/test_f14_budget_guard.py`（8 项）。
+  - **fix（路由鉴权，高危）**：`GET /api/knowledge/documents`、`GET /knowledge/documents/{id}/chunks` 无鉴权匿名可分页拉全库；`POST /api/rewrite` 无鉴权+无预算+无限流可匿名刷 LLM 绕过 F14；`/api/budget` 文档写需登录实为匿名可达（`get_current_user` 回退匿名）；resume/crawl/status/types 无鉴权。全部改硬鉴权 `require_registered_user`（7 路由），rewrite 另加预算前置检查 + IP 滑动窗口限流（20/min，429+Retry-After）；前端 resumeChat 补 authHeaders。守护测试 `tests/test_route_auth_guard.py` + 审计脚本 `scripts/audit_route_auth.py`。
+  - **fix（PG 连接泄漏）**：`_get_store()` 每请求新建 `PgvectorStore(_pg_conn)` 且全项目 `store.close()` 零调用 → 改模块级单例（双检锁），应用 shutdown finally 释放。`tests/test_store_singleton.py`（6 项，含 8 线程并发）。
+  - **fix（密钥日志）**：factory 日志不再输出 API Key 前 8 位，只打长度。
+  - **fix（后台任务 GC）**：`asyncio.create_task` 返回值被丢弃（只持弱引用，任务可能完成前被 GC）→ `_spawn_background()` + 模块级 `_BACKGROUND_TASKS` 强引用、完成即 discard；顺带修正 upload_document docstring 位置。
+  - **fix（pkulaw 参数加固）**：`top_k` 钳制 [1,50]、可变默认参数 `=[]` 改 None 兜底。
+  - **chore（死代码清理）**：retry.py 重复分支合并、`ToolCall.to_message` 删除。
+
 - **fix（B2 二阶段 NO-GO，诚实入库）**：法名质心加权端到端实测**双集恶化**（colloq148 73→66.9、multi100 92→85，boost 单调伤害），判定 NO-GO 已回退（`LAW_NAME_BOOST_*` 默认关闭，代码与实验链保留）。⭐ 根因：**信号同源**——质心向量与主检索同为 bge-m3 产物，加权不提供正交增益只注入噪声；置信门控亦无效（gold 在/不在 top3 的相似度分布重叠）。质心法保留其正确用途（法名推断本身 Recall@3 70.3%：用户提示/M4 plan 信号）；无法名查询的真实提升路径 = 正交信号（LLM 查询改写/同义词扩展，优先改写）。报告 §6 已更新：docs/B2-法名推断spike报告-2026-08-30.md。新增 `src/rag/law_centroids.py`/`law_name_boost.py` + `tests/test_law_name_boost.py`（9 项）。
 
 - **docs（B2 spike 报告）**：`docs/B2-法名推断spike报告-2026-08-30.md`——两个实现变体（描述文本法 vs 条文质心法）的实现方式、colloq148 实测对比（质心法 Recall@3 70.3% vs 51.4%）、归因分析（分布一致性/关键词有损/覆盖面）、**选型条文质心法**与转正形态（PG 小表 + 在线微秒点积）、端到端接入设计与双集验证判据。流程教训：两变体曾共用默认 tag 致报告覆盖（E-02），已独立 tag 留档。

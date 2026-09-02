@@ -53,9 +53,11 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 ## 关键架构约定（改代码前必读）
 
 1. **ReAct 循环走 LangGraph 图执行（D-M3-1）**：`agent_node` 调 `chat_with_tools` 决策 → `tools_node` 执行全部 tool_calls（并行）→ 回灌 → 循环；轮数上限 `AGENT_MAX_TOOL_TURNS=5`，达上限移除 tools 强制作答（REQ-UW4）。
-   - **两条路径都走编译图**，禁止手写 `while` 循环步进节点：`ask()` 用 `_graph`（完整管线，入口 intent），`stream()` 用 `_react_loop_graph`（纯循环子图，入口 agent，D-M3-2）。
+   - **两条路径都走编译图**，禁止手写 `while` 循环步进节点：`ask()` 用 `_graph`（完整管线，入口 intent），`stream()` 用 `_react_loop_graph`（纯循环子图，入口 agent，D-M3-2）。⚠️ `_graph` 是**动态属性**（D-0902-3）：ReAct 可用时返回含 agent/tools 的图，降级期间回落 `_fixed_graph`（固定管线）——别在构造期缓存 `_graph`。
    - 消息累积由 `AgentState.messages` 的 `Annotated[list, add_messages]` reducer 保证，循环终止由条件边 `route_after_agent` 保证。**手工合并状态（如 `dict.update()` 覆盖 messages）会破坏 tool 消息与 `assistant(tool_calls)` 的配对关系，导致 DeepSeek 400 并降级 Ollama**（历史 Bug，勿重蹈）。
-2. **回退路径**：`AGENT_REACT_ENABLED=false` 或主后端降级（Ollama）或 LLM 不支持工具 → 回退固定管线图（AC-7 向后兼容），**不许破坏**。
+2. **回退路径（动态，D-0902-3）**：`AGENT_REACT_ENABLED=false` 或 **当前**主后端降级（Ollama）或 LLM 不支持工具 → 回退固定管线图（AC-7 向后兼容）。`_react_enabled` 是动态属性：降级实时回落固定管线、failover 冷却探测回切后**同一实例自动拿回 ReAct 能力**，不许把「是否降级」在构造期固化。
+   - **Failover 降级判定（D-M1-3 + D-0902-1）**：4xx（认证/业务，408/429 除外）→ 降级；429/5xx 走 `retry.py` 重试**不降级**；重试耗尽抛 `LLMRetryExhaustedError`（哨兵，携带最后一次失败的状态码）→ **也降级**——持续 429/5xx 说明主后端当前不可用，有 Ollama 兜底就该用上。裸 `RuntimeError`（编程错误）仍不降级，别把内部 bug 误判成后端故障。
+   - **自动回切（D-0902-2）**：降级后进入冷却窗口（默认 300s，`recovery_cooldown_seconds`=0 禁用回切保持旧语义）；冷却结束后**下一次真实请求兼作健康探测**——成功自动回切、失败继续降级并刷新冷却。⚠️ 不要为探测单独发 ping（白白消耗一次真实 Token + RTT）。
 3. **工具失败不抛异常**：统一返回 `ToolResult(ok=False)`，summary 首词为错误标签（如"搜索不可用"），ReAct 循环继续。
 4. **来源优先级与融合（D-M3-4 / D-M3-5）**：内部库 `internal_kb` > 官方源 `legal_source` > 网络 `web`。网络结果仅作线索，作为法律依据必须回源官方库二次验证。
    - 三路证据由 `search/fusion.py::fuse_evidence()` 融合：去重 → 来源加权排序 → 打 `verification` 状态（`verified_internal` / `verified_official` / `third_party` / `web_unverified`）。
@@ -79,9 +81,10 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - LLM 层内部用 `BaseChatModel`（`ChatOpenAI` / `ChatOllama`），经 `.chat_model` 暴露。⚠️ `.model` **仍是模型名字符串**（历史字段，18 处调用点在读），两者别混淆。
    - **多轮决策调用必须走 `llm.chat_with_tools()` 公开入口**（D-M3-14）：重试（D-M1-3）与 Failover 4xx 降级都实现于该入口链路，直接 `chat_model.bind_tools().invoke()` 会同时绕过两层——D-M3-13 迁移时踩过（瞬时 429/5xx 一次抖动整轮失败、主后端 4xx 不再降级 Ollama），已由 `TestAgentNodeCallSemantics` 守回归。`chat_model` 保留给标准生态互操作（挂 callback、运维脚本直调）。
    - **新增 LLM 后端必须挂 `callbacks=budget_callbacks()`**：漏挂不会报错，只是预算不再计数，熔断形同虚设（测试 `test_callback_mounted_on_real_backends` 守着）。
-   - **重试仍用自研的 `is_retryable` + `wait_and_log`**（D-M1-3），实现于后端 `_chat_with_tools_impl` 等入口内部（LangChain 调用外层）；**不要**改用 `ChatOpenAI(max_retries=)`——它的判定标准与 D-M1-3（4xx 不重试交由 Failover 降级、429/5xx 重试）不一致。
-   - 消息转换统一走 `src/llm/base.py` 的 `to_langchain_messages()` / `tool_calls_from_langchain()`；后者已内置 D-M1-6 的空 name 过滤。
+   - **重试仍用自研的 `is_retryable` + `wait_and_log`**（D-M1-3），实现于后端 `_chat_with_tools_impl` 等入口内部（LangChain 调用外层）；**不要**改用 `ChatOpenAI(max_retries=)`——它的判定标准与 D-M1-3（4xx 不重试交由 Failover 降级、429/5xx 重试）不一致。重试**耗尽**统一抛 `LLMRetryExhaustedError`（`src/llm/retry.py`），**不要再改回裸 `RuntimeError`**——丢状态码会让 failover 判定「非 4xx」不降级（历史 Bug，D-0902-1）。
+   - 消息转换统一走 `src/llm/base.py` 的 `to_langchain_messages()` / `tool_calls_from_langchain()`；后者已内置 D-M1-6 的空 name 过滤。`Message` 数据类也在 `base.py`（D-0902-6 自 client.py 迁入），别再新建消息类。
    - LangChain 的 tool_calls 参数是**已解析的 dict**（不像 OpenAI 原始响应是 JSON 字符串），因此不存在 `parse_error`，工具的容错改为「参数校验失败」路径。
+   - **工具执行前强制 pydantic 校验（D-0902-5）**：`ToolRegistry.execute()` 对带 `langchain_tool` 的工具先经 `tool_call_schema`（与发模型的同一份约束）`model_validate` 再调 executor——LLM 生成的参数是**不可信输入**，schema 约束必须在运行时不打折扣（非法枚举/错类型 → `ok=False`「参数校验失败」，幻觉参数白名单丢弃）。⚠️ 校验用 schema 后**仍走 `spec.executor()`**，不要改走 `langchain_tool.invoke()`——`BaseTool.run` 会把 ToolResult 拍平成字符串、破坏结构化结果契约。
 
 11. **北大法宝 MCP 官方法律源（M3+ / F9 扩展，决策 D-PKULAW）**：接入 pkulaw.com 高权威源（法条原文 + 类案全文 + 核验 + 超链），优先级与现有官方源同级（`verified_official`）。
    - **懒加载 `mcp` SDK**：`src/search/pkulaw_mcp.py` 仅在真正调用时才 `import mcp`，未安装不影响模块导入与单测（单测一律用 `tests/fakes.FakePkulawClient`）。
@@ -93,7 +96,8 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - **预算熔断**：北大法宝按积分计费，新增 `KIND_PKULAW`（kind=`pkulaw`，`BUDGET_MAX_PKULAW_CALLS_PER_DAY` 默认 200），每次成功调用 `cost_budget` 先 check 后 record；超限工具层返回「法宝额度已用尽」、不阻断主链路（与 Tavily 同级降级语义）。
    - **配置只在 `.env`**：`PKULAW_MCP_URL` / `PKULAW_MCP_TOKEN`（聚合端点 Bearer），**严禁入库**（`.env` 已 gitignore）。
 
-12. **SSE 断线重连（D-M3-12，已实现）**：事件日志是重连补发的唯一真相源——`_bridge_sync_stream` 的 worker **先把事件写入 `StreamEventLog`（带 seq）再投递在线队列**，在线丢弃无妨。**只有主动取消（/chat/cancel）杀 worker**；被动断线（有日志）worker 继续跑完持续写日志，无 `request_id` 立即停。判定收敛在 `_on_exit_gone`，重放/跟进语义在 `resume_stream`。改桥接前必读：在线协程退出与 worker 生命周期是两条独立线，别把「杀 worker」挂在断开信号上（那正是本设计废除的旧行为）。
+12. **SSE 断线重连（D-M3-12 + D-0902-4，已实现）**：事件日志是重连补发的唯一真相源——`_bridge_sync_stream` 的 worker **先把事件写入 `StreamEventLog`（带 seq）再投递在线队列**，在线丢弃无妨。**只有主动取消（/chat/cancel）杀 worker**；被动断线（有日志）worker 继续跑完持续写日志，无 `request_id` 立即停。判定收敛在 `_on_exit_gone`，重放/跟进语义在 `resume_stream`。改桥接前必读：在线协程退出与 worker 生命周期是两条独立线，别把「杀 worker」挂在断开信号上（那正是本设计废除的旧行为）。
+    - **归属校验（D-0902-4）**：`/chat/stream` 发起时用软鉴权身份登记流创建者（`StreamEventLog.set_owner`，TTL 同事件日志），`/chat/stream/resume` 校验「请求者 == 创建者」，不匹配 403——resume 重放的是问答全文，登录用户之间也要隔离。**新增能产生可重放流的接口时，必须同步登记 owner**，否则重放内容对所有登录用户裸奔。
 
 ## 代码规范
 

@@ -112,7 +112,8 @@ temp_skill_extract/
 *.docx
 ~$*.docx
 
-docs/docs/
+# 姊妹仓库 Law-RAG-Agent 的历史/课程材料（错报进本仓库），统一归档在 archive/ 下、不入库
+archive/
 LawData/
 
 # ------------------------- 前端构建产物 -------------------------------------

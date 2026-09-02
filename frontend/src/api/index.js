@@ -82,35 +82,43 @@ export const getDocumentChunks = (docId, limit = 50, offset = 0) =>
 // Chat Stream
 // SSE 解析：按事件边界（\n\n）切分，半条事件留 buffer 与下一数据包拼接，
 // 避免 TCP 分包把一条 data: 事件截断导致 JSON.parse 失败。
+// finally 里 cancel reader：无论正常收完、事件损坏抛错，还是上层 abort /
+// 提前 break（async generator 的 return() 会触发 finally），都释放底层连接。
 async function* consumeSSE(resp) {
   const reader = resp.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
 
-    let sep
-    while ((sep = buffer.indexOf('\n\n')) !== -1) {
-      const raw = buffer.slice(0, sep)
-      buffer = buffer.slice(sep + 2)
-      for (const line of raw.split('\n')) {
-        if (!line.startsWith('data: ')) continue
-        const data = line.slice(6)
-        if (data === '[DONE]') return
-        try {
-          const msg = JSON.parse(data)
-          yield msg
-        } catch (e) {
-          // 单个事件 JSON 损坏（供应商截断 / 网关错误）：不再静默丢弃，
-          // 明确报错让上层提示用户，避免"内容凭空丢失"。
-          console.warn('[stream] malformed SSE event:', data)
-          throw new Error('服务端返回了不完整的数据，请重试')
+      let sep
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const raw = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        for (const line of raw.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6)
+          if (data === '[DONE]') return
+          try {
+            const msg = JSON.parse(data)
+            yield msg
+          } catch (e) {
+            // 单个事件 JSON 损坏（供应商截断 / 网关错误）：不再静默丢弃，
+            // 明确报错让上层提示用户，避免"内容凭空丢失"。
+            console.warn('[stream] malformed SSE event:', data)
+            throw new Error('服务端返回了不完整的数据，请重试')
+          }
         }
       }
     }
+  } finally {
+    try {
+      reader.cancel()
+    } catch { /* 连接已释放 */ }
   }
 }
 

@@ -518,8 +518,12 @@ async function handleUpload() {
   files.value = [] // 清空待传列表，任务队列保留展示
 }
 
+/** 上传轮询定时器集合（2026-09-01 审查整改：仅存闭包会在切路由后继续空转轮询） */
+const pollTimers = new Map()
+
 /** 轮询单个任务状态直到完成/失败 */
 function pollTask(t) {
+  if (t.task_id && pollTimers.has(t.task_id)) return
   const timer = setInterval(async () => {
     if (!t.task_id) return
     try {
@@ -528,11 +532,13 @@ function pollTask(t) {
       t.progress = s.progress || 0
       if (s.status === 'done' || s.status === 'failed') {
         clearInterval(timer)
+        pollTimers.delete(t.task_id)
         if (s.status === 'done') loadDocuments(true) // 全部完成后刷新一次
         else t.error = s.error || '处理失败'
       }
     } catch { /* ignore */ }
   }, 2000)
+  if (t.task_id) pollTimers.set(t.task_id, timer)
 }
 
 // --- 工具函数 ---
@@ -576,6 +582,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer)
+  // 上传仍在后台处理时切走路由：停掉轮询（每 2s 一次的 status 请求会一直打到关标签页）
+  pollTimers.forEach((t) => clearInterval(t))
+  pollTimers.clear()
   window.removeEventListener('scroll', onDocScroll)
 })
 </script>

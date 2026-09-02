@@ -138,7 +138,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
@@ -447,6 +447,12 @@ function doLogout() {
   auth.logout()
   router.replace('/login')
 }
+
+// 生成中跳路由：中止 SSE fetch，让 consumeSSE 的 finally 释放 reader
+// （2026-09-01 审查整改：否则 fetch 与 reader 继续存活，向已卸载组件写状态）
+onBeforeUnmount(() => {
+  abortController.value?.abort()
+})
 </script>
 
 <style scoped>

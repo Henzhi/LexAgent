@@ -9,12 +9,23 @@ ToolRegistry 管理全部 Agent 可调用工具：
 共享约定（架构师 §8）：
 - 工具执行失败不抛出，统一返回 ToolResult(ok=False)；
 - summary 首词为错误类型标签：未知工具 / 参数校验失败 / 工具执行失败。
+
+参数校验（2026-09-01 审查整改 B4）：
+- 工具参数是 LLM 生成的，等同不可信输入。schema 的类型/枚举约束只在
+  「发给模型」时生效还不够——执行前先经 LangChain 推导的 pydantic schema
+  （tool_call_schema，与发给 LLM 的同一份）校验，再调 executor；
+- 不直接用 `langchain_tool.invoke()`：BaseTool.run 会把非字符串返回值
+  str() 化，而 executor 返回的是 ToolResult 数据类，结构化结果会被拍平；
+  因此校验走 schema、执行仍走原 executor；
+- 无 langchain_tool 的老式 ToolSpec 保持 executor 直调路径（不回归）。
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any
+
+from pydantic import ValidationError
 
 from src.agents.tools.base import ToolExecutionError, ToolResult, ToolSpec
 
@@ -90,7 +101,10 @@ class ToolRegistry:
                 data={},
             )
         try:
-            result = spec.executor(**arguments)
+            if spec.langchain_tool is not None:
+                result = self._invoke_validated(spec, arguments)
+            else:
+                result = spec.executor(**arguments)
             if not isinstance(result, ToolResult):
                 # 防御：executor 返回非 ToolResult 时包装
                 result = ToolResult(
@@ -105,6 +119,15 @@ class ToolRegistry:
             if not result.tool:
                 result.tool = name
             return result
+        except ValidationError as e:
+            # B4：参数在执行前就被 pydantic 拦下（非法枚举/类型/缺必填）
+            return ToolResult(
+                tool=name,
+                call_id=call_id,
+                ok=False,
+                summary=f"参数校验失败: {e.errors()[0].get('msg', e)}",
+                data={},
+            )
         except ToolExecutionError as e:
             return ToolResult(
                 tool=name,
@@ -131,3 +154,19 @@ class ToolRegistry:
                 summary=f"工具执行失败: {e}",
                 data={},
             )
+
+    @staticmethod
+    def _invoke_validated(spec: ToolSpec, arguments: dict[str, Any]) -> ToolResult:
+        """经 pydantic schema 校验后执行 executor（B4）。
+
+        schema 取 `langchain_tool.tool_call_schema`（LLM 实际可传的参数集，
+        已排除 injected 参数），与发给模型的约束是同一份；`model_validate`
+        抛 ValidationError 由 execute() 统一归一化为「参数校验失败」。
+        额外字段（LLM 幻觉参数）按 pydantic 默认策略忽略——白名单语义。
+        """
+        lc_tool = spec.langchain_tool
+        schema = getattr(lc_tool, "tool_call_schema", None) or getattr(lc_tool, "args_schema", None)
+        if schema is None:  # 无 schema 可校验时退回直调，不做静默拦截
+            return spec.executor(**(arguments or {}))
+        validated = schema.model_validate(dict(arguments or {}))
+        return spec.executor(**validated.model_dump())

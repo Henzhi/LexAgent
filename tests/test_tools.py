@@ -6,6 +6,7 @@ M1 工具层测试：ToolSpec / ToolRegistry / retrieve_knowledge / web_search /
 
 from __future__ import annotations
 
+from typing import Annotated, Literal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -137,6 +138,97 @@ class TestToolRegistry:
         result = reg.execute("boom", {})
         assert not result.ok
         assert result.summary.startswith("工具执行失败")
+
+
+# ---------------------------------------------------------------------------
+# B4（2026-09-01 审查整改）：registry 执行工具前必须经 pydantic 校验
+#
+# 此前 execute() 直接 `spec.executor(**arguments)`——参数是 LLM 生成的，等同
+# 不可信输入，schema 里的类型/枚举约束只在「发给模型」时生效，运行时不强制：
+# 非法枚举值、错类型会被原样塞进工具内部。
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryValidatesArguments:
+    @pytest.fixture
+    def registry_and_spy(self):
+        """经 @tool 声明（带 langchain_tool → pydantic schema）的工具 + 调用间谍。"""
+        from src.agents.tools.base import tool
+
+        spy: list[tuple] = []
+
+        @tool(name="probe_tool")
+        def probe_tool(
+            query: Annotated[str, "检索关键词"],
+            kind: Annotated[Literal["law", "case"], "文档类型"] = "law",
+        ) -> ToolResult:
+            """探测工具（B4 参数校验测试）。"""
+            spy.append((query, kind))
+            return ToolResult(tool="probe_tool", call_id="", ok=True, summary=f"{query}/{kind}")
+
+        reg = ToolRegistry()
+        reg.register(probe_tool)
+        return reg, spy
+
+    def test_invalid_enum_rejected_before_executor(self, registry_and_spy):
+        """非法枚举值 → 参数校验失败，executor 根本不被调用。"""
+        reg, spy = registry_and_spy
+        result = reg.execute("probe_tool", {"query": "合同", "kind": "statute"})
+        assert not result.ok
+        assert result.summary.startswith("参数校验失败")
+        assert spy == [], "非法参数不允许穿透到工具内部"
+
+    def test_wrong_type_rejected(self, registry_and_spy):
+        """query 传 int（pydantic v2 不 coerce int→str）→ 参数校验失败。"""
+        reg, spy = registry_and_spy
+        result = reg.execute("probe_tool", {"query": 12345})
+        assert not result.ok
+        assert result.summary.startswith("参数校验失败")
+        assert spy == []
+
+    def test_missing_required_rejected(self, registry_and_spy):
+        """缺必填参数 → 参数校验失败，不触达 executor。"""
+        reg, spy = registry_and_spy
+        result = reg.execute("probe_tool", {"kind": "law"})
+        assert not result.ok
+        assert result.summary.startswith("参数校验失败")
+        assert spy == []
+
+    def test_extra_hallucinated_args_dropped(self, registry_and_spy):
+        """LLM 幻觉参数（schema 外字段）→ 白名单语义：丢弃，不透传、不报错。"""
+        reg, spy = registry_and_spy
+        result = reg.execute("probe_tool", {"query": "合同", "kind": "case", "injected": "rm -rf"})
+        assert result.ok
+        assert spy == [("合同", "case")]
+
+    def test_valid_args_execute_with_defaults(self, registry_and_spy):
+        """合法参数正常执行；未传的可选参数按声明默认值填充。"""
+        reg, spy = registry_and_spy
+        result = reg.execute("probe_tool", {"query": "合同"})
+        assert result.ok
+        assert result.summary == "合同/law"
+        assert spy == [("合同", "law")]
+
+    def test_legacy_spec_without_langchain_tool_still_executes(self):
+        """无 langchain_tool 的手工 ToolSpec（老式声明）保持 executor 直调路径。"""
+        reg = ToolRegistry()
+
+        def _exec(query: str, top_k: int = 5) -> ToolResult:
+            return ToolResult(tool="legacy", call_id="", ok=True, summary=f"{query}/{top_k}")
+
+        reg.register(
+            ToolSpec(
+                name="legacy",
+                description="",
+                parameters={"query": {"type": "string"}},
+                required=["query"],
+                executor=_exec,
+                langchain_tool=None,
+            )
+        )
+        result = reg.execute("legacy", {"query": "继承法"})
+        assert result.ok
+        assert result.summary == "继承法/5"
 
 
 # ---------------------------------------------------------------------------

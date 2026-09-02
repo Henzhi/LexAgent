@@ -100,31 +100,53 @@ class LawAgentGraph:
         nodes = make_nodes(llm, retriever, memory_manager, top_k, max_retries)
         self._nodes = nodes
 
-        # M1：ReAct 图开关 —— AGENT_REACT_ENABLED=true 且主后端未降级（Ollama 降级 → 固定管线）
-        # 且 LLM 具备工具调用能力（chat_with_tools）；任一不满足 → 固定管线（AC-7）
-        self._react_enabled = AGENT_REACT_ENABLED and not _backend_degraded(llm) and _supports_tools(llm)
-        if self._react_enabled:
+        # M1：ReAct 图开关 —— 能力（AGENT_REACT_ENABLED + LLM 支持工具）在构造期决定；
+        # 「主后端是否降级」在 B2 起改为动态求值（见 _react_enabled 属性）：
+        # 降级 → 固定管线，failover 冷却探测回切后自动拿回 ReAct 能力（AC-7 保留）。
+        self._react_capable = AGENT_REACT_ENABLED and _supports_tools(llm)
+        # 固定管线图始终构建：降级时使用，回切后不再重建（图结构只依赖节点闭包）
+        self._fixed_graph = self._build_graph(nodes)
+        if self._react_capable:
             self._react = make_react_nodes(
                 llm,
                 self.registry,
                 max_tool_turns=AGENT_MAX_TOOL_TURNS,
             )
-            # 完整管线图（ask() 用，含 intent/memory/validate）
-            self._graph = self._build_react_graph(nodes, self._react)
+            # 完整 ReAct 管线图（ask() 用，含 intent/memory/validate）
+            self._react_graph = self._build_react_graph(nodes, self._react)
             # 纯 ReAct 循环子图（stream() 用，入口直接是 agent）
             self._react_loop_graph = self._build_react_loop_graph(self._react)
-            logger.info("Agent 图构建: ReAct 工具调用模式 (max_tool_turns=%d)", AGENT_MAX_TOOL_TURNS)
         else:
             self._react = None
+            self._react_graph = None
             self._react_loop_graph = None
-            self._graph = self._build_graph(nodes)
-            if not AGENT_REACT_ENABLED:
-                reason = "AGENT_REACT_ENABLED=false"
-            elif _backend_degraded(llm):
-                reason = "主后端已降级（Ollama）"
-            else:
-                reason = "LLM 不具备工具调用能力"
-            logger.info("Agent 图构建: 固定管线模式 (%s)", reason)
+
+        if self._react_capable and not _backend_degraded(llm):
+            logger.info("Agent 图构建: ReAct 工具调用模式 (max_tool_turns=%d)", AGENT_MAX_TOOL_TURNS)
+        elif not AGENT_REACT_ENABLED:
+            logger.info("Agent 图构建: 固定管线模式 (AGENT_REACT_ENABLED=false)")
+        elif not _supports_tools(llm):
+            logger.info("Agent 图构建: 固定管线模式 (LLM 不具备工具调用能力)")
+        else:
+            logger.info("Agent 图构建: 固定管线模式 (主后端已降级 Ollama，failover 冷却后自动回切)")
+
+    # ------------------------------------------------------------------
+    # 运行时模式选择（B2：降级状态动态求值）
+    # ------------------------------------------------------------------
+
+    @property
+    def _react_enabled(self) -> bool:
+        """ReAct 是否可用：能力构造期固定，降级状态每次访问实时求值。
+
+        此前在构造期固化——哪怕 failover 后来健康探测回切，ReAct 能力也回不来。
+        现在降级即回落固定管线（AC-7），恢复即自动回到 ReAct 图。
+        """
+        return self._react_capable and not _backend_degraded(self.llm)
+
+    @property
+    def _graph(self) -> StateGraph:
+        """完整管线图（ask() 用）：ReAct 可用时含 agent/tools 循环，降级时固定管线。"""
+        return self._react_graph if self._react_enabled else self._fixed_graph
 
     # ------------------------------------------------------------------
     # 图构建

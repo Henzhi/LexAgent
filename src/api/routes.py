@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, Response
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, Response, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
@@ -237,6 +237,94 @@ def budget_status(_user: str = Depends(require_registered_user)):
     except Exception as e:
         logger.warning(f"预算状态查询失败: {e}")
         return {"enabled": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# F15 用量计费面板 API（需登录；全部走 usage_store，口径统一）
+# ---------------------------------------------------------------------------
+
+
+@router.get("/usage/summary")
+def usage_summary(
+    days: int = Query(7, ge=1, le=90),
+    _user: str = Depends(require_registered_user),
+):
+    """按日聚合：近 N 天 {day, cost_cny, llm_calls, tavily_calls, pkulaw_calls,
+    tokens_in, tokens_out, est_cost}（无数据补 0，趋势图连续）。"""
+    from src.observability.usage_store import read_usage_summary
+
+    try:
+        return {"days": max(1, min(days, 90)), "items": read_usage_summary(days)}
+    except Exception as e:
+        logger.warning(f"usage summary 查询失败: {e}")
+        return {"days": max(1, min(days, 90)), "items": [], "error": str(e)}
+
+
+@router.get("/usage/detail")
+def usage_detail(
+    day: str | None = Query(None, description="YYYY-MM-DD，缺省今天"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    _user: str = Depends(require_registered_user),
+):
+    """最近调用明细分页（默认当天、按 ts 倒序）。"""
+    from src.observability.usage_store import read_usage_detail
+
+    try:
+        return {"day": day, "items": read_usage_detail(day=day, limit=limit, offset=offset)}
+    except Exception as e:
+        logger.warning(f"usage detail 查询失败: {e}")
+        return {"day": day, "items": [], "error": str(e)}
+
+
+@router.get("/usage/breakdown")
+def usage_breakdown(
+    days: int = Query(7, ge=1, le=90),
+    group: str = Query("source", pattern="^(source|model|tool)$"),
+    _user: str = Depends(require_registered_user),
+):
+    """归因聚合（饼图/条形数据源）：按 source / model / tool 分组。"""
+    from src.observability.usage_store import read_usage_breakdown
+
+    try:
+        return {"group": group, "items": read_usage_breakdown(days, group=group)}
+    except Exception as e:
+        logger.warning(f"usage breakdown 查询失败: {e}")
+        return {"group": group, "items": [], "error": str(e)}
+
+
+@router.get("/usage/pricing")
+def usage_pricing(_user: str = Depends(require_registered_user)):
+    """读价格表（含默认值说明，覆盖值标 source=db）。"""
+    from src.observability.usage_store import list_pricing
+
+    try:
+        return {"items": list_pricing()}
+    except Exception as e:
+        logger.warning(f"价格表读取失败: {e}")
+        return {"items": [], "error": str(e)}
+
+
+@router.put("/usage/pricing")
+def usage_pricing_update(
+    body: dict,
+    _user: str = Depends(require_registered_user),
+):
+    """写价格表覆盖值（body: {items: [{key, value}]}）→ 立即生效。
+
+    只允许更新 config 已知键；未知键静默忽略（防脏数据）。
+    """
+    from src.observability.usage_store import upsert_pricing
+
+    items = body.get("items") if isinstance(body, dict) else None
+    if not isinstance(items, list):
+        raise HTTPException(status_code=422, detail="body.items 必须是 [{key, value}] 列表")
+    try:
+        n = upsert_pricing(items)
+        return {"updated": n}
+    except Exception as e:
+        logger.warning(f"价格表写入失败: {e}")
+        raise HTTPException(status_code=500, detail=f"价格表写入失败: {e}")
 
 
 @router.get("/health", response_model=HealthResponse)

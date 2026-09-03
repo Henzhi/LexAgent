@@ -115,6 +115,15 @@ async def lifespan(app: FastAPI):
 
     # 后台任务：过期 FAQ 缓存 + 过期对话记忆定时清理
     cleanup_task = asyncio.create_task(_cleanup_loop())
+
+    # F15：价格表首启灌默认值（幂等、失败静默——观测组件故障不拖垮启动）
+    try:
+        from src.observability.usage_store import ensure_pricing_defaults
+
+        await asyncio.to_thread(ensure_pricing_defaults)
+    except Exception as e:  # pragma: no cover - 防御
+        logger.warning(f"价格表灌入默认值失败（忽略，运行期走 config 默认）: {e}")
+
     try:
         yield
     finally:

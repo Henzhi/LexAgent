@@ -37,6 +37,12 @@ MUST_BE_HARD = {
     ("GET", "/api/chat/stream/resume"): "匿名可枚举 request_id 重放他人会话流",
     ("GET", "/api/crawl/status/{task_id}"): "与 POST /api/crawl 同一管理链路，口径须一致",
     ("GET", "/api/crawl/types"): "与 POST /api/crawl 同一管理链路，口径须一致",
+    # F15 用量计费面板：暴露成本/用量/价格配置，运维数据不应匿名可读
+    ("GET", "/api/usage/summary"): "暴露每日成本与用量，运维数据",
+    ("GET", "/api/usage/detail"): "暴露调用明细（query/token），运维数据",
+    ("GET", "/api/usage/breakdown"): "暴露归因聚合，运维数据",
+    ("GET", "/api/usage/pricing"): "暴露价格配置，运维数据",
+    ("PUT", "/api/usage/pricing"): "可改价格表直接影响计费口径，必须登录",
 }
 
 

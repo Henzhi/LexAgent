@@ -1,12 +1,12 @@
 """
 QueryLogger（检索质量日志）单元测试。
 
-验证 v0.6 关键行为：
-  1. 共享连接（多次写入只 connect 一次）
+验证 v0.7（连接池整改）关键行为：
+  1. 每次落库从池借用连接（不再常驻「单连接+锁」，并发写入不被串行化）
   2. trace() 上下文管理器自动兜底落库（未 finalize 也保存）
   3. finalize 幂等
   4. start() 手动模式（供生成器路径使用）
-  5. 断线自动重连
+  5. 写失败 debug 吞掉——观测组件故障绝不拖垮主链路
 """
 
 from __future__ import annotations
@@ -33,8 +33,9 @@ def _make_qlog(mock_connect):
     return qlog, fake_conn
 
 
-class TestSharedConnection:
-    def test_connects_once_for_multiple_writes(self):
+class TestPerWriteBorrow:
+    def test_borrows_connection_per_write(self):
+        """连接池整改后：每次落库都从池借连接（测试期池关闭→每次直连）。"""
         with patch("psycopg2.connect") as mock_connect:
             qlog, _ = _fake_qlog_with(mock_connect)
 
@@ -42,7 +43,10 @@ class TestSharedConnection:
                 t = qlog.start("u1", f"问题{i}")
                 t.finalize(retrieved_count=1)
 
-            mock_connect.assert_called_once()  # 共享连接:只连一次
+            # 3 次写入 → 3 次独立借连接（v0.7 语义；v0.6 是共享连接只连一次）
+            assert mock_connect.call_count == 3
+            assert qlog._conn_string  # 兼容字段仍存在
+            assert hasattr(qlog, "close")  # close 保留为 no-op 兼容
 
 
 class TestTraceContext:
@@ -113,20 +117,23 @@ class TestManualStart:
             assert fake_conn.cursor.return_value.execute.called
 
 
-class TestConnectionRecovery:
-    def test_reconnect_when_closed(self):
+class TestWriteFailureSwallowed:
+    def test_db_error_does_not_propagate(self):
+        """落库失败只 debug 日志，绝不向上抛——观测组件故障不拖垮主链路。"""
         with patch("psycopg2.connect") as mock_connect:
-            qlog, fake_conn = _fake_qlog_with(mock_connect)
-
-            # 模拟连接断开
-            fake_conn.closed = True
-            mock_connect.reset_mock()
+            qlog, _ = _fake_qlog_with(mock_connect)
+            # 让 execute 抛异常（模拟 PG 抖动）
+            mock_connect.return_value.cursor.return_value.execute.side_effect = RuntimeError("pg down")
 
             t = qlog.start("u1", "q")
-            t.finalize(retrieved_count=1)
+            t.finalize(retrieved_count=1)  # 不应抛
+            assert t._finalized is True
 
-            # 断线后应重建连接
-            assert mock_connect.called
+    def test_no_connect_when_query_logger_created(self):
+        """构造不再建连（连接改由池在落库时才借）——惰性 & 无泄漏。"""
+        with patch("psycopg2.connect") as mock_connect:
+            qlog, _ = _fake_qlog_with(mock_connect)
+            assert mock_connect.call_count == 0  # 构造零连接
 
 
 def _fake_qlog_with(mock_connect):

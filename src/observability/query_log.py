@@ -1,20 +1,19 @@
 """
-可观测性 — 检索质量日志 (v0.6)。
+可观测性 — 检索质量日志。
 
 每次查询记录完整的性能指标和检索链路信息到 query_logs 表。
 用于：性能瓶颈分析、检索质量追踪、高频问题发现、成本核算。
 
-v0.6 改进：
-  - 共享连接：不再每次写入新建 PG 连接（原 v0.5 每次 connect/close）
-  - 断线自动重连：连接失效时自动重建
-  - 线程安全：连接加锁，支持 Agent 路径并发调用
-  - finalize 幂等：可多次调用（提前 return 分支也能记录正确字段）
+v0.7（2026-09-03 连接池整改）：
+  - 不再持有常驻连接：每次落库从进程级连接池借用（`src.db.pool.db_connection`），
+    写完自动归还——并发写入不再被「单连接 + 锁」串行化，也无需断线重连逻辑
+    （连接失效归还后由池丢弃，下次借新连接）
+  - 写失败仍是 debug 级日志吞掉——观测组件故障绝不拖垮主链路
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class QueryLogger:
-    """检索质量日志记录器（共享连接 + 断线重连 + 线程安全）
+    """检索质量日志记录器（连接池借用，无状态连接管理）
 
     用法:
         qlog = QueryLogger(conn_string)
@@ -42,29 +41,15 @@ class QueryLogger:
     """
 
     def __init__(self, conn_string: str):
+        # conn_string 保留仅为兼容旧构造签名；实际连接统一走池（池不可用退化直连）
         self._conn_string = conn_string
-        self._conn = None
-        self._lock = threading.Lock()
-        self._connect()
 
     # ------------------------------------------------------------------
-    # 连接管理
+    # 兼容 API（旧版持有常驻连接；现无连接可关，close 保留为 no-op）
     # ------------------------------------------------------------------
-
-    def _connect(self):
-        import psycopg2
-
-        self._conn = psycopg2.connect(self._conn_string)
-
-    def _ensure_connection(self):
-        if self._conn is None or self._conn.closed:
-            self._connect()
 
     def close(self):
-        with self._lock:
-            if self._conn is not None and not self._conn.closed:
-                self._conn.close()
-            self._conn = None
+        return None
 
     # ------------------------------------------------------------------
     # 追踪入口
@@ -140,11 +125,12 @@ class _QueryTrace:
 
         total_latency = int((time.time() - self._start_time) * 1000)
 
-        qlog = self._qlog
-        with qlog._lock:
-            try:
-                qlog._ensure_connection()
-                conn = qlog._conn
+        # 每次落库从连接池借用一条连接（写完自动归还）；并发写入互不阻塞，
+        # 连接失效由池处理。任何异常 debug 吞掉——观测故障不拖垮主链路。
+        try:
+            from src.db.pool import db_connection
+
+            with db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "INSERT INTO query_logs "
@@ -166,9 +152,5 @@ class _QueryTrace:
                         ),
                     )
                 conn.commit()
-            except Exception as e:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                logger.debug(f"QueryLogger 写入失败: {e}")
+        except Exception as e:
+            logger.debug(f"QueryLogger 写入失败: {e}")

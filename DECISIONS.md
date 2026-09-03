@@ -106,3 +106,15 @@
 | D-0902-5 | 工具执行前必须经 pydantic 校验：`registry.execute()` 对带 `langchain_tool` 的工具先经 `tool_call_schema`（与发模型的同一份约束）`model_validate` 再调 executor | 补强 D-M3-3/D-M3-13 工具层（原 schema 只在发模型时生效，运行时不强制；工具靠内部自发容错） | 工具参数是 LLM 生成的，等同不可信输入。**不走 `langchain_tool.invoke()`**：`BaseTool.run` 会把非字符串返回值 str() 化，executor 返回的 ToolResult 会被拍平——校验用 schema、执行仍走原 executor |
 | D-0902-6 | **删除 `src/llm/client.py`**（392 行死代码）：`Message` 迁入 `src/llm/base.py`，`LawLLM`/`LLMConfig`/`create_llm` 全删；engine 构造注解 `LawLLM` 改 `LLMBackend`；评测脚本 judge 层迁 `create_llm_backend` | 在 D-M3-13 后补完（client.py 自建 ollama.Client，与 D-M3-13「LLM 层走 LangChain 生态」重复且**无预算埋点、无 Failover**，误用即同时绕过 F14 与降级链路） | 留着是随时可能被误用的「绕过横切语义」入口（D-M3-14 教训同源）；生产路径真正在用的只有 `Message` 一个数据类，迁走后引用清零 |
 | D-0902-7 | docker-compose 数据库密码**必填化 + 移除 5432 宿主映射** | 修正 D-R6（原 `lawrag123` 明文写死在 compose） | 弱口令 + 端口暴露 = 局域网内可直连无防护 PG。compose 用 `${POSTGRES_PASSWORD:?required}` 无默认值（未设置拒绝启动），db 只在 compose 网络内被 app 访问 |
+
+## 代码审查整改决策（2026-09-03，中长期项收尾）
+
+> 背景：`docs/代码审查报告-2026-09-01.md` 中期/长期清单收尾（预算 TOCTOU / 连接池 / 降级可观测 / Token Cookie / 前端性能）。纯实现项（rAF 节流、会话增量 append、markdown-it 渲染器、Vite 升级、CI 前端 job）见 CHANGELOG，此表只记录**改变或补强既有设计语义**的决策。
+
+| # | 决策 | 与既有决策的关系 | 原因 |
+| :--- | :--- | :--- | :--- |
+| D-0903-1 | 预算计数**原子预占**：`reserve()`/`release()`/`check_and_reserve()` 取代「只读 check + 事后 record」，Redis 走 Lua 脚本（INCRBY→比较→超限回滚），失败归还；`check()` 保留只读语义仅供入口前置拦截 | 补强 D-M3-6/7/8（原 check 与 record 两次往返存在 TOCTOU，并发 N 流把日限额放大到 limit+N-1） | ① 拦截点必须移到**花钱之前**——record 时才发现超限，钱已花出，抛异常截断生成中的回答或默默突破限额两头都不对；② Lua 失败退化**非原子 Redis 路径**而非进程内计数：reserve 写内存、used() 读 Redis 会两边不一致让熔断彻底失效，宁失并发安全不失存储一致性；③ enforce=false 观察期照实计数不拦截 |
+| D-0903-2 | DB 连接统一走**进程级连接池**（`src/db/pool.py`）：ThreadedConnectionPool 惰性创建 + fail-open 退化直连；6 个 store 类（pgvector_store/conversation_store/faq_cache/memory.conversation/query_log/retriever）全部改「**每操作借用**」，删光单连接 + threading.Lock + 手写重连 | 推翻 store 层隐含的「常驻单连接 + 锁串行化」模型（D-R6 部署形态下 psycopg2 连接非线程安全，此前用锁把所有 DB 操作串行化） | 锁让并发读写互相排队——检索热路径也被锁住，是审查点名的最大并发瓶颈。借用模型：并发各用各的连接互不阻塞、失效连接由池回收、无需手写重连。**conn 必须是方法内局部变量**——挂实例上会在并发时被互相覆盖（那正是旧锁要防的坑）。建表 DDL 惰性执行一次（加锁幂等） |
+| D-0903-3 | `VectorAwarePool` **子类化** ThreadedConnectionPool 覆写 `_connect()`，池内每条连接自动 register_vector | 修正 D-0903-2 前置（组合包装裸池时 register_vector 只覆盖直连兜底路径，池自行创建（minconn + 惰性扩展）的连接不注册） | pgvector 适配是按连接生效的；池连接不注册时向量 store 检索 embedding 以字符串返回——fake 测试静默通过、真实 PG 上类型错乱。psycopg2.pool 的 `_connect(key=None)` 是所有连接的唯一起点 |
+| D-0903-4 | `/api/health` 暴露降级态：`degraded`/`degraded_reason`/`active_backend`/`budget_exceeded`；FailoverLLMBackend 记录降级原因（创建期/运行期/回切清空） | 补强 D-0902-2（回切已实现但「是否在降级」无任何对外信号，运维不知道服务跑在 Ollama 上） | 降级可观测是运维前提；取值一律 fail-open——健康检查挂掉会被负载均衡摘掉所有实例，信息缺失远好于 503 |
+| D-0903-5 | Token 鉴权从 localStorage **迁移 HttpOnly Cookie**：login/register 同时 Set-Cookie（HttpOnly + SameSite=Strict，30 天，Secure 由 `COOKIE_SECURE` 控制）；`get_current_user` 先 Cookie 后 Bearer（兼容通道保留）；新增无鉴权幂等 `POST /auth/logout` 清 Cookie | 推翻「Token 明文存 localStorage」的前端实现（前端 api/index.js 与 auth store 各读一次，任何 XSS 可直接窃取） | ① HttpOnly = JS 不可读，XSS 拿不到凭据；② SameSite=Strict 跨站不带 Cookie → CSRF 基本失效；③ Bearer 保留供 CLI/curl/第三方（响应体仍回 token）；④ HttpOnly Cookie 无法由 JS 删除，必须有服务端登出端点，且登出不能要求先登录（凭据失效后也要能清残留） |

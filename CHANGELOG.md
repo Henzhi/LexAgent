@@ -4,6 +4,11 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-03 下午】store 类接池收官（5 commits，测试 868→870）**：报告中期项 4（连接池）从「部分」升为全部完成。
+  - **fix（池向量注册前置）**：`VectorAwarePool` 组合包装裸池时，register_vector 只覆盖直连路径，池自行创建的连接不注册——向量 store 接池必然类型错乱。改**子类化 ThreadedConnectionPool** 覆写 `_connect()`（池内所有连接的唯一起点），直连兜底同样补注册。
+  - **perf（6 个 store 类逐一接池）**：`QueryLogger`/`ConversationMemoryManager`/`FAQCache`/`ConversationStore`/`PgvectorStore`/`PgvectorRetriever` 全部从「常驻单连接 + threading.Lock + 手写重连」改为**每操作从 `db_connection()` 借连接**。要点：conn 是方法内局部变量（挂实例会在并发时互相覆盖）；建表 DDL 惰性执行一次（加锁幂等）；save_memory 的 LLM 摘要生成不占连接；`ArticleRouter` 不再挖 store 私有 `_lock/_conn`。测试改拦模块级 `db_connection`（DB-free，CI 无 PG 可跑）。全仓无裸 `psycopg2.connect`。
+  - **docs**：`.env.example` 补 `PG_POOL_MINCONN/MAXCONN` 与 `COOKIE_SECURE`；AGENTS.md 同步测试环境说明；审查报告长尾标注改为已收官。
+
 - **【2026-09-03】审查报告中长期项收尾（9 commits，测试 810→868）**：按 `docs/代码审查报告-2026-09-01.md` 中期/长期清单逐项修复（每项红→绿→全量回归→独立 commit）。
   - **fix（测试环境隔离）**：conftest autouse 清空 `TAVILY_API_KEY`（patch 使用点 `src.agents.tools` 而非 src.config——模块级导入副本改不动）——修复 2 个随本机 .env 漂移的用例（`test_tool_result_failure_marked` / `test_parallel_tool_calls_sse_events`，基线 810→808 的 2 个失败）。
   - **fix（F14 预算计数 TOCTOU）**：check(GET) 与 record(INCRBY) 两次往返存在并发窗口，日限额被放大到 limit+(并发-1)。改**预占模型**：`reserve()`/`release()`/`check_and_reserve()`，Redis 走 Lua 原子脚本（INCRBY→比较→超限回滚），失败归还；`check()` 保持只读（入口前置拦截用）。Lua 失败退化**非原子 Redis 路径**而非进程内计数——否则 reserve 写内存、used() 读 Redis 两边不一致会让熔断彻底失效。enforce=false 观察期照实计数不拦截。三处埋点（LLM callback / Tavily / pkulaw）预占后不再重复 record（否则日限额腰斩）、失败路径 release。`tests/test_budget_atomic.py`（20 项，含 40 线程并发断言成功数恰等于 limit）。

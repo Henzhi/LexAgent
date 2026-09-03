@@ -44,7 +44,7 @@ docs/                # PRD、架构设计、ADR、评测报告
 
 ```bash
 uv sync                                     # 安装依赖
-uv run pytest tests/ -x -q                  # 全量测试（注意：需 TAVILY_API_KEY= 清空，见下）
+uv run pytest tests/ -x -q                  # 全量测试（conftest 已自动清空 TAVILY_API_KEY，2026-09-03）
 uv run uvicorn src.api.main:app --reload    # 启动后端
 uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/   # lint + 格式门禁（CI 同款，提交前必跑）
 docker compose up -d                        # pgvector / redis（本机已有旧容器 lawrag-db/lawrag-redis 时直接复用）
@@ -135,7 +135,7 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 
 ## 完成标准（Definition of Done）
 
-1. 单测覆盖新逻辑，`uv run pytest tests/ -q` 全绿（环境注意：`TAVILY_API_KEY=` 清空；本机 `CODEBUDDY_MCP_CONFIG` 会导致部分 @patch.dict 测试 teardown 报错，需 `env -u CODEBUDDY_MCP_CONFIG`）
+1. 单测覆盖新逻辑，`uv run pytest tests/ -q` 全绿（环境注意：conftest 已自动清空 `TAVILY_API_KEY` 与强制关闭连接池——db-mock 测试不再随本机 .env/常驻 PG 漂移，2026-09-03；本机 `CODEBUDDY_MCP_CONFIG` 会导致部分 @patch.dict 测试 teardown 报错，需 `env -u CODEBUDDY_MCP_CONFIG`）
 2. 向后兼容：固定管线与旧 SSE 事件流不破坏
 3. 更新 `CHANGELOG.md`；有架构/取舍决策则更新 `DECISIONS.md`
 4. 涉及接口/行为变更时同步 `README.md` 与本文档

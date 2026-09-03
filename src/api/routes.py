@@ -419,7 +419,19 @@ def chat(req: ChatRequest):
     try:
         if AGENT_ENABLED:
             agent = get_agent()
-            result = agent.ask(safe_query, history=_sanitize_history(req.history), session_id=req.session_id)
+            # 用量上下文（F15 修正）：同步路径在 FastAPI 线程池线程执行，LLM/工具
+            # 调用同线程，set/clear 即可把 request_id 带到 usage_logs
+            from src.observability.usage_context import clear_usage_ctx, set_usage_ctx
+
+            set_usage_ctx(request_id=req.request_id, session_id=req.session_id or "")
+            try:
+                result = agent.ask(
+                    safe_query,
+                    history=_sanitize_history(req.history),
+                    session_id=req.session_id,
+                )
+            finally:
+                clear_usage_ctx()
             elapsed = (time.perf_counter() - t_start) * 1000
             # F12 v1（D-M3-9a）：B 类场景需人工确认 → 返回确认载荷，不给 answer
             confirmation = result.get("confirmation_required")
@@ -921,14 +933,22 @@ def _build_stream_response(
         agent = get_agent()
 
         def _agent_gen() -> Iterator[dict]:
-            # SSE 桥接已通用透传任意 dict 事件；此处仅对 tool_result 失败做日志埋点（F4）
-            for event in agent.stream(query, history=history, session_id=session_id):
-                if event.get("type") == "tool_result" and not event.get("ok", True):
-                    perf_logger.warning(
-                        f"[stream] tool_result failed: tool={event.get('tool')} "
-                        f"summary={event.get('summary')} turn={event.get('turn')}"
-                    )
-                yield event
+            # 用量上下文（F15 修正）：整条流的 LLM/工具调用都在本 worker 线程串行
+            # 执行，入口 set、finally clear——usage_logs 得以按 request_id 聚合
+            from src.observability.usage_context import clear_usage_ctx, set_usage_ctx
+
+            set_usage_ctx(request_id=request_id, session_id=session_id, user_id=user_id)
+            try:
+                # SSE 桥接已通用透传任意 dict 事件；此处仅对 tool_result 失败做日志埋点（F4）
+                for event in agent.stream(query, history=history, session_id=session_id):
+                    if event.get("type") == "tool_result" and not event.get("ok", True):
+                        perf_logger.warning(
+                            f"[stream] tool_result failed: tool={event.get('tool')} "
+                            f"summary={event.get('summary')} turn={event.get('turn')}"
+                        )
+                    yield event
+            finally:
+                clear_usage_ctx()
 
         gen_factory: Callable[[], Iterator[dict]] = _agent_gen
         mode = "agent"
@@ -937,7 +957,13 @@ def _build_stream_response(
         llm_history = _dicts_to_messages(history)
 
         def _rag_gen() -> Iterator[dict]:
-            return _iter_engine_stream(engine, query, llm_history)
+            from src.observability.usage_context import clear_usage_ctx, set_usage_ctx
+
+            set_usage_ctx(request_id=request_id, session_id=session_id, user_id=user_id)
+            try:
+                yield from _iter_engine_stream(engine, query, llm_history)
+            finally:
+                clear_usage_ctx()
 
         gen_factory = _rag_gen
         mode = "rag"

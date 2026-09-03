@@ -249,6 +249,9 @@ class TestConfirmEndpoint:
         reset_confirmation_store()
         # 确认后续跑用假 Agent，避免打真实 DeepSeek/Ollama
         monkeypatch.setattr("src.api.routes.get_agent", lambda: _FakeAgent())
+        # CI 兜底：routes.AGENT_ENABLED 是 import 期快照，显式钉为 True →
+        # _build_stream_response 一定走 Agent 分支（假 Agent），不会误触 engine/PG
+        monkeypatch.setattr("src.api.routes.AGENT_ENABLED", True)
         # 预算熔断前置检查置空：避免本机 .env 的 BUDGET_* 让测试结果漂移
         monkeypatch.setattr("src.api.routes._budget_block_message", lambda: "")
         yield

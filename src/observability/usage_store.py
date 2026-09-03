@@ -21,6 +21,10 @@ import logging
 import threading
 from datetime import date, timedelta
 
+# 请求级上下文（F15 修正）：request_id/session_id/user_id 由请求线程注入，
+# 埋点侧未显式传参时在此兜底填充（见 usage_context.py）
+from src.observability.usage_context import resolve_ctx
+
 logger = logging.getLogger(__name__)
 
 # 来源常量（与 cost_budget 对齐）
@@ -133,6 +137,9 @@ def record_usage(
     """
     if source not in _SOURCES:
         return
+    # F15 修正：请求线程注入的 ctx 作为兜底（显式传参优先），让 usage_logs
+    # 能按 request_id/session_id 聚合出「一次提问」的完整成本
+    request_id, session_id, user_id = resolve_ctx(request_id=request_id, session_id=session_id, user_id=user_id)
     day = date.today()
     total_tokens = int(prompt_tokens or 0) + int(completion_tokens or 0)
     try:

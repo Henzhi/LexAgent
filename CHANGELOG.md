@@ -4,6 +4,13 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-03】fix(用量口径/CI/切页回显加固)**：
+  - **fix(usage_logs 无法按请求聚合，D-0903 续)**：LLM/Tavily/pkulaw 埋点落库时 request_id/session_id 全空（ChatModel 长驻单例、callback 构造时无请求上下文）。新增 `src/observability/usage_context.py`（threading.local 请求级上下文）——SSE 流在桥接 worker 线程、同步 /api/chat 在线程池线程都是「一线程一请求」，入口 `set_usage_ctx` / finally `clear`；`usage_store.record_usage` 落库时用 `resolve_ctx` 兜底填充（显式传参优先）。现在用量面板可按 request_id 聚合出「一次提问」的完整 token/费用。
+  - **fix(CI 失败① Reranker OSError)**：`Reranker.__init__` 强制 `local_files_only` 加载，CI 无模型缓存直接 OSError 打崩 lifespan（`with TestClient` 的 usage_api 13 项全 ERROR）。改为加载失败降级 `self._model=None`（`available=False`），`rerank()` 短路原样返回候选——精排是可选的 quality 增益，辅助组件故障不拖垮主链路（D-M3-8 同款）。
+  - **fix(CI 失败② F12 confirm 3 项)**：CI 无 `.env` 时 `AGENT_ENABLED` 默认 false、且部分模块在 conftest 注入环境前于 collect 阶段 import → `routes.AGENT_ENABLED` 快照 false → 确认接口测试走 engine/PG 分支失败。测试 fixture 显式钉 `routes.AGENT_ENABLED=True` + 假 Agent，杜绝触 engine。
+  - **fix(前端切页回显加固)**：回页恢复思考轨迹改为**直接绑定** store 中 `activeStream.traces` 同一响应式数组（原展开拷贝为快照，后台继续追加不实时渲染）；生成完成/仍在途的判定与「本地 ahead 保护」保持。
+  - 验证：69+ 相关用例绿、vite build 通过、ruff 全绿。
+
 - **【2026-09-03】fix(体验)：三处交互 Bug（合同误判 B 类 / F12 确认两跳 / 切页断流）**：用户实测问题修复。决策留痕 D-0903-6/7/8。
   - **fix(场景分类误触发，D-0903-6)**：`src/rag/scenes.py` contract_draft/contract_review **移除普通关键词里的裸「合同/协议/条款」**，只由动作强特征词触发，并补足常见触发词（帮我审/审一下/合同模板/范本…）——实测首页 6 条示例里 2 条含「劳动合同」的普通咨询此前全被判成 contract_draft（B 类弹确认），「合同纠纷去哪个法院起诉」「租房合同没到期想退租」同样中招；修复后全部回落 A 类自动回答。场景清单是数据（只改 `SCENES`），分类逻辑零改动。
   - **feat(F12 确认同连接续跑，D-0903-7)**：`approved=True` 的 `POST /api/chat/confirm` 在写确认标记后直接返回 SSE 事件流（与 `/chat/stream` 共用抽取出的 `_build_stream_response`：断线重连/主动取消/事件日志/归属登记全同语义），前端新增 `confirmSceneStream` 消费该流——点「确认执行」后直接出答案，不再"确认一次 + 再发一次 /chat/stream"两跳；`ConfirmRequest` 新增 `history`/`request_id`（续跑携带本提问之前轮次，避免重复把当前问题当历史）。标记仍写入 → 旧客户端重发 stream 兼容。F12 接口测试随新语义重写（假 Agent 防真 LLM）。

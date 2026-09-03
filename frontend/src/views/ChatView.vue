@@ -251,7 +251,9 @@ async function loadCurrentSession() {
   // 切页保活：本会话仍有生成在进行（SSE 未被路由切换中断，store 已含最新流式
   // 内容）→ 不重拉历史覆盖正在增长的答案，只恢复组件局部状态（思考轨迹）。
   if (chat.activeStream && chat.activeStream.sid === sid) {
-    if (chat.activeStream.traces?.length) thinkingTraces.value = [...chat.activeStream.traces]
+    // 直接绑定 store 里进行中的同一响应式数组（勿用展开拷贝）：切回页面后，
+    // 后台线程仍在向 activeStream.traces 实时追加，绑同一引用才能持续渲染。
+    thinkingTraces.value = chat.activeStream.traces || []
     thinkingOpen.value = true
     const last = chat.messages[chat.messages.length - 1]
     if (last?.role === 'assistant' && last.content) {

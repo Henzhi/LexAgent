@@ -29,9 +29,21 @@ class Reranker:
     def __init__(self, model_name: str = DEFAULT_RERANK_MODEL):
         self.model_name = model_name
         logger.info(f"加载 Reranker: {model_name} ...")
-        # 不传 device → 自动检测 CUDA/CPU
-        self._model = CrossEncoder(model_name, local_files_only=True)
-        logger.info("Reranker 就绪")
+        try:
+            # 不传 device → 自动检测 CUDA/CPU
+            self._model = CrossEncoder(model_name, local_files_only=True)
+            logger.info("Reranker 就绪")
+        except Exception as e:
+            # 模型不可用（CI 无缓存/无网络、首次部署未预下载等）不致命：
+            # 精排是可选的 quality 增益，降级为「跳过精排」继续服务（D-M3-8 同款
+            # 原则——辅助组件故障不拖垮主链路）。实例可继续构造，rerank() 短路。
+            self._model = None
+            logger.warning(f"Reranker 加载失败，已降级为跳过精排（原样返回候选）: {type(e).__name__}: {e}")
+
+    @property
+    def available(self) -> bool:
+        """模型是否可用（false = 精排被跳过）。"""
+        return self._model is not None
 
     def rerank(
         self,
@@ -42,6 +54,9 @@ class Reranker:
         """精排候选文档，返回 top_k"""
         if len(docs) <= top_k:
             return docs
+        if self._model is None:
+            # 模型加载失败：原样返回前 top_k（粗排顺序），不中断检索
+            return docs[:top_k]
 
         # 只截打分输入、不改返回内容：CrossEncoder 耗时对文本长度呈 O(n²)
         # （实测 2000 字 40 对 ~20s），库内 chunk P99=480 字，800 字上限覆盖 99%+

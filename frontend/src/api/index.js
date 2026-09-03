@@ -1,8 +1,10 @@
 const BASE = '/api'
 
+// Token 迁移 HttpOnly Cookie（2026-09-03 审查整改，长期项）：
+// 凭据不再经 JS 读写——登录后由服务端 Set-Cookie 下发（HttpOnly + SameSite=Strict），
+// 后续请求同源自动携带，XSS 无法从 localStorage 窃取。这里不再附加 Authorization 头。
 function authHeaders() {
-  const t = localStorage.getItem('lawrag_token')
-  return t ? { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }
+  return { 'Content-Type': 'application/json' }
 }
 
 // ---------------------------------------------------------------------------
@@ -12,12 +14,13 @@ function authHeaders() {
 // 历史 / 保存全部静默失败（调用处多为空 catch）。这里在响应侧统一收口：
 // 401 → 清会话并回登录页。
 //
-// - 登录 / 注册端点豁免：那里的 401 是「用户名或密码错误」的业务结果；
+// - 登录 / 注册 / 登出端点豁免：前两者的 401 是「用户名或密码错误」的业务结果，
+//   登出端点无鉴权恒 200（防御性豁免）；
 // - router / auth store 用动态 import：避免 views → api → router 的循环依赖
 //   （首次 401 时模块图已初始化完毕，运行时加载安全）；
 // - 防抖窗口：并发请求同时 401 时只跳转一次。
 // ---------------------------------------------------------------------------
-const _AUTH_EXEMPT = ['/auth/login', '/auth/register']
+const _AUTH_EXEMPT = ['/auth/login', '/auth/register', '/auth/logout']
 let _auth_redirecting = false
 
 function handleAuthExpired(url) {
@@ -64,6 +67,10 @@ export const register = (username, password) =>
 export const getMe = () =>
   fetch(`${BASE}/auth/me`, { headers: authHeaders() }).then(handleError)
 
+// 登出：HttpOnly Cookie 只能由服务端删除，前端必须调此端点（本地状态清理见 auth store）
+export const logoutApi = () =>
+  fetch(`${BASE}/auth/logout`, { method: 'POST', headers: authHeaders() }).then(r => r.ok)
+
 // Conversations
 export const listConversations = () =>
   fetch(`${BASE}/conversations`, { headers: authHeaders() }).then(handleError)
@@ -88,7 +95,8 @@ export const uploadDocument = async (file, docType, source, effectiveDate, statu
   fd.append('source', source)
   fd.append('effective_date', effectiveDate)
   fd.append('status', status)
-  const resp = await fetch(`${BASE}/knowledge/upload`, { method: 'POST', headers: { Authorization: authHeaders().Authorization }, body: fd })
+  // 鉴权走 HttpOnly Cookie（同源自动携带）；FormData 的 Content-Type 由浏览器自设
+  const resp = await fetch(`${BASE}/knowledge/upload`, { method: 'POST', body: fd })
   if (!resp.ok) {
     handleAuthExpired(resp.url)
     throw new Error('上传失败')

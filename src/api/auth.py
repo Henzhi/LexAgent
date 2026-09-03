@@ -219,17 +219,73 @@ def verify_token(token: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# HttpOnly Cookie 鉴权（2026-09-03 审查整改，长期项「Token 迁移 HttpOnly Cookie」）
+# ---------------------------------------------------------------------------
+# 背景：Token 此前明文存于 localStorage，任何 XSS 可直接窃取（前端
+# api/index.js 与 stores/auth.js 各读一次）。迁移后 Token 只活在 HttpOnly
+# Cookie 里，JS 不可读——XSS 拿不到凭据；Bearer 头仍保留为兼容路径
+# （CLI / curl / 第三方集成），get_current_user 先查 Cookie 再查 Header。
+#
+# SameSite=Strict：同站才带 Cookie，跨站 POST（CSRF）天然不带凭据；
+# Secure 由 COOKIE_SECURE 控制（默认 False：部署环境可能无 HTTPS 反代，
+# 有 HTTPS 时必须置 1，否则 Cookie 会明文过网）。
+AUTH_COOKIE_NAME = "lexagent_token"
+
+# Cookie 有效期：Token 本身无过期机制（登出/换新才失效），Cookie 给个宽松的
+# 会话长度即可——真正的边界由服务端 Token 是否仍有效决定。
+AUTH_COOKIE_MAX_AGE = 30 * 24 * 3600  # 30 天
+
+
+def _cookie_secure() -> bool:
+    import os
+
+    return os.getenv("COOKIE_SECURE", "0") in ("1", "true", "True")
+
+
+def set_auth_cookie(response, token: str) -> None:
+    """登录/注册成功后下发 HttpOnly Cookie（Bearer 与 Cookie 双通道）。"""
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=AUTH_COOKIE_MAX_AGE,
+        httponly=True,  # JS 不可读：XSS 无法窃取凭据（本次整改核心）
+        samesite="strict",  # 跨站请求不带 Cookie → CSRF 基本失效
+        secure=_cookie_secure(),
+        path="/",
+    )
+
+
+def clear_auth_cookie(response) -> None:
+    """登出：清除 HttpOnly Cookie（JS 删不掉 HttpOnly，必须由服务端删）。"""
+    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/", secure=_cookie_secure())
+
+
+def _extract_token(request: Request) -> str:
+    """从请求提取 Token：优先 Cookie，其次 Authorization: Bearer。
+
+    两条路径都进 verify_token（缓存 + 落库），不存在一方可信一方不可信的问题。
+    """
+    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    if cookie_token:
+        return cookie_token
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:].strip()
+    return ""
+
+
 def get_current_user(request: Request) -> str:
     """
     从请求中提取用户身份，作为 FastAPI 依赖注入。
 
     优先级:
-    1. Authorization: Bearer <token> header
-    2. 回退到 anonymous 用户
+    1. HttpOnly Cookie（lexagent_token，前端默认通道）
+    2. Authorization: Bearer <token> header（兼容 CLI/第三方）
+    3. 回退到 anonymous 用户
     """
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
+    token = _extract_token(request)
+    if token:
         user_id = verify_token(token)
         if user_id:
             return user_id

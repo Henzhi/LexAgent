@@ -46,7 +46,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import { login, register } from '../api'
+import { login, register, getMe } from '../api'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -59,8 +59,21 @@ const showPw = ref(false)
 const loading = ref(false)
 const error = ref('')
 
-onMounted(() => {
-  if (auth.isAuthenticated) router.replace('/')
+onMounted(async () => {
+  // 本地有用户名标记（Cookie 已由服务端下发）→ 用 /auth/me 实测 Cookie 是否
+  // 仍有效，有效则直接回主界面。Cookie 凭据 JS 读不到，只能靠一次真实请求确认。
+  if (auth.username) {
+    try {
+      const me = await getMe()
+      if (me && !me.anonymous) {
+        router.replace('/')
+        return
+      }
+    } catch {
+      // Cookie 失效：落到登录表单
+    }
+    auth.logout()
+  }
 })
 
 function toggleMode() {
@@ -81,7 +94,8 @@ async function submit() {
   error.value = ''
   try {
     const data = await (isLogin.value ? login(username.value, password.value) : register(username.value, password.value))
-    auth.setAuth(data.token, data.username)
+    // Token 由服务端写入 HttpOnly Cookie，前端只记非机密的显示名
+    auth.setAuth(data.username)
     router.replace('/')
   } catch (e) {
     error.value = e.message

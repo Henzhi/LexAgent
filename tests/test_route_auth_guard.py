@@ -21,6 +21,9 @@ PUBLIC_ROUTES = {
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/register"),
     ("GET", "/api/health"),
+    # 2026-09-03 HttpOnly Cookie 迁移新增：登出必须**无鉴权**——凭据可能已失效
+    # （401 后清理残留 Cookie），要求登出先登录是逻辑死结
+    ("POST", "/api/auth/logout"),
 }
 
 # --- 必须硬鉴权（require_registered_user）的接口 ----------------------------

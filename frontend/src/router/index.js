@@ -17,8 +17,10 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('lawrag_token')
-  if (to.meta.requiresAuth && !token) {
+  // Token 迁移后凭据在 HttpOnly Cookie（JS 不可读），路由守卫退而检查非机密的
+  // 用户名标记；Cookie 若已失效，首个 API 的 401 会由全局拦截器登出并跳回登录页。
+  const username = localStorage.getItem('lawrag_username')
+  if (to.meta.requiresAuth && !username) {
     next('/login')
   } else {
     next()

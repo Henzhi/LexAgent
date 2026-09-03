@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Request
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
@@ -34,7 +34,14 @@ from .models import (
     CrawlStatusResponse,
     RewriteRequest,
 )
-from .auth import get_current_user, require_registered_user, register_user, login_user
+from .auth import (
+    get_current_user,
+    require_registered_user,
+    register_user,
+    login_user,
+    set_auth_cookie,
+    clear_auth_cookie,
+)
 from src.config import AGENT_ENABLED, LLM_MAX_CONCURRENCY
 from src.memory.confirmation_store import get_confirmation_store
 from src.observability.cost_budget import get_budget
@@ -1021,20 +1028,39 @@ def delete_session(session_id: str, user_id: str = Depends(get_current_user)):
 
 
 @auth_router.post("/register", response_model=AuthResponse)
-def register(req: RegisterRequest):
-    """注册新用户（需要用户名+密码），返回 Bearer Token"""
-    return register_user(username=req.username, password=req.password)
+def register(req: RegisterRequest, response: Response):
+    """注册新用户（需要用户名+密码），返回 Bearer Token。
+
+    Token 同时写入 HttpOnly Cookie（2026-09-03 整改）：前端不再把 Token 落
+    localStorage，XSS 无法窃取凭据；响应体仍带 token 供 Bearer 兼容调用方使用。
+    """
+    result = register_user(username=req.username, password=req.password)
+    set_auth_cookie(response, result["token"])
+    return result
 
 
 @auth_router.post("/login", response_model=AuthResponse)
-def login(req: LoginRequest):
-    """用用户名+密码登录，返回 Bearer Token"""
-    return login_user(username=req.username, password=req.password)
+def login(req: LoginRequest, response: Response):
+    """用用户名+密码登录，返回 Bearer Token（同 register：Token 进 HttpOnly Cookie）。"""
+    result = login_user(username=req.username, password=req.password)
+    set_auth_cookie(response, result["token"])
+    return result
+
+
+@auth_router.post("/logout")
+def logout(response: Response):
+    """登出：清除 HttpOnly Cookie。
+
+    ⚠️ HttpOnly Cookie 无法由前端 JS 删除，必须有服务端端点来清；
+    幂等（无 Cookie 也返回 ok）。
+    """
+    clear_auth_cookie(response)
+    return {"ok": True}
 
 
 @auth_router.get("/me")
 def get_me(user_id: str = Depends(get_current_user)):
-    """获取当前用户信息"""
+    """获取当前用户信息（同时校验 Cookie/Bearer 凭据是否仍然有效）"""
     from .auth import ANONYMOUS_USER_ID
 
     is_anonymous = user_id == ANONYMOUS_USER_ID

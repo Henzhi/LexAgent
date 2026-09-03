@@ -16,6 +16,10 @@ export default defineConfig({
     },
   },
   build: {
+    // 产物输出到项目根的 static/（位于 frontend 之外，FastAPI 直接托管）。
+    // emptyOutDir 必须显式开启（2026-09-03 Vite 7 升级）：outDir 在项目根之外时
+    // Vite 默认**不**清空目录（防误删保护），旧 hash 产物会越积越多。
     outDir: '../static',
+    emptyOutDir: true,
   },
 })

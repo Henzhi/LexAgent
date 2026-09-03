@@ -81,8 +81,11 @@ export const loadHistory = (sessionId) =>
 // mode: 'replace' 全量覆盖（默认，兼容旧行为）；'append' 增量追加——
 // 2026-09-03 审查整改：对话越长不再上传整个数组（原先 O(n²) 流量），
 // 服务端在数据库内用 JSONB 拼接，只传本轮新增的消息。
+// 返回 { ok, total }：total 为保存后该会话服务端消息总数，
+// 前端用它按会话维护已保存基线（不同会话各自独立计数）。
 export const saveSession = (sessionId, messages, mode = 'replace') =>
-  fetch(`${BASE}/conversations/${sessionId}`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ messages, mode }) }).then(r => { if (!r.ok) { handleAuthExpired(r.url); throw new Error('会话保存失败') } })
+  fetch(`${BASE}/conversations/${sessionId}`, { method: 'POST', headers: authHeaders(), body: JSON.stringify({ messages, mode }) })
+    .then(r => { if (!r.ok) { handleAuthExpired(r.url); throw new Error('会话保存失败') } return r.json() })
 
 export const deleteConversation = (sessionId) =>
   fetch(`${BASE}/conversations/${sessionId}`, { method: 'DELETE', headers: authHeaders() }).then(r => { if (!r.ok) { handleAuthExpired(r.url); throw new Error('删除失败') } })

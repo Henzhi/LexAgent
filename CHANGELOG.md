@@ -4,6 +4,13 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-03】fix(前端)：切换/新建对话丢消息与串会话（会话级隔离）**：`ChatView` 保存链路此前用**全局单值 savedCount**、且保存请求在异步链里才读 `chat.sessionId`/`chat.messages`——回答生成中切走或切走后旧请求收尾，会把内容：
+  ① 保存进**新会话**（DB append 串话，B 会话看到 A 的回复）；② 或因为视图已切走、`isActiveView=false` 而**不保存**（切回 A "回复没了"，只剩已落库的问题）。改动：
+  - `persistSession(sid, extraMsgs?)`：基线改**按会话独立**（`savedCounts[sid]`）；body 在**调用瞬间快照**、sid 固化，异步链不再读全局状态——已排队的保存不受切换影响；
+  - `runStream(query, recent, sid)`：sid 由 `handleSend` 发起时固化贯穿；思考轨迹改 `localThinking` 独立收集；**中断（Abort/切走）时已有部分/完整回答也落库回原会话**（此前 catch 分支完全不保存）；视图写入加 `isActiveView()` 守卫（切走后不再污染新会话视图）；
+  - `handleNewChat`/`handleSelect`/`confirmProceed`/`doRewrite` 全部传 sid；收尾共享状态清理加 `abortController.value===ctrl` 守卫（旧请求收尾不得清空新请求的 controller / 误置 sending）；
+  - `stores/chat.js`：sessionId 存储 localStorage → **sessionStorage**（窗口级隔离，多标签页各自独立会话，杜绝 A/B 窗口共用同一 session 串话）；
+  - `api/index.js`：`saveSession` 返回服务端 `total`，前端按会话精确推进基线。验证：`vite build` 通过。
 - **【2026-09-03 下午】store 类接池收官（5 commits，测试 868→870）**：报告中期项 4（连接池）从「部分」升为全部完成。
   - **fix（池向量注册前置）**：`VectorAwarePool` 组合包装裸池时，register_vector 只覆盖直连路径，池自行创建的连接不注册——向量 store 接池必然类型错乱。改**子类化 ThreadedConnectionPool** 覆写 `_connect()`（池内所有连接的唯一起点），直连兜底同样补注册。
   - **perf（6 个 store 类逐一接池）**：`QueryLogger`/`ConversationMemoryManager`/`FAQCache`/`ConversationStore`/`PgvectorStore`/`PgvectorRetriever` 全部从「常驻单连接 + threading.Lock + 手写重连」改为**每操作从 `db_connection()` 借连接**。要点：conn 是方法内局部变量（挂实例会在并发时互相覆盖）；建表 DDL 惰性执行一次（加锁幂等）；save_memory 的 LLM 摘要生成不占连接；`ArticleRouter` 不再挖 store 私有 `_lock/_conn`。测试改拦模块级 `db_connection`（DB-free，CI 无 PG 可跑）。全仓无裸 `psycopg2.connect`。

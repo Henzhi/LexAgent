@@ -103,6 +103,22 @@ class LLMAdapter:
         """后端是否已降级（FailoverLLMBackend 专用；普通后端恒为 False）。"""
         return bool(getattr(self._backend, "degraded", False))
 
+    @property
+    def degraded_reason(self) -> str:
+        """降级原因（未降级为空串）——供 /api/health 暴露给运维。"""
+        return str(getattr(self._backend, "degraded_reason", "") or "")
+
+    @property
+    def active_backend(self) -> str:
+        """当前实际生效的后端标签（openai | ollama），供 /api/health 观测。
+
+        普通后端没有主备概念，此处按其自身类型回一个稳定标签。
+        """
+        label = getattr(self._backend, "active_backend", "")
+        if label:
+            return str(label)
+        return "ollama" if type(self._backend).__name__.startswith("Ollama") else "openai"
+
     # ----- RAG 上下文 API（兼容旧 LawLLM）-----
 
     def chat_with_context(

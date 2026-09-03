@@ -89,13 +89,25 @@ class ChatResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    """健康检查响应"""
+    """健康检查响应
+
+    降级相关字段（2026-09-03 审查整改）：一次瞬时 401/403 就能让整个进程悄悄
+    切到 Ollama 备用后端，此前没有任何对外信号。这里把 `degraded` /
+    `degraded_reason` / `active_backend` 暴露出来，运维才能发现"服务正跑在
+    降级态"。三个字段都有默认值，老消费方不受影响。
+    """
 
     status: str
     version: str
     index_ready: bool
     doc_count: int
     llm_model: str
+    # 降级可观测性：degraded=True 表示当前在用备用后端（Ollama）
+    degraded: bool = False
+    degraded_reason: str = ""
+    active_backend: str = ""
+    # F14 预算是否已经打满（运维判断"为什么都在返回额度用尽"）
+    budget_exceeded: bool = False
 
 
 class RegisterRequest(BaseModel):

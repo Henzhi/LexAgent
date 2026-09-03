@@ -96,6 +96,7 @@ class FailoverLLMBackend(LLMBackend):
         self.primary = primary
         self.fallback = fallback
         self._degraded = primary is None
+        self._degraded_reason = "主后端缺失（创建期）" if primary is None else ""
         self._recovery_cooldown = float(recovery_cooldown_seconds or 0.0)
         # 最近一次进入降级态的时刻（monotonic）；仅 _degraded=True 时有意义
         self._degraded_at = time.monotonic() if self._degraded else 0.0
@@ -128,6 +129,15 @@ class FailoverLLMBackend(LLMBackend):
         return self._degraded
 
     @property
+    def degraded_reason(self) -> str:
+        """进入降级态的原因（未降级时为空串）——供 /api/health 运维观测。
+
+        降级后长期无人知晓是审查报告点出的问题（B2 相关）：一次瞬时 401 就能
+        让整个进程悄悄跑在 Ollama 上，运维没有任何信号。
+        """
+        return self._degraded_reason
+
+    @property
     def chat_model(self):
         """当前生效后端的 LangChain ChatModel（D-M3-13）。
 
@@ -147,6 +157,7 @@ class FailoverLLMBackend(LLMBackend):
             if not self._degraded:
                 self._degraded = True
                 self._degraded_at = time.monotonic()
+                self._degraded_reason = reason
                 logger.warning(f"[failover] 降级为备用后端: {reason}")
 
     def _switch_to_fallback(self, exc: BaseException) -> None:
@@ -155,6 +166,7 @@ class FailoverLLMBackend(LLMBackend):
             already = self._degraded
             self._degraded = True
             self._degraded_at = time.monotonic()
+            self._degraded_reason = f"主后端调用失败: {type(exc).__name__}: {exc}"
             if already:
                 logger.warning(f"[failover] 主后端健康探测失败，继续降级并重置冷却窗口: {exc}")
             else:
@@ -189,6 +201,7 @@ class FailoverLLMBackend(LLMBackend):
             if self._degraded:
                 self._degraded = False
                 self._degraded_at = 0.0
+                self._degraded_reason = ""
                 logger.info("[failover] 主后端健康探测成功，已回切到主后端")
 
     # ------------------------------------------------------------------

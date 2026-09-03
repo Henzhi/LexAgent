@@ -234,6 +234,15 @@ def budget_status(_user: str = Depends(require_registered_user)):
 
 @router.get("/health", response_model=HealthResponse)
 async def health():
+    """健康检查（含 LLM 降级态与预算状态，2026-09-03 审查整改）。
+
+    降级是**静默**的：主后端一次 4xx 就会切到 Ollama，此前 /health 永远返回
+    ok，运维无从察觉服务已降级。这里补出 degraded / degraded_reason /
+    active_backend / budget_exceeded 四个观测字段。
+
+    ⚠️ 这些字段的取值一律 fail-open：观测失败不应让健康检查变成 503——
+    健康检查本身挂掉会让负载均衡摘掉所有实例，比信息缺失严重得多。
+    """
     try:
         from src.config import LLM_MODEL
 
@@ -252,16 +261,47 @@ async def health():
             if hasattr(chain, "_store"):
                 doc_count = getattr(chain._store, "doc_count", 0)
 
+        degraded, degraded_reason, active_backend = _llm_degraded_state()
         return HealthResponse(
             status="ok",
             version="0.1.0",
             index_ready=index_ready,
             doc_count=doc_count,
             llm_model=LLM_MODEL,
+            degraded=degraded,
+            degraded_reason=degraded_reason,
+            active_backend=active_backend,
+            budget_exceeded=_budget_exceeded_flag(),
         )
     except Exception as e:
         logger.error(f"[health] 引擎状态检查失败: {type(e).__name__}: {e}")
         raise HTTPException(status_code=503, detail="引擎未就绪，请稍后重试")
+
+
+def _llm_degraded_state() -> tuple[bool, str, str]:
+    """读取当前 LLM 的降级三元组 (degraded, reason, active_backend)。
+
+    观测失败一律返回 (False, "", "")——健康检查不因观测失败而误报降级。
+    """
+    try:
+        llm = get_llm()
+        return (
+            bool(getattr(llm, "degraded", False)),
+            str(getattr(llm, "degraded_reason", "") or ""),
+            str(getattr(llm, "active_backend", "") or ""),
+        )
+    except Exception as e:
+        logger.warning(f"[health] 读取 LLM 降级状态失败（按未降级上报）: {e}")
+        return False, "", ""
+
+
+def _budget_exceeded_flag() -> bool:
+    """当日预算是否已打满（任一品类超限即 True）；读取失败返回 False。"""
+    try:
+        return bool(get_budget().status().get("exceeded", False))
+    except Exception as e:
+        logger.warning(f"[health] 读取预算状态失败（按未超限上报）: {e}")
+        return False
 
 
 @router.post("/chat", response_model=ChatResponse)

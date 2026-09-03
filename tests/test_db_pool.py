@@ -97,13 +97,16 @@ class _FakeCursor:
 
 @pytest.fixture
 def fake_pool():
-    """注入假池并保证测试后清理（防止污染其它测试的单例状态）。"""
+    """注入假池并保证测试后清理（防止污染其它测试的单例状态）。
+
+    VectorAwarePool 已是 ThreadedConnectionPool 子类（无组合 _pool 属性），
+    这里在 __new__ 出的实例上直接绑定借还方法。
+    """
     p = _FakeRawPool(minconn=2, maxconn=3)
     holder = pool_mod.VectorAwarePool.__new__(pool_mod.VectorAwarePool)
-    holder._pool = p
-    holder._minconn = 2
-    holder._maxconn = 3
-    holder._psycopg2 = None
+    holder.getconn = p.getconn
+    holder.putconn = p.putconn
+    holder.closeall = p.closeall
     pool_mod._pool = holder
     pool_mod._pool_init_error = ""
     yield p
@@ -192,11 +195,8 @@ class TestFailOpen:
     def test_getconn_failure_falls_back_to_direct(self, monkeypatch):
         """getconn 抛错（池耗尽等）→ 退化为一次性直连，不影响本次请求。"""
         holder = pool_mod.VectorAwarePool.__new__(pool_mod.VectorAwarePool)
-
-        def _boom():
-            raise RuntimeError("pool exhausted")
-
-        holder._pool = type("_P", (), {"getconn": staticmethod(_boom), "putconn": staticmethod(lambda *a, **k: None)})()
+        holder.getconn = staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("pool exhausted")))
+        holder.putconn = staticmethod(lambda *a, **k: None)
         pool_mod._pool = holder
         pool_mod._pool_init_error = ""
 

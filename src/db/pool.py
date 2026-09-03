@@ -42,31 +42,31 @@ _pool_lock = threading.Lock()
 _pool_init_error = ""
 
 
-class VectorAwarePool:
-    """ThreadedConnectionPool 的向量感知包装。
+# psycopg2.pool 仅在实例化时建连（惰性，import 本模块不触发），子类化安全。
+from psycopg2.pool import ThreadedConnectionPool
 
-    ⚠️ 不直接继承 ThreadedConnectionPool 的原因：其 `_connect()` 在
-    **构造期**就建 minconn 个连接，而本模块被测试与无 PG 环境导入时不能
-    触发真实建连。这里把「池子惰性创建 + 每连接 register_vector」封装起来，
-    失败时整体退化为直连模式。
+
+class VectorAwarePool(ThreadedConnectionPool):
+    """ThreadedConnectionPool 子类：池内**每一条**连接都自动注册 pgvector。
+
+    ⚠️ 为什么必须子类化而不是包装：pgvector 的 `register_vector` 是按连接生效
+    的（注册后该连接才能把 embedding 列解码成 Vector）。若用包装 + 内部裸池，
+    池自行创建的连接**不会**被注册——store 从池借出连接做向量检索时 embedding
+    会以字符串返回（历史大坑：fake 测试里静默通过、真实 PG 上类型错乱）。
+
+    psycopg2.pool 的 `_connect(key=None)` 是所有连接（初始 minconn + 惰性
+    扩展）的唯一起点，覆写它即可让池内连接 100% 注册。失败仍退化为直连模式。
     """
 
     def __init__(self, minconn: int, maxconn: int, dsn: str):
-        import psycopg2
-        from psycopg2.pool import ThreadedConnectionPool
+        self._v_minconn = max(1, int(minconn))
+        self._v_maxconn = max(self._v_minconn, int(maxconn))
+        super().__init__(self._v_minconn, self._v_maxconn, dsn)
 
-        self._psycopg2 = psycopg2
-        self._minconn = max(1, minconn)
-        self._maxconn = max(self._minconn, maxconn)
-        self._dsn = dsn
-        self._pool = ThreadedConnectionPool(self._minconn, self._maxconn, dsn)
-        self._lock = threading.Lock()
-
-    def getconn(self):
-        return self._pool.getconn()
-
-    def putconn(self, conn, close: bool = False):
-        self._pool.putconn(conn, close=close)
+    def _connect(self, key=None):
+        conn = super()._connect(key)
+        self._register_vector(conn)
+        return conn
 
     def _register_vector(self, conn) -> None:
         try:
@@ -76,22 +76,13 @@ class VectorAwarePool:
         except Exception as e:  # pragma: no cover - pgvector 缺失属于环境问题
             logger.warning(f"register_vector 注册失败（该连接不支持向量检索）: {e}")
 
-    def new_connection(self):
-        """新建一条独立连接（池满/池外借用兜底用），自动注册向量适配。"""
-        conn = self._psycopg2.connect(self._dsn)
-        self._register_vector(conn)
-        return conn
-
-    def closeall(self) -> None:
-        self._pool.closeall()
-
     @property
     def minconn(self) -> int:
-        return self._minconn
+        return self._v_minconn
 
     @property
     def maxconn(self) -> int:
-        return self._maxconn
+        return self._v_maxconn
 
 
 def get_pool() -> VectorAwarePool | None:
@@ -160,6 +151,13 @@ def db_connection():
         from src.config import PG_CONN
 
         conn = psycopg2.connect(PG_CONN)
+        # 直连兜底同样要注册向量适配（否则向量 store 在此路径下拿不到 Vector）
+        try:
+            from pgvector.psycopg2 import register_vector
+
+            register_vector(conn)
+        except Exception as e:
+            logger.warning(f"register_vector 注册失败（该连接不支持向量检索）: {e}")
 
     try:
         yield conn

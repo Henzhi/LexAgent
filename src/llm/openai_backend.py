@@ -34,6 +34,7 @@ from src.llm.base import (
     tool_calls_from_langchain,
 )
 from src.llm.budget_callback import budget_callbacks
+from src.llm.usage_callback import usage_callbacks
 from src.llm.retry import (
     LLMRetryExhaustedError,
     is_retryable,
@@ -122,7 +123,8 @@ class OpenAICompatibleBackend(LLMBackend):
             max_tokens=self.max_tokens,
             max_retries=0,  # 重试由我们自己管理
             timeout=120.0,
-            callbacks=budget_callbacks(),  # F14 预算熔断埋点（D-M3-13）
+            stream_usage=True,  # F15：流式也要 usage_metadata（DeepSeek 兼容 include_usage）
+            callbacks=[*budget_callbacks(), *usage_callbacks(backend="deepseek", model=self.model)],
         )
 
     def get_context_window(self) -> int:

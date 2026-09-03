@@ -25,6 +25,7 @@ from src.llm.base import (
     tool_calls_from_langchain,
 )
 from src.llm.budget_callback import budget_callbacks
+from src.llm.usage_callback import usage_callbacks
 from src.llm.retry import is_retryable, wait_and_log
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ class OllamaBackend(LLMBackend):
             num_ctx=self.num_ctx,
             repeat_penalty=self.repeat_penalty,
             seed=self.seed,
-            callbacks=budget_callbacks(),  # F14 预算熔断埋点（D-M3-13）
+            callbacks=[*budget_callbacks(), *usage_callbacks(backend="ollama", model=self.model)],
         )
 
     def get_context_window(self) -> int:

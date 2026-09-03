@@ -54,23 +54,36 @@ class TestRetriever:
 
 
 class TestChunkPagination:
-    """get_document_chunks 分页：验证 LIMIT/OFFSET 拼接与参数传递（不连真实 PG）"""
+    """get_document_chunks 分页：验证 LIMIT/OFFSET 拼接与参数传递（不连真实 PG）
 
-    def _make_store_with_mock(self, fetched):
+    v0.7 连接池整改：方法经模块级 db_connection() 借连接（fake_conn 由
+    monkeypatch 注入），不再有 _conn/_ensure_connection 实例属性。
+    """
+
+    def _make_store_with_mock(self, monkeypatch, fetched):
+        import contextlib
         from unittest.mock import MagicMock
+
         from src.knowledge.pgvector_store import PgvectorStore
 
         store = PgvectorStore.__new__(PgvectorStore)
-        store._conn = MagicMock()
-        store._ensure_connection = MagicMock()
-
+        store._conn_string = "postgresql://fake"
+        fake_conn = MagicMock()
         cur = MagicMock()
         cur.fetchall.return_value = fetched
-        store._conn.cursor.return_value.__enter__.return_value = cur
+        fake_conn.cursor.return_value.__enter__.return_value = cur
+
+        @contextlib.contextmanager
+        def _fake_db_connection():
+            yield fake_conn
+
+        monkeypatch.setattr("src.knowledge.pgvector_store.db_connection", _fake_db_connection)
         return store, cur
 
-    def test_paginated_query_includes_limit_offset(self):
-        store, cur = self._make_store_with_mock([("id1", "article", "第一条...", "bge-m3", None, "2026-01-01")])
+    def test_paginated_query_includes_limit_offset(self, monkeypatch):
+        store, cur = self._make_store_with_mock(
+            monkeypatch, [("id1", "article", "第一条...", "bge-m3", None, "2026-01-01")]
+        )
         rows = store.get_document_chunks("doc-1", limit=50, offset=100)
         # SQL 必须包含 LIMIT/OFFSET，且参数按 (doc_id, limit, offset) 顺序传入
         sql, params = cur.execute.call_args[0]
@@ -78,15 +91,15 @@ class TestChunkPagination:
         assert params == ("doc-1", 50, 100)
         assert len(rows) == 1
 
-    def test_non_paginated_has_no_limit(self):
-        store, cur = self._make_store_with_mock([])
+    def test_non_paginated_has_no_limit(self, monkeypatch):
+        store, cur = self._make_store_with_mock(monkeypatch, [])
         rows = store.get_document_chunks("doc-1")
         sql, params = cur.execute.call_args[0]
         assert "LIMIT" not in sql and "OFFSET" not in sql
         assert params == ("doc-1",)
         assert rows == []
 
-    def test_count_document_chunks(self):
-        store, cur = self._make_store_with_mock([])
+    def test_count_document_chunks(self, monkeypatch):
+        store, cur = self._make_store_with_mock(monkeypatch, [])
         cur.fetchone.return_value = (1323,)
         assert store.count_document_chunks("doc-1") == 1323

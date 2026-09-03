@@ -7,6 +7,7 @@ v0.6: 移除 FAISS 后端，检索层统一走 pgvector（纯 PG 架构）。
 from __future__ import annotations
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -135,7 +136,7 @@ class PgvectorStoreRetriever(BaseRetriever):
 
 
 class PgvectorRetriever(BaseRetriever):
-    """基于 PostgreSQL + pgvector 的检索器
+    """基于 PostgreSQL + pgvector 的检索器（连接池借用，2026-09-03 整改）
 
     用法:
         retriever = PgvectorRetriever(embedder, connection_string)
@@ -149,97 +150,89 @@ class PgvectorRetriever(BaseRetriever):
         conn_string: str = "",
         table_name: str = "law_chunks",
     ):
-        import psycopg2
-        from pgvector.psycopg2 import register_vector
-
         self._embedder = embedder
         self._table = table_name
-        self._conn_string = conn_string
-        self._conn = psycopg2.connect(conn_string)
-        register_vector(self._conn)
-        self._create_table()
+        self._conn_string = conn_string  # 兼容旧签名；实际连接统一走池
+        self._table_ready = False
+        self._table_lock = threading.Lock()
 
-    def _ensure_connection(self):
-        """检查连接是否存活，断开则自动重连"""
-        try:
-            with self._conn.cursor() as cur:
-                cur.execute("SELECT 1")
-        except Exception:
-            import psycopg2
-            from pgvector.psycopg2 import register_vector
-
-            logger.warning("PG 连接已断开，尝试重连...")
-            try:
-                self._conn.close()
-            except Exception as close_e:
-                logger.debug(f"retriever 关闭旧连接失败（可忽略）: {close_e}")
-            self._conn = psycopg2.connect(self._conn_string)
-            register_vector(self._conn)
-            logger.info("PG 重连成功")
-
-    def _create_table(self):
-        dim = self._embedder.get_embedding_dim()
-        with self._conn.cursor() as cur:
-            cur.execute(f"""
-                CREATE TABLE IF NOT EXISTS {self._table} (
-                    id SERIAL PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    embedding vector({dim}),
-                    law_name TEXT DEFAULT '',
-                    chapter TEXT DEFAULT '',
-                    section TEXT DEFAULT '',
-                    article_range TEXT DEFAULT '',
-                    chunk_type TEXT DEFAULT ''
-                )
-            """)
-            cur.execute(f"""
-                CREATE INDEX IF NOT EXISTS idx_{self._table}_embedding
-                ON {self._table} USING ivfflat (embedding vector_cosine_ops)
-                WITH (lists = 100)
-            """)
-        self._conn.commit()
+    def _ensure_table(self, conn) -> None:
+        """幂等建表 + ivfflat 索引（首次操作时执行一次；多线程首跑竞争无害）。"""
+        if self._table_ready:
+            return
+        with self._table_lock:
+            if self._table_ready:
+                return
+            dim = self._embedder.get_embedding_dim()
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    CREATE TABLE IF NOT EXISTS {self._table} (
+                        id SERIAL PRIMARY KEY,
+                        content TEXT NOT NULL,
+                        embedding vector({dim}),
+                        law_name TEXT DEFAULT '',
+                        chapter TEXT DEFAULT '',
+                        section TEXT DEFAULT '',
+                        article_range TEXT DEFAULT '',
+                        chunk_type TEXT DEFAULT ''
+                    )
+                """)
+                cur.execute(f"""
+                    CREATE INDEX IF NOT EXISTS idx_{self._table}_embedding
+                    ON {self._table} USING ivfflat (embedding vector_cosine_ops)
+                    WITH (lists = 100)
+                """)
+            conn.commit()
+            self._table_ready = True
 
     def build_from_documents(self, documents: list, batch_size: int = 32):
         """从 LangChain Document 列表构建 pgvector 索引"""
-        total = len(documents)
-        for i in range(0, total, batch_size):
-            batch = documents[i : i + batch_size]
-            texts = [d.page_content for d in batch]
-            embeddings = self._embedder.embed_documents(texts)
+        from src.db.pool import db_connection
 
-            with self._conn.cursor() as cur:
-                for doc, emb in zip(batch, embeddings):
-                    meta = doc.metadata
-                    cur.execute(
-                        f"INSERT INTO {self._table} (content,embedding,law_name,chapter,section,article_range,chunk_type) "
-                        f"VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                        (
-                            doc.page_content,
-                            emb,
-                            meta.get("law_name", ""),
-                            meta.get("chapter", ""),
-                            meta.get("section", ""),
-                            meta.get("article_range", ""),
-                            meta.get("chunk_type", ""),
-                        ),
-                    )
-            self._conn.commit()
-            logger.info(f"pgvector 写入进度: {min(i + batch_size, total)}/{total}")
+        total = len(documents)
+        with db_connection() as conn:
+            self._ensure_table(conn)
+            for i in range(0, total, batch_size):
+                batch = documents[i : i + batch_size]
+                texts = [d.page_content for d in batch]
+                embeddings = self._embedder.embed_documents(texts)
+
+                with conn.cursor() as cur:
+                    for doc, emb in zip(batch, embeddings):
+                        meta = doc.metadata
+                        cur.execute(
+                            f"INSERT INTO {self._table} (content,embedding,law_name,chapter,section,article_range,chunk_type) "
+                            f"VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            (
+                                doc.page_content,
+                                emb,
+                                meta.get("law_name", ""),
+                                meta.get("chapter", ""),
+                                meta.get("section", ""),
+                                meta.get("article_range", ""),
+                                meta.get("chunk_type", ""),
+                            ),
+                        )
+                conn.commit()
+                logger.info(f"pgvector 写入进度: {min(i + batch_size, total)}/{total}")
 
     def search(self, query: str, top_k: int = 5, doc_type: str | None = None) -> list[RetrievedDoc]:
         """语义检索 — doc_type 在旧 pgvector 模式下忽略（兼容接口）"""
-        self._ensure_connection()
+        from src.db.pool import db_connection
+
         vec = self._embedder.embed_query(query)
         where = "WHERE chunk_type <> 'chapter_summary' " if RETRIEVAL_DROP_SUMMARY_CHUNKS else ""
-        with self._conn.cursor() as cur:
-            cur.execute(
-                f"SELECT content,law_name,chapter,section,article_range,chunk_type,"
-                f"1 - (embedding <=> %s::vector) AS score "
-                f"FROM {self._table} {where}"
-                f"ORDER BY embedding <=> %s::vector LIMIT %s",
-                (vec, vec, top_k),
-            )
-            rows = cur.fetchall()
+        with db_connection() as conn:
+            self._ensure_table(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT content,law_name,chapter,section,article_range,chunk_type,"
+                    f"1 - (embedding <=> %s::vector) AS score "
+                    f"FROM {self._table} {where}"
+                    f"ORDER BY embedding <=> %s::vector LIMIT %s",
+                    (vec, vec, top_k),
+                )
+                rows = cur.fetchall()
 
         results = []
         for row in rows:
@@ -258,18 +251,21 @@ class PgvectorRetriever(BaseRetriever):
         return results
 
     def search_by_law(self, query: str, law_name: str, top_k: int = 5) -> list[RetrievedDoc]:
-        self._ensure_connection()
+        from src.db.pool import db_connection
+
         vec = self._embedder.embed_query(query)
         where = "AND chunk_type <> 'chapter_summary' " if RETRIEVAL_DROP_SUMMARY_CHUNKS else ""
-        with self._conn.cursor() as cur:
-            cur.execute(
-                f"SELECT content,law_name,chapter,section,article_range,chunk_type,"
-                f"1 - (embedding <=> %s::vector) AS score "
-                f"FROM {self._table} WHERE law_name = %s {where}"
-                f"ORDER BY embedding <=> %s::vector LIMIT %s",
-                (vec, law_name, vec, top_k),
-            )
-            rows = cur.fetchall()
+        with db_connection() as conn:
+            self._ensure_table(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT content,law_name,chapter,section,article_range,chunk_type,"
+                    f"1 - (embedding <=> %s::vector) AS score "
+                    f"FROM {self._table} WHERE law_name = %s {where}"
+                    f"ORDER BY embedding <=> %s::vector LIMIT %s",
+                    (vec, law_name, vec, top_k),
+                )
+                rows = cur.fetchall()
 
         results = []
         for row in rows:
@@ -289,11 +285,15 @@ class PgvectorRetriever(BaseRetriever):
 
     def is_ready(self) -> bool:
         try:
-            with self._conn.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) FROM {self._table}")
-                return cur.fetchone()[0] > 0
+            from src.db.pool import db_connection
+
+            with db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT COUNT(*) FROM {self._table}")
+                    return cur.fetchone()[0] > 0
         except Exception:
             return False
 
     def close(self):
-        self._conn.close()
+        """兼容 no-op：连接由池管理，无常驻连接可关。"""
+        return None

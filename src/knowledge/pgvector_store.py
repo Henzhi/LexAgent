@@ -1,5 +1,5 @@
 """
-PostgreSQL + pgvector 知识库存储层 (v0.5)
+PostgreSQL + pgvector 知识库存储层
 
 企业级升级:
   - documents 主表 + document_chunks 块表，支持版本管理和状态标记
@@ -7,6 +7,12 @@ PostgreSQL + pgvector 知识库存储层 (v0.5)
   - embedding_model 列隔离不同模型，切换模型无需全量重建
   - HNSW 索引，10万+ 向量仍保持 <10ms 延迟
   - 增量索引：单条 INSERT 即可生效，无需重建
+
+连接模型（2026-09-03 连接池整改）：不再持有「单连接 + threading.Lock」。
+psycopg2 连接非线程安全，锁把所有 DB 操作（含检索热路径）串行化；改为每次
+方法从进程级连接池借用一条连接（`src.db.pool.db_connection`），方法内 conn
+是**局部变量**——并发调用各用各的连接，互不干扰（把 conn 挂实例上会在
+并发时被互相覆盖，那正是旧锁要防的坑）。
 
 用法:
     store = PgvectorStore(conn_string)
@@ -18,32 +24,11 @@ PostgreSQL + pgvector 知识库存储层 (v0.5)
 from __future__ import annotations
 
 import logging
-import threading
-from functools import wraps
 from typing import List
 
+from src.db.pool import db_connection
+
 logger = logging.getLogger(__name__)
-
-
-def _locked(method):
-    """串行化对共享 PG 连接的访问。
-
-    psycopg2 连接非线程安全。流式桥接改造后，多个请求可能并发调用本
-    store（各占一个线程池 worker），必须用锁保护同一连接，否则会出现
-    cursor 冲突 / 连接被并发使用等错误。
-    """
-
-    @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        lock = getattr(self, "_lock", None)
-        if lock is None:
-            # 防御：兼容绕过 __init__ 的构造方式（如测试 mock）
-            lock = threading.Lock()
-            self._lock = lock
-        with lock:
-            return method(self, *args, **kwargs)
-
-    return wrapper
 
 
 class PgvectorStore:
@@ -57,58 +42,30 @@ class PgvectorStore:
     """
 
     def __init__(self, conn_string: str):
-        import psycopg2
-        from pgvector.psycopg2 import register_vector
+        self._conn_string = conn_string  # 兼容旧签名；实际连接统一走池
 
-        self._conn_string = conn_string
-        self._lock = threading.Lock()
-        self._conn = psycopg2.connect(conn_string)
-        register_vector(self._conn)
-
-    # ------------------------------------------------------------------
-    # 连接管理
-    # ------------------------------------------------------------------
-
-    def _ensure_connection(self):
-        try:
-            with self._conn.cursor() as cur:
-                cur.execute("SELECT 1")
-        except Exception:
-            import psycopg2
-            from pgvector.psycopg2 import register_vector
-
-            logger.warning("PG 连接断开，重连中...")
-            try:
-                self._conn.close()
-            except Exception as close_e:
-                logger.debug(f"PG 关闭旧连接失败（可忽略）: {close_e}")
-            self._conn = psycopg2.connect(self._conn_string)
-            register_vector(self._conn)
-
-    @_locked
     def close(self):
-        self._conn.close()
+        """兼容 no-op：连接由池管理，无常驻连接可关。"""
+        return None
 
     # ------------------------------------------------------------------
     # 表初始化
     # ------------------------------------------------------------------
 
-    @_locked
     def ensure_tables(self):
         """创建知识库相关表（幂等，已有表不重建）"""
-        self._ensure_connection()
         # 表结构由 docker/init.sql 定义，这里仅做存在性检查
-        with self._conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name='document_chunks'")
-            if cur.fetchone() is None:
-                raise RuntimeError("document_chunks 表不存在。请先运行 docker compose up -d 初始化数据库。")
-        self._conn.commit()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name='document_chunks'")
+                if cur.fetchone() is None:
+                    raise RuntimeError("document_chunks 表不存在。请先运行 docker compose up -d 初始化数据库。")
+            conn.commit()
 
     # ------------------------------------------------------------------
     # 文档管理
     # ------------------------------------------------------------------
 
-    @_locked
     def ensure_document(
         self,
         doc_type: str,
@@ -127,23 +84,23 @@ class PgvectorStore:
             status: 效力状态（active/repealed/revised/pending）。
                     同一法律的不同效力版本以 (title, status) 区分。
         """
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM documents WHERE title = %s AND status = %s",
-                (title, status),
-            )
-            row = cur.fetchone()
-            if row:
-                return str(row[0])
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM documents WHERE title = %s AND status = %s",
+                    (title, status),
+                )
+                row = cur.fetchone()
+                if row:
+                    return str(row[0])
 
-            cur.execute(
-                "INSERT INTO documents (doc_type, title, source, effective_date, status) "
-                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (doc_type, title, source, effective_date, status),
-            )
-            doc_id = str(cur.fetchone()[0])
-        self._conn.commit()
+                cur.execute(
+                    "INSERT INTO documents (doc_type, title, source, effective_date, status) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                    (doc_type, title, source, effective_date, status),
+                )
+                doc_id = str(cur.fetchone()[0])
+            conn.commit()
         logger.info(f"新建文档: [{doc_type}] {title} (id={doc_id[:8]}..., status={status})")
         return doc_id
 
@@ -154,19 +111,19 @@ class PgvectorStore:
         status 指定时精确匹配该效力状态；None 时优先返回 active，
         否则返回任意一条（用于全状态入库时的去重判断）。
         """
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            if status:
-                cur.execute(
-                    "SELECT id FROM documents WHERE title = %s AND status = %s",
-                    (title, status),
-                )
-            else:
-                cur.execute(
-                    "SELECT id FROM documents WHERE title = %s ORDER BY (status = 'active') DESC LIMIT 1",
-                    (title,),
-                )
-            row = cur.fetchone()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                if status:
+                    cur.execute(
+                        "SELECT id FROM documents WHERE title = %s AND status = %s",
+                        (title, status),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT id FROM documents WHERE title = %s ORDER BY (status = 'active') DESC LIMIT 1",
+                        (title,),
+                    )
+                row = cur.fetchone()
         return str(row[0]) if row else None
 
     # ------------------------------------------------------------------
@@ -191,32 +148,32 @@ class PgvectorStore:
         """
         import json as _json
 
-        self._ensure_connection()
         total = 0
-        for i in range(0, len(chunks), batch_size):
-            batch = chunks[i : i + batch_size]
-            with self._conn.cursor() as cur:
-                for c in batch:
-                    embedding = c["embedding"]
-                    meta = c.get("metadata", {})
-                    # dict → JSON 字符串，PG 自动转 JSONB
-                    if isinstance(meta, dict):
-                        meta = _json.dumps(meta, ensure_ascii=False)
-                    cur.execute(
-                        "INSERT INTO document_chunks "
-                        "(doc_id, chunk_type, content, embedding_model, embedding, metadata) "
-                        "VALUES (%s, %s, %s, %s, %s::halfvec, %s)",
-                        (
-                            c["doc_id"],
-                            c.get("chunk_type", "article"),
-                            c["content"],
-                            embedding_model,
-                            embedding,
-                            meta,
-                        ),
-                    )
-            self._conn.commit()
-            total += len(batch)
+        with db_connection() as conn:
+            for i in range(0, len(chunks), batch_size):
+                batch = chunks[i : i + batch_size]
+                with conn.cursor() as cur:
+                    for c in batch:
+                        embedding = c["embedding"]
+                        meta = c.get("metadata", {})
+                        # dict → JSON 字符串，PG 自动转 JSONB
+                        if isinstance(meta, dict):
+                            meta = _json.dumps(meta, ensure_ascii=False)
+                        cur.execute(
+                            "INSERT INTO document_chunks "
+                            "(doc_id, chunk_type, content, embedding_model, embedding, metadata) "
+                            "VALUES (%s, %s, %s, %s, %s::halfvec, %s)",
+                            (
+                                c["doc_id"],
+                                c.get("chunk_type", "article"),
+                                c["content"],
+                                embedding_model,
+                                embedding,
+                                meta,
+                            ),
+                        )
+                conn.commit()
+                total += len(batch)
         logger.info(f"pgvector 写入完成: {total} chunks, model={embedding_model}")
         return total
 
@@ -248,7 +205,6 @@ class PgvectorStore:
             docs: [{id, title, doc_type, source, effective_date, status,
                     created_at, updated_at, chunks}, ...]
         """
-        self._ensure_connection()
         statuses = [s.strip() for s in (status or "").split(",") if s.strip()] if status else None
 
         where: list[str] = []
@@ -272,20 +228,21 @@ class PgvectorStore:
         col = sort if sort in self._SORT_COLUMNS else "created_at"
         direction = "ASC" if (order or "").lower() == "asc" else "DESC"
 
-        with self._conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(DISTINCT d.id) FROM documents d WHERE {where_sql}", params)
-            total = int(cur.fetchone()[0])
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(DISTINCT d.id) FROM documents d WHERE {where_sql}", params)
+                total = int(cur.fetchone()[0])
 
-            sql = f"""SELECT d.id, d.title, d.doc_type, d.source, d.effective_date,
-                             d.status, d.created_at, d.updated_at, COUNT(dc.id) AS chunks
-                      FROM documents d
-                      LEFT JOIN document_chunks dc ON d.id = dc.doc_id
-                      WHERE {where_sql}
-                      GROUP BY d.id
-                      ORDER BY d.{col} {direction}
-                      LIMIT %s OFFSET %s"""
-            cur.execute(sql, params + [int(limit), int(offset)])
-            rows = cur.fetchall()
+                sql = f"""SELECT d.id, d.title, d.doc_type, d.source, d.effective_date,
+                                 d.status, d.created_at, d.updated_at, COUNT(dc.id) AS chunks
+                          FROM documents d
+                          LEFT JOIN document_chunks dc ON d.id = dc.doc_id
+                          WHERE {where_sql}
+                          GROUP BY d.id
+                          ORDER BY d.{col} {direction}
+                          LIMIT %s OFFSET %s"""
+                cur.execute(sql, params + [int(limit), int(offset)])
+                rows = cur.fetchall()
 
         docs = [
             {
@@ -312,16 +269,15 @@ class PgvectorStore:
         Returns:
             是否成功删除
         """
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
-            deleted = cur.rowcount
-        self._conn.commit()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+                deleted = cur.rowcount
+            conn.commit()
         if deleted:
             logger.info(f"已删除文档: id={doc_id[:8]}... (含所有块)")
         return deleted > 0
 
-    @_locked
     def get_document_chunks(self, doc_id: str, limit: int | None = None, offset: int = 0) -> list[dict]:
         """获取文档的文本块（不含向量），支持分页
 
@@ -333,18 +289,18 @@ class PgvectorStore:
         Returns:
             [{id, chunk_type, content, embedding_model, metadata, created_at}, ...]
         """
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            sql = """SELECT id, chunk_type, content, embedding_model, metadata, created_at
-                     FROM document_chunks
-                     WHERE doc_id = %s
-                     ORDER BY created_at"""
-            params: list = [doc_id]
-            if limit is not None:
-                sql += " LIMIT %s OFFSET %s"
-                params += [limit, offset]
-            cur.execute(sql, tuple(params))
-            rows = cur.fetchall()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                sql = """SELECT id, chunk_type, content, embedding_model, metadata, created_at
+                         FROM document_chunks
+                         WHERE doc_id = %s
+                         ORDER BY created_at"""
+                params: list = [doc_id]
+                if limit is not None:
+                    sql += " LIMIT %s OFFSET %s"
+                    params += [limit, offset]
+                cur.execute(sql, tuple(params))
+                rows = cur.fetchall()
         results = []
         for row in rows:
             meta = row[4] or {}
@@ -369,35 +325,33 @@ class PgvectorStore:
 
     def count_document_chunks(self, doc_id: str) -> int:
         """统计文档的块数量（用于分页）"""
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM document_chunks WHERE doc_id = %s", (doc_id,))
-            row = cur.fetchone()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM document_chunks WHERE doc_id = %s", (doc_id,))
+                row = cur.fetchone()
         return int(row[0]) if row and row[0] else 0
 
     def get_chunk_count(self) -> int:
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM document_chunks")
-            return cur.fetchone()[0]
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM document_chunks")
+                return cur.fetchone()[0]
 
     @property
     def doc_count(self) -> int:
         """文档总数（实时查库，供健康检查等展示）。
 
-        v0.6 纯 PG：FAISS 时代的 doc_count 是内存缓存属性，迁移后未补齐，
-        导致健康检查恒为 0。这里改为实时查询 documents 表。
+        纯 PG：这里实时查询 documents 表（不再缓存，保证展示准确）。
         """
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM documents")
-            return cur.fetchone()[0] or 0
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM documents")
+                return cur.fetchone()[0] or 0
 
     # ------------------------------------------------------------------
     # 向量检索
     # ------------------------------------------------------------------
 
-    @_locked
     def search(
         self,
         query_vec: List[float],
@@ -420,8 +374,6 @@ class PgvectorStore:
         Returns:
             [{"content", "score", "law_name", "chapter", "article_range", ...}, ...]
         """
-        self._ensure_connection()
-
         conditions = []
         # params 顺序必须匹配 SQL: SELECT %s → WHERE %s ... → ORDER BY %s → LIMIT %s
         params = [query_vec]  # SELECT 子句中的向量
@@ -446,18 +398,19 @@ class PgvectorStore:
         params.append(query_vec)
         params.append(top_k)
 
-        with self._conn.cursor() as cur:
-            cur.execute(
-                f"SELECT dc.content, dc.metadata, dc.embedding_model, "
-                f"1 - (dc.embedding <=> %s::halfvec) AS score "
-                f"FROM document_chunks dc "
-                f"JOIN documents d ON dc.doc_id = d.id "
-                f"{where} "
-                f"ORDER BY dc.embedding <=> %s::halfvec "
-                f"LIMIT %s",
-                params,
-            )
-            rows = cur.fetchall()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT dc.content, dc.metadata, dc.embedding_model, "
+                    f"1 - (dc.embedding <=> %s::halfvec) AS score "
+                    f"FROM document_chunks dc "
+                    f"JOIN documents d ON dc.doc_id = d.id "
+                    f"{where} "
+                    f"ORDER BY dc.embedding <=> %s::halfvec "
+                    f"LIMIT %s",
+                    params,
+                )
+                rows = cur.fetchall()
 
         results = []
         for row in rows:
@@ -496,28 +449,25 @@ class PgvectorStore:
     # 索引管理
     # ------------------------------------------------------------------
 
-    @_locked
     def fetch_all_active_chunks(self) -> list[tuple[str, dict]]:
         """返回全部 active 文档块 (content, metadata)。
 
-        供 BM25 索引构建使用。必须通过本方法（已加锁）读取，
-        避免外部直接访问共享连接造成线程竞争。
+        供 BM25 索引构建使用。每次调用借用独立连接，无共享连接竞争。
         """
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute(
-                "SELECT dc.content, dc.metadata "
-                "FROM document_chunks dc "
-                "JOIN documents d ON dc.doc_id = d.id "
-                "WHERE d.status = 'active'"
-            )
-            return cur.fetchall()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT dc.content, dc.metadata "
+                    "FROM document_chunks dc "
+                    "JOIN documents d ON dc.doc_id = d.id "
+                    "WHERE d.status = 'active'"
+                )
+                return cur.fetchall()
 
-    @_locked
     def reindex(self):
         """重建 HNSW 索引（大量写入后建议执行）"""
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute("REINDEX INDEX idx_chunks_embedding")
-        self._conn.commit()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("REINDEX INDEX idx_chunks_embedding")
+            conn.commit()
         logger.info("HNSW 索引重建完成")

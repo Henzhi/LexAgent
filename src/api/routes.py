@@ -251,7 +251,7 @@ async def health():
     健康检查本身挂掉会让负载均衡摘掉所有实例，比信息缺失严重得多。
     """
     try:
-        from src.config import LLM_MODEL
+        from src.config import LLM_MODEL, APP_VERSION
 
         eng = get_engine() if not AGENT_ENABLED else get_agent()
 
@@ -271,7 +271,7 @@ async def health():
         degraded, degraded_reason, active_backend = _llm_degraded_state()
         return HealthResponse(
             status="ok",
-            version="0.1.0",
+            version=APP_VERSION,
             index_ready=index_ready,
             doc_count=doc_count,
             llm_model=LLM_MODEL,

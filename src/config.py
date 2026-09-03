@@ -315,3 +315,8 @@ PG_CONN = os.getenv("PG_CONN", "postgresql://lawrag@localhost:5432/lawrag")
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = _safe_int("PORT", 8000)
+
+
+# 应用版本（2026-09-03 收敛为单一来源：与 pyproject.toml 保持一致，bump 只改一处）。
+# 容器/无 pyproject 环境可经 APP_VERSION 覆盖。
+APP_VERSION = os.getenv("APP_VERSION", "0.2.0")

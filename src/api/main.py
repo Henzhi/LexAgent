@@ -21,6 +21,7 @@ from uuid import uuid4
 from .routes import router as api_router
 from .routes import auth_router
 from .models import ErrorResponse
+from src.config import APP_VERSION
 
 STATIC_DIR = Path(__file__).resolve().parent.parent.parent / "static"
 logger = logging.getLogger(__name__)
@@ -136,7 +137,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Law-RAG-Agent",
     description="基于本地 LLM 的法律法规智能问答系统",
-    version="0.1.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 

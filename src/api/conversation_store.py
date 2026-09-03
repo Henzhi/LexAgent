@@ -130,6 +130,34 @@ class ConversationStore:
             )
         self._conn.commit()
 
+    @_locked
+    def append_session(self, user_id: str, session_id: str, messages: list[dict]) -> int:
+        """向会话**追加**消息（增量保存），返回追加后的总条数。
+
+        背景（2026-09-03 审查整改）：前端此前每轮结束上传整个 messages 数组，
+        对话越长 payload 越大（O(n²) 流量）。增量模式下前端只传本轮新增的
+        消息，服务端用 JSONB 的 `||` 拼接**在数据库内**原子完成追加——
+        并发追加也不会互相覆盖。
+
+        ⚠️ 追加语义只进不出：消息删除仍走全量 save_session 覆盖。
+        """
+        self._ensure_connection()
+        messages_json = json.dumps(messages, ensure_ascii=False)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO conversations (user_id, session_id, messages, created_at, updated_at)
+                VALUES (%s, %s, %s::jsonb, now(), now())
+                ON CONFLICT (user_id, session_id)
+                DO UPDATE SET messages = conversations.messages || %s::jsonb, updated_at = now()
+                RETURNING jsonb_array_length(messages)
+                """,
+                (user_id, session_id, messages_json, messages_json),
+            )
+            row = cur.fetchone()
+        self._conn.commit()
+        return int(row[0]) if row else len(messages)
+
     def load_history(self, user_id: str, session_id: str, limit: int = 50) -> list[dict]:
         """加载会话的完整对话历史"""
         self._ensure_connection()

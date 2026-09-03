@@ -231,6 +231,8 @@ async function loadCurrentSession() {
     const data = await loadHistory(chat.sessionId)
     if (data.history?.length) {
       chat.messages = data.history
+      // 增量保存基线：历史已存于服务端，之后只追加新消息
+      savedCount.value = chat.messages.length
       // 从最后一条 assistant 消息中恢复 thinkingTraces
       const lastMsg = chat.messages[chat.messages.length - 1]
       if (lastMsg?.role === 'assistant' && lastMsg.thinking?.length) {
@@ -243,14 +245,59 @@ async function loadCurrentSession() {
       answered.value = true
       await nextTick()
       scrollBottom()
+    } else {
+      savedCount.value = 0
     }
-  } catch { /* no history */ }
+  } catch {
+    // 历史加载失败：基线归零，下轮保存走全量（与旧行为一致）
+    savedCount.value = 0
+  }
 }
 
 function scrollBottom() {
   if (messagesEl.value) {
     messagesEl.value.scrollTop = messagesEl.value.scrollHeight
   }
+}
+
+// 流式渲染节流（2026-09-03 审查整改）：此前每个 token 都 await nextTick() +
+// 读 scrollHeight（强制同步布局），长回答下 DOM patch 与重排次数 = token 数。
+// 改为 requestAnimationFrame 合并——同一帧内到达的多个 token 只做一次滚动 +
+// 一次布局，读 scrollHeight 的频率上限 = 刷新率而非 token 数。
+let scrollScheduled = false
+function scheduleScroll() {
+  if (scrollScheduled) return
+  scrollScheduled = true
+  requestAnimationFrame(() => {
+    scrollScheduled = false
+    scrollBottom()
+  })
+}
+
+// 会话增量保存（2026-09-03 审查整改）：此前每轮结束上传整个 messages 数组，
+// 历史越长 payload 越大（O(n²) 流量）。savedCount 记录已保存的消息数，
+// 之后每轮只传新增部分（mode='append'），服务端在数据库内原子拼接。
+// - 首次保存（savedCount=0）：全量建立基线；
+// - 加载历史后：savedCount=历史条数，新对话只追加；
+// - 保存失败：不推进 savedCount，下次保存自动重传该段（宁可多传不丢消息）；
+// - saveChain 串行化：上一轮保存未完成时下一轮排队，避免并发追加重复。
+const savedCount = ref(0)
+let saveChain = Promise.resolve()
+
+function persistSession() {
+  const total = chat.messages.length
+  if (total === 0 || total < savedCount.value) return saveChain
+  const baseline = savedCount.value
+  const body = baseline === 0 ? chat.messages : chat.messages.slice(baseline)
+  const mode = baseline === 0 ? 'replace' : 'append'
+  saveChain = saveChain
+    .then(() =>
+      saveSession(chat.sessionId, body, mode).then(() => {
+        savedCount.value = Math.max(savedCount.value, total)
+      })
+    )
+    .catch(() => {})
+  return saveChain
 }
 
 async function handleSend(query) {
@@ -372,10 +419,14 @@ async function runStream(query, recent) {
             } else {
               chat.messages.push({ role: 'assistant', content: answer })
             }
-            await nextTick()
-            scrollBottom()
+            // rAF 节流：同帧内多个 token 只触发一次滚动（不再逐 token 强制布局）
+            scheduleScroll()
           }
         }
+        // 流结束兜底：把最后一批 token 的滚动补上（此时 scheduleScroll 可能
+        // 尚未执行或已取消），再精确滚一次
+        await nextTick()
+        scrollBottom()
         break
       } catch (e) {
         // D-M3-12：仅"非用户主动取消的网络中断"自动重连续流（最多 2 次）；
@@ -391,7 +442,7 @@ async function runStream(query, recent) {
       chat.messages.push({ role: 'assistant', content: '抱歉，没有生成回答，请重试。' })
     } else {
       chat.messages[chat.messages.length - 1] = { role: 'assistant', content: answer, thinking: [...thinkingTraces.value], sources }
-      saveSession(chat.sessionId, chat.messages).catch(() => {})
+      persistSession().catch(() => {})
       await refreshSessions()
     }
   } catch (e) {
@@ -413,6 +464,7 @@ async function handleNewChat() {
   chat.newSession()
   chat.sending = false
   chat.messages = []
+  savedCount.value = 0  // 新会话：增量保存基线归零
   thinkingTraces.value = []
   answered.value = false
   confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '' }
@@ -425,6 +477,7 @@ async function handleSelect(sessionId) {
   localStorage.setItem('lawrag_session', sessionId)
   chat.sending = false
   chat.messages = []
+  savedCount.value = 0  // 切换会话：基线归零，由 loadCurrentSession 重新建立
   thinkingTraces.value = []
   answered.value = false
   confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '' }

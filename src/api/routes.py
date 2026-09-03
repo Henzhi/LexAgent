@@ -964,7 +964,11 @@ def _persist_memory_background(user_id: str, session_id: str, messages: list[dic
 
 @router.post("/conversations/{session_id}")
 def save_session(session_id: str, body: dict, user_id: str = Depends(get_current_user)):
-    """保存整个会话的 JSON 消息数组（每次整体覆盖，不逐条插入）
+    """保存会话消息（默认全量覆盖；body 带 `mode: "append"` 时增量追加）
+
+    增量模式（2026-09-03 审查整改）：前端只传本轮新增的消息，服务端在数据库内
+    用 JSONB `||` 原子拼接——对话越长不再上传越大（原先 O(n²) 流量）。
+    首次保存（或删除消息后）仍走默认全量模式建立基线。
 
     保存完成后若消息数达到记忆触发阈值，后台异步生成摘要固化长期记忆
     （幂等 UPSERT，同一会话重复保存不会产生重复记忆）。
@@ -980,16 +984,25 @@ def save_session(session_id: str, body: dict, user_id: str = Depends(get_current
     payload_size = len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
     if payload_size > _SAVE_MAX_BYTES:
         raise HTTPException(400, f"会话体积过大: {payload_size / 1024 / 1024:.1f}MB（限制 2MB）")
-    store.save_session(user_id=user_id, session_id=session_id, messages=messages)
+    mode = body.get("mode", "replace")
+    if mode == "append":
+        total = store.append_session(user_id=user_id, session_id=session_id, messages=messages)
+    elif mode == "replace":
+        store.save_session(user_id=user_id, session_id=session_id, messages=messages)
+        total = len(messages)
+    else:
+        raise HTTPException(400, f"不支持的保存模式: {mode}（可用 replace | append）")
 
-    # 异步触发记忆固化（≥6 轮才写，内部幂等）
+    # 异步触发记忆固化（≥6 轮才写，内部幂等）——按追加后的总条数判断；
+    # 记忆固化需要**完整**会话（摘要基于全文），增量模式下从库里读回全量
     from src.memory.conversation import SUMMARY_TRIGGER_ROUNDS
 
-    if len(messages) >= SUMMARY_TRIGGER_ROUNDS:
-        resp = JSONResponse({"ok": True})
-        resp.background = BackgroundTask(_persist_memory_background, user_id, session_id, messages)
+    if total >= SUMMARY_TRIGGER_ROUNDS:
+        full_messages = store.load_history(user_id=user_id, session_id=session_id, limit=0)
+        resp = JSONResponse({"ok": True, "total": total})
+        resp.background = BackgroundTask(_persist_memory_background, user_id, session_id, full_messages)
         return resp
-    return {"ok": True}
+    return {"ok": True, "total": total}
 
 
 @router.delete("/conversations/{session_id}")

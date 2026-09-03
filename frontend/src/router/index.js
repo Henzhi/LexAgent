@@ -3,12 +3,14 @@ import LoginView from '../views/LoginView.vue'
 import ChatView from '../views/ChatView.vue'
 import KnowledgeView from '../views/KnowledgeView.vue'
 import CrawlView from '../views/CrawlView.vue'
+import UsagePanel from '../views/UsagePanel.vue'
 
 const routes = [
   { path: '/', name: 'chat', component: ChatView, meta: { requiresAuth: true } },
   { path: '/login', name: 'login', component: LoginView },
   { path: '/knowledge', name: 'knowledge', component: KnowledgeView, meta: { requiresAuth: true } },
   { path: '/crawl', name: 'crawl', component: CrawlView, meta: { requiresAuth: true } },
+  { path: '/usage', name: 'usage', component: UsagePanel, meta: { requiresAuth: true } },
 ]
 
 const router = createRouter({

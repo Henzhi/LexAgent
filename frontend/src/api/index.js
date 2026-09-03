@@ -254,3 +254,33 @@ export const startCrawl = (params) => {
 
 export const getCrawlStatus = (taskId) =>
   fetch(`${BASE}/crawl/status/${taskId}`, { headers: authHeaders() }).then(handleError)
+
+
+// F15 用量计费面板
+export const getUsageSummary = (days = 7) =>
+  fetch(`${BASE}/usage/summary?days=${days}`, { headers: authHeaders() }).then(handleError)
+
+export const getUsageDetail = (opts = {}) => {
+  const qs = new URLSearchParams()
+  if (opts.day) qs.set('day', opts.day)
+  if (opts.offset != null) qs.set('offset', opts.offset)
+  if (opts.limit != null) qs.set('limit', opts.limit)
+  const q = qs.toString()
+  return fetch(`${BASE}/usage/detail${q ? `?${q}` : ''}`, { headers: authHeaders() }).then(handleError)
+}
+
+export const getUsageBreakdown = (days = 7, group = 'source') =>
+  fetch(`${BASE}/usage/breakdown?days=${days}&group=${group}`, { headers: authHeaders() }).then(handleError)
+
+export const getUsagePricing = () =>
+  fetch(`${BASE}/usage/pricing`, { headers: authHeaders() }).then(handleError)
+
+export const updateUsagePricing = (items) =>
+  fetch(`${BASE}/usage/pricing`, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify({ items }),
+  }).then(handleError)
+
+export const getBudgetStatus = () =>
+  fetch(`${BASE}/budget`, { headers: authHeaders() }).then(handleError)

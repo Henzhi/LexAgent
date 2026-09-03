@@ -30,6 +30,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
             知识库
           </router-link>
+          <router-link to="/usage" class="nav-link">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M9 12l2 2 4-4"/><path d="M21 3v6h-6"/></svg>
+            用量计费
+          </router-link>
         </div>
       </header>
 

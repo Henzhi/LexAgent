@@ -1,11 +1,15 @@
 """
-对话记忆管理器 (v0.5)
+对话记忆管理器 (v0.6，2026-09-03 连接池整改)
 
 实现跨会话的记忆存储和检索:
   - 摘要生成: 对话 > 6 轮时，LLM 自动生成结构化摘要 + 关键实体提取
   - 存储: 摘要向量写入 pgvector conversation_memories 表，TTL 30 天
   - 检索: 新问题时语义检索 Top-3 历史摘要，时间衰减排序
   - 注入: 结果拼入 Prompt [历史参考] 段，让 LLM 带着记忆回答
+
+连接模型：每次 DB 操作从进程级连接池借用（`src.db.pool.db_connection`）。
+关键取舍：save_memory 的 LLM 摘要生成（秒级延迟）**不持有** PG 连接——
+只在幂等检查与 UPSERT 两段短暂借用，避免占用池连接等模型返回。
 
 用法:
     mgr = ConversationMemoryManager(store, embedder, llm)
@@ -18,32 +22,8 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from functools import wraps
-
-import psycopg2
-from pgvector.psycopg2 import register_vector
 
 logger = logging.getLogger(__name__)
-
-
-def _locked(method):
-    """串行化对共享 PG 连接的访问（psycopg2 连接非线程安全）。
-
-    流式桥接改造后，记忆检索可能在多个请求的线程池 worker 中并发执行，
-    必须保护共享连接。
-    """
-
-    @wraps(method)
-    def wrapper(self, *args, **kwargs):
-        lock = getattr(self, "_lock", None)
-        if lock is None:
-            # 防御：兼容绕过 __init__ 的构造方式（如测试 mock）
-            lock = threading.Lock()
-            self._lock = lock
-        with lock:
-            return method(self, *args, **kwargs)
-
-    return wrapper
 
 
 # 摘要生成 Prompt
@@ -80,7 +60,7 @@ MEMORY_TTL_DAYS = 30
 class ConversationMemoryManager:
     """对话记忆管理器
 
-    独立管理自己的 PG 连接，不依赖 PgvectorStore 的内部实现。
+    DB 连接统一走进程级连接池（每次操作借用），不依赖 PgvectorStore。
     """
 
     def __init__(
@@ -92,74 +72,66 @@ class ConversationMemoryManager:
         """记忆管理器。
 
         Args:
-            conn_string: PG 连接串
+            conn_string: PG 连接串（兼容签名；实际连接统一走进程级连接池）
             embedder: 用于摘要向量化；仅执行 clean_expired 的清理场景可为 None
             llm: 用于摘要生成；仅执行 clean_expired 的清理场景可为 None
         """
         self._embedder = embedder
         self._llm = llm
-        # 保存原始连接串用于重连 — conn.dsn 不保证回传密码，重连可能失败
         self._conn_string = conn_string
-        self._conn = psycopg2.connect(conn_string)
-        register_vector(self._conn)
-        # schema 迁移状态（importance 列 + 幂等唯一索引），连接重建后需重跑
         self._schema_ready = False
+        self._schema_lock = threading.Lock()
 
-    def _ensure_schema(self):
+    def _ensure_schema(self, conn) -> None:
         """幂等 schema 迁移：旧库补 importance 列 + (user_id, session_id) 唯一索引。
 
         唯一索引是 save_memory 幂等写入（UPSERT）的前提；
         importance 列用于检索时的重要度加权。表不存在时忽略（init.sql 会建表）。
+        多线程首跑竞争无害（DDL 幂等）。
         """
         if self._schema_ready:
             return
-        self._ensure_connection()
-        try:
-            with self._conn.cursor() as cur:
-                cur.execute("ALTER TABLE conversation_memories ADD COLUMN IF NOT EXISTS importance REAL DEFAULT 0.6")
-                cur.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_user_session "
-                    "ON conversation_memories(user_id, session_id)"
-                )
-            self._conn.commit()
-            self._schema_ready = True
-        except Exception as e:
-            logger.warning(f"记忆表 schema 迁移失败（表未创建？）: {e}")
-            self._conn.rollback()
-            self._schema_ready = False
-
-    def _ensure_connection(self):
-        """检查连接是否存活，断开则自动重连"""
-        try:
-            with self._conn.cursor() as cur:
-                cur.execute("SELECT 1")
-        except Exception:
-            logger.warning("记忆管理器: PG 连接已断开，尝试重连...")
+        with self._schema_lock:
+            if self._schema_ready:
+                return
             try:
-                self._conn.close()
-            except Exception as close_e:
-                logger.debug(f"记忆管理器 关闭旧连接失败（可忽略）: {close_e}")
-            self._conn = psycopg2.connect(self._conn_string)
-            register_vector(self._conn)
-            logger.info("记忆管理器: PG 重连成功")
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "ALTER TABLE conversation_memories ADD COLUMN IF NOT EXISTS importance REAL DEFAULT 0.6"
+                    )
+                    cur.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_user_session "
+                        "ON conversation_memories(user_id, session_id)"
+                    )
+                conn.commit()
+                self._schema_ready = True
+            except Exception as e:
+                logger.warning(f"记忆表 schema 迁移失败（表未创建？）: {e}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                self._schema_ready = False
 
-    @_locked
     def close(self):
-        """关闭数据库连接"""
-        self._conn.close()
+        """兼容 no-op：连接由池管理，无常驻连接可关。"""
+        return None
 
-    @_locked
     def clean_expired(self) -> int:
         """清理过期的对话记忆（expires_at < NOW()）。
 
         检索时已通过 WHERE expires_at > NOW() 过滤过期行，此处负责真正
         删除累积的过期记录，避免表无限膨胀。由后台定时任务周期调用。
         """
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute("DELETE FROM conversation_memories WHERE expires_at < NOW()")
-            count = cur.rowcount
-        self._conn.commit()
+        from src.db.pool import db_connection
+
+        count = 0
+        with db_connection() as conn:
+            self._ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM conversation_memories WHERE expires_at < NOW()")
+                count = cur.rowcount
+            conn.commit()
         if count:
             logger.info(f"对话记忆清理: {count} 条过期")
         return count
@@ -188,7 +160,6 @@ class ConversationMemoryManager:
             return 0.8
         return 0.6
 
-    @_locked
     def save_memory(
         self,
         user_id: str,
@@ -211,19 +182,22 @@ class ConversationMemoryManager:
         Returns:
             摘要文本（用于日志），未触发/已存在则返回 None
         """
+        from src.db.pool import db_connection
+
         if len(messages) < SUMMARY_TRIGGER_ROUNDS:
             return None
 
-        self._ensure_schema()
-
         # 幂等检查：同会话已存摘要且轮数不少于本次 → 跳过。
         # 前端可能多次整体保存同一会话，不幂等会反复插摘要导致记忆污染。
-        with self._conn.cursor() as cur:
-            cur.execute(
-                "SELECT message_count FROM conversation_memories WHERE user_id = %s AND session_id = %s",
-                (user_id, session_id),
-            )
-            row = cur.fetchone()
+        # ⚠️ 只在检查这段短暂借用连接，随后 LLM 摘要生成（秒级）不占连接。
+        with db_connection() as conn:
+            self._ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT message_count FROM conversation_memories WHERE user_id = %s AND session_id = %s",
+                    (user_id, session_id),
+                )
+                row = cur.fetchone()
         if row is not None and row[0] is not None and row[0] >= len(messages):
             logger.debug(
                 f"记忆已存在且对话未增长，跳过写入: session={session_id[:8]}... (stored={row[0]}, now={len(messages)})"
@@ -245,31 +219,31 @@ class ConversationMemoryManager:
         summary_vec = self._embedder.embed_query(summary)
 
         # UPSERT 写入 pgvector（幂等：同 (user_id, session_id) 覆盖并刷新 TTL）
-        self._ensure_connection()
-        with self._conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO conversation_memories "
-                "(user_id, session_id, summary, summary_embed, entities, message_count, importance) "
-                "VALUES (%s, %s, %s, %s::halfvec, %s::jsonb, %s, %s) "
-                "ON CONFLICT (user_id, session_id) "
-                "DO UPDATE SET summary = EXCLUDED.summary, "
-                "  summary_embed = EXCLUDED.summary_embed, "
-                "  entities = EXCLUDED.entities, "
-                "  message_count = EXCLUDED.message_count, "
-                "  importance = EXCLUDED.importance, "
-                "  expires_at = NOW() + INTERVAL '%s days'",
-                (
-                    user_id,
-                    session_id,
-                    summary,
-                    summary_vec,
-                    json.dumps(entities or {}, ensure_ascii=False),
-                    len(messages),
-                    importance,
-                    MEMORY_TTL_DAYS,
-                ),
-            )
-        self._conn.commit()
+        with db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO conversation_memories "
+                    "(user_id, session_id, summary, summary_embed, entities, message_count, importance) "
+                    "VALUES (%s, %s, %s, %s::halfvec, %s::jsonb, %s, %s) "
+                    "ON CONFLICT (user_id, session_id) "
+                    "DO UPDATE SET summary = EXCLUDED.summary, "
+                    "  summary_embed = EXCLUDED.summary_embed, "
+                    "  entities = EXCLUDED.entities, "
+                    "  message_count = EXCLUDED.message_count, "
+                    "  importance = EXCLUDED.importance, "
+                    "  expires_at = NOW() + INTERVAL '%s days'",
+                    (
+                        user_id,
+                        session_id,
+                        summary,
+                        summary_vec,
+                        json.dumps(entities or {}, ensure_ascii=False),
+                        len(messages),
+                        importance,
+                        MEMORY_TTL_DAYS,
+                    ),
+                )
+            conn.commit()
         logger.info(
             f"对话记忆已保存: user={user_id[:8]}..., session={session_id[:8]}..., "
             f"msg_count={len(messages)}, importance={importance}"
@@ -280,7 +254,6 @@ class ConversationMemoryManager:
     # 记忆检索
     # ------------------------------------------------------------------
 
-    @_locked
     def retrieve(
         self,
         user_id: str,
@@ -299,22 +272,24 @@ class ConversationMemoryManager:
         Returns:
             [{"summary", "entities", "score", "importance", "message_count", "created_at"}, ...]
         """
+        from src.db.pool import db_connection
+
         query_vec = self._embedder.embed_query(query)
 
-        self._ensure_connection()
-        self._ensure_schema()
-        with self._conn.cursor() as cur:
-            cur.execute(
-                "SELECT summary, entities, message_count, created_at, importance, "
-                "1 - (summary_embed <=> %s::halfvec) AS score "
-                "FROM conversation_memories "
-                "WHERE user_id = %s "
-                "  AND expires_at > NOW() "
-                "ORDER BY summary_embed <=> %s::halfvec "
-                "LIMIT %s",
-                (query_vec, user_id, query_vec, top_k),
-            )
-            rows = cur.fetchall()
+        with db_connection() as conn:
+            self._ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT summary, entities, message_count, created_at, importance, "
+                    "1 - (summary_embed <=> %s::halfvec) AS score "
+                    "FROM conversation_memories "
+                    "WHERE user_id = %s "
+                    "  AND expires_at > NOW() "
+                    "ORDER BY summary_embed <=> %s::halfvec "
+                    "LIMIT %s",
+                    (query_vec, user_id, query_vec, top_k),
+                )
+                rows = cur.fetchall()
 
         if not rows:
             return []

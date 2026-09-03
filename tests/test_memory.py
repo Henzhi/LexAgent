@@ -146,45 +146,50 @@ class TestSaveMemoryJsonb:
     复现：会话保存异步固化记忆时 ProgrammingError: can't adapt type 'dict'。
     """
 
-    def test_entities_serialized_to_json_string(self):
+    def test_entities_serialized_to_json_string(self, monkeypatch):
+        import contextlib
         import json as _json
-        from unittest.mock import MagicMock, patch
+        import threading
+        from unittest.mock import MagicMock
+
         from src.memory.conversation import ConversationMemoryManager
 
-        import threading
+        mgr = object.__new__(ConversationMemoryManager)
+        mgr._embedder = MagicMock()
+        mgr._llm = MagicMock()
+        mgr._conn_string = "fake"
+        mgr._schema_ready = True  # 跳过 schema 迁移
+        mgr._schema_lock = threading.Lock()
+        mgr._embedder.embed_query.return_value = [0.1] * 1024
+        mgr._llm.chat.return_value = (
+            "案件类型: 劳动争议\n涉及法律: 劳动法\n关键事实: 试用期被辞退\n已回答: 无\n未解决: 赔偿金额"
+        )
 
-        with patch("src.memory.conversation.psycopg2.connect") as mock_connect:
-            fake_conn = MagicMock()
-            fake_cursor = MagicMock()
-            fake_cursor.__enter__.return_value = fake_cursor
-            fake_cursor.fetchone.return_value = None  # 幂等检查:无已有记录
-            fake_conn.cursor.return_value = fake_cursor
-            mock_connect.return_value = fake_conn
+        fake_conn = MagicMock()
+        fake_cursor = MagicMock()
+        fake_cursor.__enter__.return_value = fake_cursor
+        fake_cursor.fetchone.return_value = None  # 幂等检查:无已有记录
+        fake_conn.cursor.return_value = fake_cursor
 
-            # 绕过 __init__(register_vector 需要真实连接)
-            mgr = object.__new__(ConversationMemoryManager)
-            mgr._embedder = MagicMock()
-            mgr._llm = MagicMock()
-            mgr._conn = fake_conn
-            mgr._conn_string = "fake"
-            mgr._lock = threading.Lock()
-            mgr._schema_ready = True  # 跳过 schema 迁移
-            mgr._embedder.embed_query.return_value = [0.1] * 1024
-            mgr._llm.chat.return_value = (
-                "案件类型: 劳动争议\n涉及法律: 劳动法\n关键事实: 试用期被辞退\n已回答: 无\n未解决: 赔偿金额"
-            )
+        # v0.6 连接池整改：save_memory 每次 DB 段都经 db_connection()（函数级
+        # from src.db.pool import db_connection → patch 模块属性即可拦）
+        @contextlib.contextmanager
+        def _fake_db_connection():
+            yield fake_conn
 
-            messages = [{"role": "user", "content": f"问题{i}"} for i in range(8)]
-            mgr.save_memory("user1", "session1", messages)
+        monkeypatch.setattr("src.db.pool.db_connection", _fake_db_connection)
 
-            # 取 INSERT 的参数
-            insert_sql, params = fake_cursor.execute.call_args_list[-1][0]
-            assert "::jsonb" in insert_sql  # entities 显式 cast jsonb
-            entities_param = params[4]
-            # 必须是可被 psycopg2 适配的类型(JSON 字符串),而非 dict
-            assert not isinstance(entities_param, dict)
-            assert isinstance(entities_param, str)
-            _json.loads(entities_param)  # 且是合法 JSON
+        messages = [{"role": "user", "content": f"问题{i}"} for i in range(8)]
+        mgr.save_memory("user1", "session1", messages)
+
+        # 取 INSERT 的参数
+        insert_sql, params = fake_cursor.execute.call_args_list[-1][0]
+        assert "::jsonb" in insert_sql  # entities 显式 cast jsonb
+        entities_param = params[4]
+        # 必须是可被 psycopg2 适配的类型(JSON 字符串),而非 dict
+        assert not isinstance(entities_param, dict)
+        assert isinstance(entities_param, str)
+        _json.loads(entities_param)  # 且是合法 JSON
 
 
 class TestCleanExpired:
@@ -199,8 +204,10 @@ class TestCleanExpired:
         assert sig.parameters["embedder"].default is None
         assert sig.parameters["llm"].default is None
 
-    def test_clean_expired_executes_delete(self):
+    def test_clean_expired_executes_delete(self, monkeypatch):
+        import contextlib
         from unittest.mock import MagicMock
+
         from src.memory.conversation import ConversationMemoryManager
 
         mgr = object.__new__(ConversationMemoryManager)
@@ -210,9 +217,15 @@ class TestCleanExpired:
         fake_cursor.__enter__.return_value = fake_cursor
         fake_cursor.rowcount = 3
         fake_conn.cursor.return_value = fake_cursor
-        mgr._conn = fake_conn
         mgr._conn_string = "fake"
         mgr._schema_ready = True
+        mgr._schema_lock = __import__("threading").Lock()
+
+        @contextlib.contextmanager
+        def _fake_db_connection():
+            yield fake_conn
+
+        monkeypatch.setattr("src.db.pool.db_connection", _fake_db_connection)
 
         count = mgr.clean_expired()
         assert count == 3
@@ -221,8 +234,10 @@ class TestCleanExpired:
         assert "DELETE FROM conversation_memories" in executed
         assert "expires_at < NOW()" in executed
 
-    def test_clean_expired_zero(self):
+    def test_clean_expired_zero(self, monkeypatch):
+        import contextlib
         from unittest.mock import MagicMock
+
         from src.memory.conversation import ConversationMemoryManager
 
         mgr = object.__new__(ConversationMemoryManager)
@@ -231,9 +246,15 @@ class TestCleanExpired:
         fake_cursor.__enter__.return_value = fake_cursor
         fake_cursor.rowcount = 0
         fake_conn.cursor.return_value = fake_cursor
-        mgr._conn = fake_conn
         mgr._conn_string = "fake"
         mgr._schema_ready = True
+        mgr._schema_lock = __import__("threading").Lock()
+
+        @contextlib.contextmanager
+        def _fake_db_connection():
+            yield fake_conn
+
+        monkeypatch.setattr("src.db.pool.db_connection", _fake_db_connection)
 
         assert mgr.clean_expired() == 0
 

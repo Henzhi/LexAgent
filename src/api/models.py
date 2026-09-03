@@ -26,15 +26,27 @@ class CancelRequest(BaseModel):
 class ConfirmRequest(BaseModel):
     """F12 v1 人工确认请求（D-M3-9a）：B 类场景确认/取消
 
-    确认后前端重新发起 /api/chat/stream（同一 session_id），服务端查到
-    确认标记即正常执行；标记 TTL 默认 10 分钟（Q7）。
+    approved=True 时服务端写入确认标记后**在同一 SSE 连接上直接续跑生成**
+    （前端无需再发一次 /api/chat/stream，2026-09-03 交互优化）；
+    标记 TTL 默认 10 分钟（Q7）——兼容旧客户端：确认后重发 stream 也能直接执行。
+    approved=False 仅清除标记，返回 JSON。
     """
 
     session_id: str = Field(..., min_length=1, max_length=128, description="会话 ID（与 stream 请求一致）")
     scene_id: str = Field(..., min_length=1, max_length=64, description="confirmation_required 事件返回的场景 id")
     query: str = Field(..., min_length=1, max_length=2000, description="待确认的原始提问（标记比对防换题）")
-    approved: bool = Field(default=True, description="True=确认执行；False=取消")
+    approved: bool = Field(default=True, description="True=确认执行并流式续跑；False=取消")
     confirm_id: str = Field(default="", description="confirmation_required 事件回传的 confirm_id")
+    # 确认后在同一连接上直接续跑生成（2026-09-03）：
+    history: list[dict] = Field(
+        default_factory=list,
+        description="本次提问之前的对话历史（不含当前问题），供确认后直接续跑",
+    )
+    request_id: str = Field(
+        default="",
+        max_length=64,
+        description="续跑流的请求 ID：断线重连游标 / 主动取消标记（与 /chat/stream 同语义）",
+    )
 
 
 class RewriteRequest(BaseModel):

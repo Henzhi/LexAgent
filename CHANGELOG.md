@@ -4,6 +4,12 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-03】fix(体验)：三处交互 Bug（合同误判 B 类 / F12 确认两跳 / 切页断流）**：用户实测问题修复。决策留痕 D-0903-6/7/8。
+  - **fix(场景分类误触发，D-0903-6)**：`src/rag/scenes.py` contract_draft/contract_review **移除普通关键词里的裸「合同/协议/条款」**，只由动作强特征词触发，并补足常见触发词（帮我审/审一下/合同模板/范本…）——实测首页 6 条示例里 2 条含「劳动合同」的普通咨询此前全被判成 contract_draft（B 类弹确认），「合同纠纷去哪个法院起诉」「租房合同没到期想退租」同样中招；修复后全部回落 A 类自动回答。场景清单是数据（只改 `SCENES`），分类逻辑零改动。
+  - **feat(F12 确认同连接续跑，D-0903-7)**：`approved=True` 的 `POST /api/chat/confirm` 在写确认标记后直接返回 SSE 事件流（与 `/chat/stream` 共用抽取出的 `_build_stream_response`：断线重连/主动取消/事件日志/归属登记全同语义），前端新增 `confirmSceneStream` 消费该流——点「确认执行」后直接出答案，不再"确认一次 + 再发一次 /chat/stream"两跳；`ConfirmRequest` 新增 `history`/`request_id`（续跑携带本提问之前轮次，避免重复把当前问题当历史）。标记仍写入 → 旧客户端重发 stream 兼容。F12 接口测试随新语义重写（假 Agent 防真 LLM）。
+  - **fix(前端切页断流/延迟全冒，D-0903-8)**：`ChatView` 路由切换不再 abort 掉 SSE——生成在后台跑完并持续写回 Pinia store（新增 `activeStream` 镜像思考轨迹），组件卸载只禁局部/DOM 更新（`viewActive` 守卫）；回页 `onMounted` 有进行中请求则跳过历史重拉（防覆盖在途内容），无则走服务端历史并做「本地 ahead 保护」；会话保存基线与串行队列从组件迁入 chat store（跨路由存活，防重挂载基线丢失 → 误全量 replace 与旧保存竞争重复）。主动中断请用「停止」按钮。
+  - **refactor(api/routes.py)**：`chat_stream` 尾部抽 `_build_stream_response()`（Agent/固定管线选路 + 断开监听 + watchdog + 取消标记 + 归属登记）供 `/chat/stream` 与 `/chat/confirm` 复用；拒绝/预算短流统一 `_sse_response()`。验证：场景/F12/重连相关测试全绿 + 前端 `vite build` 通过。
+
 - **【2026-09-03】feat(F15)：日志与 Token 计费面板（6 commits，测试 →870+）**：M3 全部收尾后首个新功能，**旁路新增一套 token/金额观测层，不动 F14 次数熔断主链路**。方案 `docs/F15-日志与Token计费面板-技术方案.md`。
   - **DDL**：`docker/init.sql` 新增 `usage_logs`（每次付费调用一行：source/model/tool/backend、cache_hit/miss_tokens 拆分、est 估算标记、`cost_cny` 金额快照——改价不漂移历史，明细留原始 token/积分可重算）+ `pricing`（key-value 价格表）。`tests/test_f15_usage_ddl.py`（6 项文件级守卫防列失配）。
   - **存储层**：`src/observability/usage_store.py`——usage_logs 落库（失败 debug 吞掉，观测故障不拖垮主链路）、计价纯函数（deepseek 按 cache hit/miss 分档计价、ollama/qwen 免费、pkulaw 工具→积分映射 purpose 语义：语义检索 125/精确 25/识别 125）、聚合查询（纯 SQL GROUP BY **不建 rollup**，summary 补零到 N 天保证趋势图连续）、价格表 list/upsert/reset + 进程级缓存。`config.py` 新增 `PRICING_DEFAULTS`（官方刊例 2026-09-03 查证：deepseek-v4-flash 命中 ¥0.02/未命中 ¥1/输出 ¥2 每百万、tavily $0.008/credit 免费额度内仅估算、北大法宝 ¥18/6000 积分起）。`tests/test_usage_store.py`（26 项）。

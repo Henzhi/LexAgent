@@ -3,8 +3,10 @@ B 类场景人工确认标记存储（M3 / F12 v1，决策 D-M3-9a）。
 
 F12 v1 采用「进入图之前的一次确认」（路径 A，spike 结论）：确认发生在任何
 LLM 调用之前，图未开始执行、无状态需保存恢复，因此**不需要 checkpointer /
-interrupt**，一个「本会话已确认」标记即可。前端确认后重新发起
-/api/chat/stream（同一 session_id），服务端查到标记即正常执行。
+interrupt**，一个「本会话已确认」标记即可。2026-09-03（D-0903-7）起前端确认后
+**在同一 SSE 连接上直接续跑生成**（`/api/chat/confirm` approved=True 写标记并返回
+事件流）；标记语义保持兼容——旧客户端/其他入口随后重发 /api/chat/stream
+（同一 session_id）时，服务端查到标记同样正常执行。
 
 设计要点（对照 docs/M3-F12-人工确认技术方案.md §3.3 / §4 / §5）：
 - 存储：Redis `SETEX`（原子写入 + TTL），key = ``lexagent:confirm:{user}:{session}``；

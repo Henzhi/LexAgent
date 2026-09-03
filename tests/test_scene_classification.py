@@ -199,6 +199,52 @@ def test_reversed_what_is_not_mistaken_for_contract_draft():
 
 
 # ---------------------------------------------------------------------------
+# 裸通用词不得触发 B 类（D-0903-6，2026-09-03 复发修复）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "劳动合同到期不续签，公司需要支付经济补偿金吗？",  # 首页示例
+        "公司违法解除劳动合同，员工可以主张什么赔偿？",  # 首页示例
+        "签了合同但对方不履行怎么办",
+        "合同纠纷去哪个法院起诉",
+        "合同里的违约金条款有效吗",
+        "租的房子合同没到期想退租",
+        "合同违约怎么赔偿，违法吗",
+    ],
+)
+def test_contract_mention_never_forces_b_class(query):
+    """仅含「合同/协议」等通用词、无起草/审查动作的普通咨询 → 绝不能进 B 类确认。
+
+    2026-09-03 复发修复（D-0903-6）：contract_draft/contract_review 不再配裸
+    「合同」普通词。此前首页 6 条示例 2 条被判 contract_draft 弹确认。
+    """
+    match = classify_scene(query)
+    assert match.kind == KIND_A, f"{query!r} 被误判为需确认场景: {match.scene_id}"
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("帮我起草一份房屋租赁合同", "contract_draft"),
+        ("起草一个合作协议模板", "contract_draft"),
+        ("拟一份股权转让协议", "contract_draft"),
+        ("帮我审查一下这份劳动合同有没有问题", "contract_review"),
+        ("这份合同的风险点帮我审核一下", "contract_review"),
+        ("帮我审一下这份房屋租赁合同", "contract_review"),
+        ("帮我看看这份合同有没有法律风险", "contract_review"),
+    ],
+)
+def test_contract_scenes_require_action_verb(query, expected):
+    """合同起草/审查仍需动作强特征词触发（D-0903-6 后触发门槛=动作词）。"""
+    match = classify_scene(query)
+    assert match.scene_id == expected, f"{query!r} 期望 {expected}，实际 {match.scene_id}"
+    assert match.kind == KIND_B
+
+
+# ---------------------------------------------------------------------------
 # 未命中回落（REQ-UW：不因分类失败阻断回答）
 # ---------------------------------------------------------------------------
 

@@ -489,6 +489,21 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _sse_response(events: list[dict]) -> StreamingResponse:
+    """把一组事件包装成 SSE 响应（末尾带 [DONE]），供拒绝/预算等短流复用。"""
+
+    async def _gen():
+        for ev in events:
+            yield _sse(ev)
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 async def _is_disconnected(request: Request) -> bool:
     """检测 SSE 客户端是否已断开（fastapi 提供 is_disconnected）"""
     try:
@@ -556,12 +571,21 @@ def cancel_chat(req: CancelRequest):
 
 
 @router.post("/chat/confirm")
-def confirm_chat(req: ConfirmRequest):
+async def confirm_chat(
+    req: ConfirmRequest,
+    request: Request,
+    # 软鉴权（与 /chat/stream 一致）：仅为确认后续跑流做归属登记（B3）。
+    user_id: str = Depends(get_current_user),
+):
     """F12 v1 人工确认（D-M3-9a）：B 类场景的确认 / 取消标记。
 
-    确认点在进图之前（此时未发生任何 LLM 调用），approved=True 写入确认标记
-    （Redis TTL，默认 10 分钟），前端随后重新发起 /api/chat/stream（同
-    session_id）即正常执行；approved=False 清除既有标记。
+    确认点在进图之前（此时未发生任何 LLM 调用），approved=True 先写入确认标记
+    （Redis TTL，默认 10 分钟），随后**在同一 SSE 连接上直接续跑生成**
+    （2026-09-03 交互优化：前端确认后无需再发一次 /api/chat/stream）；
+    approved=False 清除既有标记并返回 JSON。
+
+    标记仍会写入：旧客户端 / 其他调用方在确认后重发 /chat/stream（同 session_id
+    同 query）也能查到标记直接执行，行为与 F12 v1 原设计兼容。
 
     场景必须是 F11 清单中的 B 类；存储失败返回 ok=False 供前端提示重试
     （确认机制故障不阻断主链路，见 ConfirmationStore 的 fail-open 语义）。
@@ -576,7 +600,26 @@ def confirm_chat(req: ConfirmRequest):
     ok = store.confirm("", req.session_id, req.query)
     if not ok:
         return JSONResponse(status_code=503, content={"ok": False, "message": "确认写入失败，请重试"})
-    return {"ok": True}
+
+    # ---- approved=True：确认后在同一连接上直接续跑生成（SSE）----
+    # 与 /chat/stream 相同的前置：输入安全 + 预算熔断（超限不进入 Agent 流程）
+    safe_query, is_safe, reject_reason = sanitize_input(req.query)
+    if not is_safe:
+        return _sse_response([{"type": "error", "content": safe_query}])
+    budget_msg = _budget_block_message()
+    if budget_msg:
+        perf_logger.warning("[confirm] budget_exceeded: llm")
+        return _sse_response(
+            [
+                {"type": "thinking", "content": "⚠️ 系统今日 AI 服务额度已用尽"},
+                {"type": "token", "content": budget_msg},
+                {"type": "meta", "sources": [], "is_casual": True},
+            ]
+        )
+
+    safe_history = _sanitize_history(req.history)
+    # 断线重连 / 主动取消语义与 /chat/stream 一致（沿用 req.request_id 作流 id）
+    return _build_stream_response(request, safe_query, safe_history, req.session_id, req.request_id, user_id)
 
 
 @router.get("/chat/stream/resume")
@@ -851,59 +894,35 @@ def _iter_engine_stream(engine, query: str, history: list) -> Iterator[dict]:
         yield {"type": "token", "content": token}
 
 
-@router.post("/chat/stream")
-async def chat_stream(
-    req: ChatRequest,
+# ---------------------------------------------------------------------------
+# Agent 流式响应（/chat/stream 与 /chat/confirm 确认后续跑共用）
+#
+# 2026-09-03：F12 确认交互优化 —— approved=True 后不再要求前端「确认一次 +
+# 再发一次 /chat/stream」两跳，确认请求本身就在同一 SSE 连接上续跑生成，
+# 断线重连 / 主动取消 / 事件日志语义与 /chat/stream 完全一致。
+# ---------------------------------------------------------------------------
+
+
+def _build_stream_response(
     request: Request,
-    # 软鉴权（产品决策：/api/chat* 匿名可用）；这里只为拿创建者身份做归属登记（B3），
-    # 匿名请求记为 anonymous 命名空间——resume 是硬鉴权，匿名创建的流本就无法重连。
-    user_id: str = Depends(get_current_user),
-):
-    t_start = time.perf_counter()
+    query: str,
+    history: list[dict],
+    session_id: str,
+    request_id: str,
+    user_id: str,
+) -> StreamingResponse:
+    """构造 Agent（或固定管线）的 SSE 流式响应，复用 /chat/stream 的完整语义。
 
-    # B3：登记流归属（resume 接口据此校验「请求者 == 创建者」，防拿别人的
-    # request_id 重放会话内容）。登记失败由 set_owner 内部告警吞掉，不阻断主链路。
-    if req.request_id:
-        get_stream_log().set_owner(req.request_id, user_id)
-
-    # 输入安全过滤（Prompt 注入 + 敏感内容检测）
-    safe_query, is_safe, reject_reason = sanitize_input(req.query)
-    if not is_safe:
-
-        async def _reject_stream():
-            yield _sse({"type": "error", "content": safe_query})
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(
-            _reject_stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    # F14：LLM 预算熔断前置检查（与非流式 /api/chat 口径一致）
-    budget_msg = _budget_block_message()
-    if budget_msg:
-        perf_logger.warning("[stream] budget_exceeded: llm")
-
-        async def _budget_stream():
-            yield _sse({"type": "thinking", "content": "⚠️ 系统今日 AI 服务额度已用尽"})
-            yield _sse({"type": "token", "content": budget_msg})
-            yield _sse({"type": "meta", "sources": [], "is_casual": True})
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(
-            _budget_stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
+    - Agent 路径优先（AGENT_ENABLED），否则回退固定管线（与 /chat/stream 同构）；
+    - request_id 非空：登记流归属（B3）→ 供 resume 鉴权、断线重连补发；
+    - 客户端断开（http.disconnect）/ /chat/cancel → 见 _bridge_sync_stream 退出语义。
+    """
     if AGENT_ENABLED:
         agent = get_agent()
-        safe_history = _sanitize_history(req.history)
 
         def _agent_gen() -> Iterator[dict]:
             # SSE 桥接已通用透传任意 dict 事件；此处仅对 tool_result 失败做日志埋点（F4）
-            for event in agent.stream(safe_query, history=safe_history, session_id=req.session_id):
+            for event in agent.stream(query, history=history, session_id=session_id):
                 if event.get("type") == "tool_result" and not event.get("ok", True):
                     perf_logger.warning(
                         f"[stream] tool_result failed: tool={event.get('tool')} "
@@ -915,13 +934,18 @@ async def chat_stream(
         mode = "agent"
     else:
         engine = get_engine()
-        history = _dicts_to_messages(_sanitize_history(req.history))
+        llm_history = _dicts_to_messages(history)
 
         def _rag_gen() -> Iterator[dict]:
-            return _iter_engine_stream(engine, safe_query, history)
+            return _iter_engine_stream(engine, query, llm_history)
 
-        gen_factory: Callable[[], Iterator[dict]] = _rag_gen
+        gen_factory = _rag_gen
         mode = "rag"
+
+    # B3：登记流归属（resume 接口据此校验「请求者 == 创建者」）。登记失败由
+    # set_owner 内部告警吞掉，不阻断主链路。
+    if request_id:
+        get_stream_log().set_owner(request_id, user_id)
 
     # 可靠的断开检测：直接监听 ASGI http.disconnect 事件。
     # （uvicorn 在连接断开后会持续返回 http.disconnect，不受
@@ -931,10 +955,10 @@ async def chat_stream(
 
     # 主动取消标记：前端停止时经 /chat/cancel 设置，覆盖代理场景
     cancel_event: threading.Event | None = None
-    if req.request_id:
+    if request_id:
         cancel_event = threading.Event()
         with _CANCEL_LOCK:
-            _CANCEL_FLAGS[req.request_id] = cancel_event
+            _CANCEL_FLAGS[request_id] = cancel_event
 
     async def _listen_disconnect() -> None:
         try:
@@ -946,12 +970,14 @@ async def chat_stream(
         except Exception:
             pass  # 连接已关闭或异常，视为已断开
 
+    t_start = time.perf_counter()
+
     async def generate():
         try:
             # 并发上限：排队等待，避免打爆供应商 / 显存
             async with _STREAM_SEMAPHORE:
                 async for event in _bridge_sync_stream(
-                    gen_factory, request, disconnect_event, cancel_event, stream_id=req.request_id
+                    gen_factory, request, disconnect_event, cancel_event, stream_id=request_id
                 ):
                     yield _sse(event)
         except Exception as e:
@@ -985,9 +1011,9 @@ async def chat_stream(
 
     async def _finalize() -> None:
         # 释放取消标记，防止泄漏
-        if req.request_id:
+        if request_id:
             with _CANCEL_LOCK:
-                _CANCEL_FLAGS.pop(req.request_id, None)
+                _CANCEL_FLAGS.pop(request_id, None)
         listener.cancel()
         watchdog.cancel()
         for t in (listener, watchdog):
@@ -1004,6 +1030,37 @@ async def chat_stream(
     # 响应结束后（含客户端断开）执行收尾，取消监听/看门狗任务
     response.background = BackgroundTask(_finalize)
     return response
+
+
+@router.post("/chat/stream")
+async def chat_stream(
+    req: ChatRequest,
+    request: Request,
+    # 软鉴权（产品决策：/api/chat* 匿名可用）；这里只为拿创建者身份做归属登记（B3），
+    # 匿名请求记为 anonymous 命名空间——resume 是硬鉴权，匿名创建的流本就无法重连。
+    user_id: str = Depends(get_current_user),
+):
+    # 输入安全过滤（Prompt 注入 + 敏感内容检测）
+    safe_query, is_safe, reject_reason = sanitize_input(req.query)
+    if not is_safe:
+        perf_logger.warning(f"[chat] blocked: reason={reject_reason} query_preview={req.query[:100]}")
+        return _sse_response([{"type": "error", "content": safe_query}])
+
+    # F14：LLM 预算熔断前置检查（与非流式 /api/chat 口径一致）
+    budget_msg = _budget_block_message()
+    if budget_msg:
+        perf_logger.warning("[stream] budget_exceeded: llm")
+        return _sse_response(
+            [
+                {"type": "thinking", "content": "⚠️ 系统今日 AI 服务额度已用尽"},
+                {"type": "token", "content": budget_msg},
+                {"type": "meta", "sources": [], "is_casual": True},
+            ]
+        )
+
+    safe_history = _sanitize_history(req.history)
+    # 流归属登记（B3）、断开检测、事件日志等在 _build_stream_response 内完成
+    return _build_stream_response(request, safe_query, safe_history, req.session_id, req.request_id, user_id)
 
 
 # ------------------------------------------------------------------

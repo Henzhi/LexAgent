@@ -118,3 +118,13 @@
 | D-0903-3 | `VectorAwarePool` **子类化** ThreadedConnectionPool 覆写 `_connect()`，池内每条连接自动 register_vector | 修正 D-0903-2 前置（组合包装裸池时 register_vector 只覆盖直连兜底路径，池自行创建（minconn + 惰性扩展）的连接不注册） | pgvector 适配是按连接生效的；池连接不注册时向量 store 检索 embedding 以字符串返回——fake 测试静默通过、真实 PG 上类型错乱。psycopg2.pool 的 `_connect(key=None)` 是所有连接的唯一起点 |
 | D-0903-4 | `/api/health` 暴露降级态：`degraded`/`degraded_reason`/`active_backend`/`budget_exceeded`；FailoverLLMBackend 记录降级原因（创建期/运行期/回切清空） | 补强 D-0902-2（回切已实现但「是否在降级」无任何对外信号，运维不知道服务跑在 Ollama 上） | 降级可观测是运维前提；取值一律 fail-open——健康检查挂掉会被负载均衡摘掉所有实例，信息缺失远好于 503 |
 | D-0903-5 | Token 鉴权从 localStorage **迁移 HttpOnly Cookie**：login/register 同时 Set-Cookie（HttpOnly + SameSite=Strict，30 天，Secure 由 `COOKIE_SECURE` 控制）；`get_current_user` 先 Cookie 后 Bearer（兼容通道保留）；新增无鉴权幂等 `POST /auth/logout` 清 Cookie | 推翻「Token 明文存 localStorage」的前端实现（前端 api/index.js 与 auth store 各读一次，任何 XSS 可直接窃取） | ① HttpOnly = JS 不可读，XSS 拿不到凭据；② SameSite=Strict 跨站不带 Cookie → CSRF 基本失效；③ Bearer 保留供 CLI/curl/第三方（响应体仍回 token）；④ HttpOnly Cookie 无法由 JS 删除，必须有服务端登出端点，且登出不能要求先登录（凭据失效后也要能清残留） |
+
+## 交互与分类 Bug 修复决策（2026-09-03）
+
+> 背景：用户实测三个体验问题——① 提问含「合同」二字就触发 B 类确认；② F12 确认后还要再发一次请求才出答案；③ 生成中切换路由再回来对话"被掐断"、过一会儿又"全部冒出来"。均为**改变既有行为语义**的修复，留痕如下。
+
+| # | 决策 | 与既有决策的关系 | 原因 |
+| :--- | :--- | :--- | :--- |
+| D-0903-6 | **B 类场景（contract_draft/contract_review）普通关键词移除裸「合同/协议/条款」**，仅由动作强特征词（起草/草拟/审查/审核/审阅…）触发；补足常见触发词（帮我审/审一下/合同模板…） | 修正 F11 场景清单数据（场景清单是数据，只改 `SCENES` 不动逻辑，2026-08-29 约定） | 劳动合同/租赁合同/合同纠纷等词遍布**普通法律咨询**（首页 6 条示例 2 条含「劳动合同」均被误判），裸词 1.0 会让海量普通问答误进 B 类打断确认——这是「查个法条也弹确认」历史 Bug 的第二次复发，必须从数据上禁掉裸通用词进 B 类 |
+| D-0903-7 | F12 确认改为**同连接续跑**：`approved=True` 的 `/api/chat/confirm` 在写入确认标记后直接返回 SSE 事件流（复用 `/chat/stream` 的 `_build_stream_response`：断线重连/取消/事件日志/归属登记全同语义）；前端 `confirmSceneStream` 消费该流，确认后无需再发一次 `/chat/stream` | 补强 F12 v1（D-M3-9a）——v1「前端确认后重新发起 stream」的两跳交互 | 两跳 = 用户点完「确认执行」后经历一次完全重跑（重新初始化/意图识别/场景识别），且衔接处易出空白期；同连接续跑从协议上消除第二跳，标记仍写 → 旧客户端/其他入口重发 stream 依旧兼容（TTL 10 分钟不变） |
+| D-0903-8 | 生成中**路由切换不再 abort SSE**：请求在后台跑完并持续写回 Pinia store（消息/落库/思考轨迹镜像 `activeStream`）；组件卸载只禁组件局部与 DOM 更新（`viewActive` 守卫）；回页时 `onMounted` 从 store 恢复现场（有进行中请求则跳过历史重拉，防止覆盖在途内容）；保存基线与串行队列迁入 store 跨路由存活 | 推翻「onBeforeUnmount abort fetch」的 2026-09-01 约定（原动机：防向已卸载组件写状态） | abort 后回答被掐断、服务端被动断线 worker 却继续烧 Token 写日志无人续读；切回既不续流也拿不到结果，后端跑完只能靠前端"补发" → 表现为"被掐断/延迟全冒出来"。SSE 存活 + store 承载在途状态，切回所见即最新；想中断请用「停止」按钮（语义明确且省钱） |

@@ -215,8 +215,10 @@ export async function rewriteQuery(query) {
   return resp.json()
 }
 
-// F12 人工确认：B 类场景（合同起草/审查、文书生成等）确认或取消。
-// 确认后前端需重新发起 streamChat（同一 sessionId），后端查到标记即正常执行。
+// F12 人工确认：B 类场景（合同起草/审查、文书生成等）。
+// - approved=false（取消）：仅清除标记，返回 JSON；
+// - approved=true：服务端写入标记后**在同一 SSE 连接上直接续跑生成**
+//   （2026-09-03 交互优化：确认后无需再发一次 /chat/stream）。
 export const confirmScene = (sessionId, sceneId, query, approved, confirmId) =>
   fetch(`${BASE}/chat/confirm`, {
     method: 'POST',
@@ -229,6 +231,32 @@ export const confirmScene = (sessionId, sceneId, query, approved, confirmId) =>
       confirm_id: confirmId || '',
     }),
   }).then(handleError)
+
+// 确认并直接续跑：approved=true + 断线重连游标语义（request_id），返回 SSE 事件流。
+export async function* confirmSceneStream(
+  { sessionId, sceneId, query, history, requestId, confirmId },
+  { signal } = {},
+) {
+  const resp = await fetch(`${BASE}/chat/confirm`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({
+      session_id: sessionId,
+      scene_id: sceneId,
+      query,
+      history: history || [],
+      approved: true,
+      confirm_id: confirmId || '',
+      request_id: requestId || '',
+    }),
+    signal,
+  })
+  if (!resp.ok) {
+    handleAuthExpired(resp.url)
+    throw new Error(`确认并执行失败: ${resp.status}`)
+  }
+  yield* consumeSSE(resp)
+}
 
 // Crawl（在线更新法律：国家法律法规数据库增量爬取）
 export const listCrawlTypes = () =>

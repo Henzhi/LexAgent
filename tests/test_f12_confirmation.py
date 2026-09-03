@@ -230,12 +230,27 @@ class TestAskConfirmation:
 # ---------------------------------------------------------------------------
 
 
+class _FakeAgent:
+    """接口级假 Agent：确认后续跑只产出思考 + token，不触碰真实 LLM。"""
+
+    def __init__(self, text="确认后生成的最终答案"):
+        self.text = text
+
+    def stream(self, query, history=None, session_id=""):
+        yield {"type": "thinking", "content": "确认后开始执行"}
+        yield {"type": "token", "content": self.text}
+
+
 class TestConfirmEndpoint:
     @pytest.fixture(autouse=True)
     def _memory_mode_store(self, monkeypatch):
         """接口测试用进程内单例（确定性，不依赖本机 Redis 状态）。"""
         monkeypatch.setattr("src.config.REDIS_URL", "")
         reset_confirmation_store()
+        # 确认后续跑用假 Agent，避免打真实 DeepSeek/Ollama
+        monkeypatch.setattr("src.api.routes.get_agent", lambda: _FakeAgent())
+        # 预算熔断前置检查置空：避免本机 .env 的 BUDGET_* 让测试结果漂移
+        monkeypatch.setattr("src.api.routes._budget_block_message", lambda: "")
         yield
         reset_confirmation_store()
 
@@ -257,22 +272,62 @@ class TestConfirmEndpoint:
         )
         assert r.status_code == 400
 
-    def test_confirm_then_cancel(self, client):
+    def test_approve_sets_mark_and_streams_execution(self, client):
+        """approved=True：写入标记 + 在同一 SSE 连接上直接续跑生成（不用再发一次 stream）。"""
+        from src.memory.confirmation_store import get_confirmation_store
+
+        r = client.post(
+            "/api/chat/confirm",
+            json={
+                "session_id": "s1",
+                "scene_id": "contract_draft",
+                "query": B_QUERY,
+                "approved": True,
+                "history": [],
+                "request_id": "req_confirm_test",
+            },
+        )
+        assert r.status_code == 200
+        assert "text/event-stream" in r.headers["content-type"]
+        body = r.text
+        # 标记已写入（旧客户端随后重发 /chat/stream 也能直接执行）
+        assert get_confirmation_store().is_confirmed("", "s1", B_QUERY) is True
+        # 同一连接直接产出生成事件，无需第二次请求
+        assert "确认后生成的最终答案" in body
+        assert "data: [DONE]" in body
+
+    def test_approve_stream_still_gated_after_marker(self, client):
+        """确认后续跑的流是 Agent 事件流，不含 confirmation_required（不会再次要求确认）。"""
+        r = client.post(
+            "/api/chat/confirm",
+            json={
+                "session_id": "s1",
+                "scene_id": "contract_draft",
+                "query": B_QUERY,
+                "approved": True,
+                "request_id": "req_confirm_test2",
+            },
+        )
+        assert r.status_code == 200
+        assert "confirmation_required" not in r.text
+
+    def test_cancel_clears_mark(self, client):
+        """approved=False 保持 JSON 语义：仅清除标记，不启动续跑。"""
+        from src.memory.confirmation_store import get_confirmation_store
+
+        # 先确认（approved=True 为 SSE 流，消费其响应体以触发完整生成）
         r = client.post(
             "/api/chat/confirm",
             json={"session_id": "s1", "scene_id": "contract_draft", "query": B_QUERY, "approved": True},
         )
         assert r.status_code == 200
-        assert r.json()["ok"] is True
-
-        from src.memory.confirmation_store import get_confirmation_store
-
+        assert "text/event-stream" in r.headers["content-type"]
         assert get_confirmation_store().is_confirmed("", "s1", B_QUERY) is True
-
-        # 取消 → 标记清除
+        # 再取消 → 标记清除，返回 JSON
         r2 = client.post(
             "/api/chat/confirm",
             json={"session_id": "s1", "scene_id": "contract_draft", "query": B_QUERY, "approved": False},
         )
         assert r2.status_code == 200
+        assert r2.json()["ok"] is True
         assert get_confirmation_store().is_confirmed("", "s1", B_QUERY) is False

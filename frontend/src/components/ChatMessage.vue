@@ -55,6 +55,8 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import MarkdownIt from 'markdown-it'
+import DOMPurify from 'dompurify'
 
 const props = defineProps({
   message: { type: Object, required: true },
@@ -120,91 +122,38 @@ function toggleSrc(i) {
   else expandedSources.value.push(i)
 }
 
-// 先整体转义 HTML 特殊字符，再按行解析生成**受控标签**——LLM/用户无法注入任何原始
-// HTML（存储型 XSS 防御，同旧版原则；escapeHtml 后 `>` 变为 &gt;，引用行按此匹配）。
-// 支持语法：##/### 标题、> 引用、- / * 无序列表、1. / 1、有序列表、**加粗**、--- 分隔线、段落。
-function escapeHtml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
+// Markdown 渲染：markdown-it + DOMPurify（2026-09-03 审查整改，替换自研渲染器）。
+// 自研渲染器虽当前无注入点，但每加一种语法都要重新证明安全——09-01 之后加
+// 标题/引用/列表时已经逼近这条线。换成成熟方案后：
+// - markdown-it html:false：源文本里的原始 HTML 直接转义，不进解析树；
+// - DOMPurify 再对输出做白名单消毒（双层防御，解析器漏洞也不至于变成 XSS）；
+// - 链接统一 target=_blank + rel=noopener（防 reverse tabnabbing）。
+const md = new MarkdownIt({
+  html: false,      // 原始 HTML 一律转义
+  linkify: true,    // 裸 URL 自动成链（引用来源常用）
+  breaks: true,     // 单换行 → <br>（对话场景贴近原自研渲染器的逐行段落行为）
+})
 
-// 行内标记：**加粗**（escapeHtml 不转义 *，可安全匹配；未闭合的 ** 流式过程中原样显示，结束后自愈）
-function renderInline(s) {
-  return s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-}
+// 所有渲染出的链接：新窗口打开并断开 opener（DOMPurify 全局钩子，模块级注册一次）
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+})
 
 const renderedContent = computed(() => {
-  const lines = escapeHtml(props.message.content || '').split('\n')
-  const out = []
-  let openList = null // 'ul' | 'ol' | 'blockquote'
-  const closeList = () => {
-    if (openList) {
-      out.push(`</${openList}>`)
-      openList = null
-    }
-  }
-  for (const line of lines) {
-    const t = line.trim()
-    if (!t) {
-      closeList()
-      continue
-    }
-    // 分隔线
-    if (/^(-{3,}|\*{3,})$/.test(t)) {
-      closeList()
-      out.push('<hr class="md-hr">')
-      continue
-    }
-    // 标题：# ~ ####；# 视为 h3 起，避免与页面主标题层级冲突
-    const h = t.match(/^(#{1,4})\s+(.+)$/)
-    if (h) {
-      closeList()
-      const level = Math.min(h[1].length + 2, 5)
-      out.push(`<h${level} class="md-h">${renderInline(h[2])}</h${level}>`)
-      continue
-    }
-    // 引用块（escapeHtml 后 > = &gt;）
-    if (/^&gt;/.test(t)) {
-      if (openList !== 'blockquote') {
-        closeList()
-        out.push('<blockquote class="md-quote">')
-        openList = 'blockquote'
-      }
-      out.push(`<p>${renderInline(t.replace(/^&gt;\s?/, ''))}</p>`)
-      continue
-    }
-    // 无序列表
-    const ul = t.match(/^[-*]\s+(.+)$/)
-    if (ul) {
-      if (openList !== 'ul') {
-        closeList()
-        out.push('<ul class="md-ul">')
-        openList = 'ul'
-      }
-      out.push(`<li>${renderInline(ul[1])}</li>`)
-      continue
-    }
-    // 有序列表（1. / 1、/ 1)）
-    const ol = t.match(/^\d+[.、)]\s*(.+)$/)
-    if (ol) {
-      if (openList !== 'ol') {
-        closeList()
-        out.push('<ol class="md-ol">')
-        openList = 'ol'
-      }
-      out.push(`<li>${renderInline(ol[1])}</li>`)
-      continue
-    }
-    // 普通段落
-    closeList()
-    out.push(`<p>${renderInline(t)}</p>`)
-  }
-  closeList()
-  return out.join('')
+  const raw = md.render(props.message.content || '')
+  return DOMPurify.sanitize(raw, {
+    // 白名单够用即可：法律问答不需要 img/iframe/视频等富媒体
+    ALLOWED_TAGS: [
+      'p', 'br', 'strong', 'em', 'del', 's', 'code', 'pre',
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'blockquote', 'ul', 'ol', 'li',
+      'hr', 'a', 'span', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    ],
+    ALLOWED_ATTR: ['href', 'title', 'target', 'rel', 'class'],
+  })
 })
 </script>
 
@@ -241,17 +190,27 @@ const renderedContent = computed(() => {
 }
 .msg.assistant .bubble :deep(strong) { color: var(--color-text); font-weight: 600; }
 
-/* ---- Markdown 渲染元素（v-html 注入，须经 :deep 穿透 scoped） ---- */
+/* ---- Markdown 渲染元素（v-html 注入，须经 :deep 穿透 scoped）----
+   markdown-it 输出标准标签（h3/h4/blockquote/ul/ol/hr），直接按标签选择器适配；
+   标题从 h3 起映射由 CSS 缩放承担（h1/h2 同样式），避免与页面主标题层级冲突。 */
 .msg .bubble :deep(p) { margin: 6px 0; }
-.msg .bubble :deep(.md-h) {
+.msg .bubble :deep(h1),
+.msg .bubble :deep(h2),
+.msg .bubble :deep(h3),
+.msg .bubble :deep(h4),
+.msg .bubble :deep(h5) {
   margin: 16px 0 8px;
   font-size: 16px;
   font-weight: 600;
   line-height: 1.5;
   color: var(--color-text);
 }
-.msg .bubble :deep(.md-h:first-child) { margin-top: 0; }
-.msg .bubble :deep(.md-quote) {
+.msg .bubble :deep(h1:first-child),
+.msg .bubble :deep(h2:first-child),
+.msg .bubble :deep(h3:first-child),
+.msg .bubble :deep(h4:first-child),
+.msg .bubble :deep(h5:first-child) { margin-top: 0; }
+.msg .bubble :deep(blockquote) {
   margin: 8px 0;
   padding: 8px 14px;
   border-left: 3px solid var(--color-primary);
@@ -259,15 +218,22 @@ const renderedContent = computed(() => {
   border-radius: 0 8px 8px 0;
   color: var(--color-text-secondary);
 }
-.msg .bubble :deep(.md-quote p) { margin: 4px 0; }
-.msg .bubble :deep(.md-ul),
-.msg .bubble :deep(.md-ol) { margin: 6px 0; padding-left: 24px; }
-.msg .bubble :deep(.md-ul li),
-.msg .bubble :deep(.md-ol li) { margin: 4px 0; line-height: 1.7; }
-.msg .bubble :deep(.md-hr) {
+.msg .bubble :deep(blockquote p) { margin: 4px 0; }
+.msg .bubble :deep(ul),
+.msg .bubble :deep(ol) { margin: 6px 0; padding-left: 24px; }
+.msg .bubble :deep(ul li),
+.msg .bubble :deep(ol li) { margin: 4px 0; line-height: 1.7; }
+.msg .bubble :deep(hr) {
   border: none;
   border-top: 1px solid var(--color-border);
   margin: 14px 0;
+}
+.msg .bubble :deep(a) { color: var(--color-primary); }
+.msg .bubble :deep(code) {
+  background: var(--color-surface-soft, #f2f3f5);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 13px;
 }
 /* 用户消息气泡内不留段间距（保持紧凑气泡外观） */
 .msg.user .bubble :deep(p) { margin: 0; }

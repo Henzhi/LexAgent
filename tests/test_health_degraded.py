@@ -25,6 +25,29 @@ def health_client():
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _db_free_health(monkeypatch):
+    """把 /api/health 的 engine→retriever→store 链路换成 fake——DB-free。
+
+    背景（CI 失败修复，2026-09-03）：CI 无 PG 时 store.doc_count 抛
+    OperationalError → 路由 503 提前返回，观测字段测试全红；本机有 docker PG
+    又依赖环境（结果随环境漂移）。打桩后任何环境行为一致：
+
+    - get_engine/get_agent 返回 fake engine（is_ready=True、doc_count=1234），
+      不触发真实 LLM 构造（CI 无 OPENAI_API_KEY 时 factory 会告警降级）；
+    - AGENT_ENABLED 置 False 固定走 get_engine 分支。
+    """
+    from types import SimpleNamespace
+
+    store = SimpleNamespace(doc_count=1234)
+    retriever = SimpleNamespace(is_ready=lambda: True, _store=store)
+    engine = SimpleNamespace(retriever=retriever)
+
+    monkeypatch.setattr("src.api.routes.AGENT_ENABLED", False)
+    monkeypatch.setattr("src.api.routes.get_engine", lambda: engine)
+    monkeypatch.setattr("src.api.routes.get_agent", lambda: engine)
+
+
 class TestHealthExposesDegradedState:
     """降级态必须能从 /health 读出来。"""
 

@@ -1,6 +1,6 @@
 [project]
 name = "law-rag-agent"
-version = "0.2.0"
+version = "0.3.0"
 description = "基于本地 LLM 的法律法规智能问答系统（RAG + 多 Agent）"
 requires-python = ">=3.12"
 readme = "README.md"

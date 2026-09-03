@@ -2,6 +2,10 @@
 
 > 记录有意义的变更，帮助 AI 快速了解最新动态、避免回归。格式参考 Keep a Changelog，新条目放最上面。
 
+## [0.3.0] — 2026-09-03
+
+> 自 v0.2.0 的累积发布（main 至 245c920）。完整逐条变更见下方「Unreleased」区各 commit 记录：**F15 用量计费面板、F12 确认同连接续跑、合同场景误判修复（D-0903-6/7/8）、切页断流保活、usage_logs 请求级聚合（request_id 落库）、CI 修复（Reranker 降级 / F12 测试钉 AGENT_ENABLED）**。运行依赖：Python 3.12+ / PG(pgvector) / Redis / DeepSeek + Ollama（降级）。
+
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
 - **【2026-09-03】fix(用量口径/CI/切页回显加固)**：

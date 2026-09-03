@@ -310,6 +310,94 @@ PG_ENABLED = os.getenv("PG_ENABLED", "false").lower() == "true"
 PG_CONN = os.getenv("PG_CONN", "postgresql://lawrag@localhost:5432/lawrag")
 
 # ---------------------------------------------------------------------------
+# 用量计费价格默认值（M4 / F15）
+# ---------------------------------------------------------------------------
+# 各外部付费 API 的单价默认值（单位：人民币）。设计（D-F15-4）：
+# config 默认值 → 首启灌入 pricing 表 → 前端可动态编辑 → 落库时按当时价格算好
+# cost_cny 快照（改价不漂移历史，明细里保留原始 token/积分可随时重算）。
+# 价格查证日期：2026-09-03（DeepSeek 官方 api-docs.deepseek.com、Tavily
+# docs.tavily.com、北大法宝 mcp.pkulaw.com 计价面板）。
+# 键名约定：{source}.{scope}.{metric}_cny_per_m（每百万）| _cny（每单位）|
+#            points_per_call（每次消耗积分）
+# ⚠️ pricing 表有覆盖值时以表为准（usage_store 内存缓存优先表、回退此默认）。
+
+# DeepSeek（元/百万 tokens，缓存命中比未命中便宜 50 倍——必须拆开否则高估近一倍）
+PRICE_DEEPSEEK_INPUT_HIT_CNY_PER_M = 0.02
+PRICE_DEEPSEEK_INPUT_MISS_CNY_PER_M = 1.0
+PRICE_DEEPSEEK_OUTPUT_CNY_PER_M = 2.0
+# Ollama 本地免费
+PRICE_OLLAMA_INPUT_CNY_PER_M = 0.0
+PRICE_OLLAMA_OUTPUT_CNY_PER_M = 0.0
+# Tavily：PAYG $0.008/credit 折算（免费 1000 credits/月，学生更多；额度内实际不花钱，
+# 面板按此单价展示估算金额并标注"免费额度内"，用户可改）
+PRICE_TAVILY_CREDIT_CNY = 0.058
+# Tavily 单次搜索消耗 credits（basic=1 / advanced=2，docs.tavily.com）
+PRICE_TAVILY_BASIC_CREDITS = 1
+PRICE_TAVILY_ADVANCED_CREDITS = 2
+# 北大法宝：元/积分（充值档 ¥18/6000 积分起 ≈0.003，充得多单价更低，用户可改）
+PRICE_PKULAW_POINT_CNY = 0.003
+# 北大法宝每次调用消耗积分（官方计价：基础关键词类 25 / 语义·识别·超链·幻觉修正类 125）
+PRICE_PKULAW_SEARCH_POINTS = 125
+PRICE_PKULAW_KEYWORD_POINTS = 25
+PRICE_PKULAW_RECOGNITION_POINTS = 125
+
+# pricing 表首启灌入的默认键值（value / unit / note）
+PRICING_DEFAULTS: dict[str, dict] = {
+    "llm.deepseek.input_hit_cny_per_m": {
+        "value": PRICE_DEEPSEEK_INPUT_HIT_CNY_PER_M,
+        "unit": "cny",
+        "note": "DeepSeek 官方刊例 2026-09-03",
+    },
+    "llm.deepseek.input_miss_cny_per_m": {
+        "value": PRICE_DEEPSEEK_INPUT_MISS_CNY_PER_M,
+        "unit": "cny",
+        "note": "DeepSeek 官方刊例 2026-09-03",
+    },
+    "llm.deepseek.output_cny_per_m": {
+        "value": PRICE_DEEPSEEK_OUTPUT_CNY_PER_M,
+        "unit": "cny",
+        "note": "DeepSeek 官方刊例 2026-09-03",
+    },
+    "llm.ollama.input_cny_per_m": {"value": 0.0, "unit": "cny", "note": "本地免费"},
+    "llm.ollama.output_cny_per_m": {"value": 0.0, "unit": "cny", "note": "本地免费"},
+    "tavily.credit_cny": {
+        "value": PRICE_TAVILY_CREDIT_CNY,
+        "unit": "cny",
+        "note": "Tavily PAYG $0.008/credit 折算；免费额度内仅估算参考",
+    },
+    "tavily.basic.credits_per_call": {
+        "value": PRICE_TAVILY_BASIC_CREDITS,
+        "unit": "credit",
+        "note": "basic 搜索 1 credit/次",
+    },
+    "tavily.advanced.credits_per_call": {
+        "value": PRICE_TAVILY_ADVANCED_CREDITS,
+        "unit": "credit",
+        "note": "advanced 搜索 2 credits/次",
+    },
+    "pkulaw.point_cny": {
+        "value": PRICE_PKULAW_POINT_CNY,
+        "unit": "cny",
+        "note": "北大法宝充值档折算（¥18/6000 起），可在前端按套餐改",
+    },
+    "pkulaw.search.points_per_call": {
+        "value": PRICE_PKULAW_SEARCH_POINTS,
+        "unit": "point",
+        "note": "语义检索类 search_article/search_case ≈125 积分/次",
+    },
+    "pkulaw.keyword.points_per_call": {
+        "value": PRICE_PKULAW_KEYWORD_POINTS,
+        "unit": "point",
+        "note": "关键词/精确类 get_article/get_law_list ≈25 积分/次",
+    },
+    "pkulaw.recognition.points_per_call": {
+        "value": PRICE_PKULAW_RECOGNITION_POINTS,
+        "unit": "point",
+        "note": "识别溯源/超链/幻觉修正类 ≈125 积分/次",
+    },
+}
+
+# ---------------------------------------------------------------------------
 # 服务
 # ---------------------------------------------------------------------------
 

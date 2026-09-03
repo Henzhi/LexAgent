@@ -90,6 +90,7 @@ def test_patterns_compile():
         ("民法典关于违约金是怎么规定的", "legal_lookup", KIND_A),
         ("刑法第二百三十四条的内容", "legal_lookup", KIND_A),
         ("治安管理处罚法有没有关于寻衅滋事的规定", "legal_lookup", KIND_A),
+        ("什么是合同", "legal_lookup", KIND_A),
         ("打架被拘留最长多久，违法吗", "legal_qa", KIND_A),
         ("公司辞退我需要赔偿吗", "legal_qa", KIND_A),
         ("2026年劳动法有没有新规定出台", "regulation_tracking", KIND_A),
@@ -184,6 +185,17 @@ def test_contract_dispute_qa_not_mistaken_for_draft():
     """「合同违约怎么赔偿」是咨询不是起草"""
     match = classify_scene("合同违约怎么赔偿，违法吗")
     assert match.scene_id != "contract_draft"
+
+
+def test_reversed_what_is_not_mistaken_for_contract_draft():
+    """「什么是合同」是倒装句式查询，应判 A 类法律检索，不能因含「合同」误判 B 类起草。
+
+    回归点：legal_lookup.strong_keywords 原只含「是什么」、不含「什么是」，
+    口语倒装子串不匹配 → 强特征词(2.0)未命中，通用词「合同」(1.0)胜出（历史 Bug）。
+    """
+    match = classify_scene("什么是合同")
+    assert match.scene_id == "legal_lookup"
+    assert match.kind == KIND_A, "「什么是合同」倒装句式被误判为需确认场景"
 
 
 # ---------------------------------------------------------------------------

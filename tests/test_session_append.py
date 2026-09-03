@@ -12,52 +12,101 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 
 @pytest.fixture
-def fake_store():
-    """不触碰真实 PG 的 ConversationStore（绕过构造期建连）。"""
+def fake_store(monkeypatch):
+    """不触碰真实 PG 的 ConversationStore。
+
+    v0.7 连接池整改后：方法内 `db_connection()`（模块级导入）被替换为
+    产出 fake_conn 的上下文管理器；`_schema_ready` 预置 True 跳过建表 DDL，
+    让断言聚焦在目标 SQL 上。
+    """
+    import contextlib
+
     from src.api.conversation_store import ConversationStore
 
     store = ConversationStore.__new__(ConversationStore)
-    store._lock = __import__("threading").Lock()
-    store._conn = MagicMock()
-    return store
+    store._conn_string = "postgresql://fake"
+    store._schema_ready = True
+    store._schema_lock = __import__("threading").Lock()
+
+    fake_conn = MagicMock()
+
+    @contextlib.contextmanager
+    def _fake_db_connection():
+        yield fake_conn
+
+    monkeypatch.setattr("src.api.conversation_store.db_connection", _fake_db_connection)
+    return store, fake_conn
+
+
+def _cur(conn, fetchone_result=None):
+    """给 fake_conn 挂上 with cursor() 返回的 mock 游标，并记录 execute。"""
+    cur = MagicMock()
+    cur.__enter__.return_value = cur
+    if fetchone_result is not None:
+        cur.fetchone.return_value = fetchone_result
+    conn.cursor.return_value.__enter__.return_value = cur
+    return cur
 
 
 class TestAppendSessionStore:
     def test_append_uses_sql_jsonb_concat(self, fake_store):
         """追加必须在 SQL 内完成（|| 拼接），不是读回全量再覆盖。"""
-        with patch.object(fake_store, "_ensure_connection"), patch.object(fake_store._conn, "cursor") as cur_ctx:
-            cur = MagicMock()
-            cur.__enter__.return_value = cur
-            cur.fetchone.return_value = (6,)
-            cur_ctx.return_value = cur
+        store, conn = fake_store
+        cur = _cur(conn, fetchone_result=(6,))
 
-            total = fake_store.append_session(
-                user_id="u1", session_id="s1", messages=[{"role": "user", "content": "hi"}]
-            )
+        total = store.append_session(user_id="u1", session_id="s1", messages=[{"role": "user", "content": "hi"}])
 
-            assert total == 6
-            sql = cur.execute.call_args[0][0]
-            assert "conversations.messages ||" in sql, "必须用 JSONB || 在数据库内拼接"
-            assert "RETURNING jsonb_array_length" in sql, "应返回追加后的总条数"
+        assert total == 6
+        sql = cur.execute.call_args[0][0]
+        assert "conversations.messages ||" in sql, "必须用 JSONB || 在数据库内拼接"
+        assert "RETURNING jsonb_array_length" in sql, "应返回追加后的总条数"
 
     def test_append_serializes_chinese(self, fake_store):
-        with patch.object(fake_store, "_ensure_connection"), patch.object(fake_store._conn, "cursor") as cur_ctx:
-            cur = MagicMock()
-            cur.__enter__.return_value = cur
-            cur.fetchone.return_value = (2,)
-            cur_ctx.return_value = cur
+        store, conn = fake_store
+        cur = _cur(conn, fetchone_result=(2,))
 
-            fake_store.append_session(
-                user_id="u", session_id="s", messages=[{"role": "user", "content": "行政拘留多久"}]
-            )
-            args = cur.execute.call_args[0][1]
-            assert "行政拘留多久" in args[2], "中文必须按 UTF-8 原样序列化（ensure_ascii=False）"
+        store.append_session(user_id="u", session_id="s", messages=[{"role": "user", "content": "行政拘留多久"}])
+        args = cur.execute.call_args[0][1]
+        assert "行政拘留多久" in args[2], "中文必须按 UTF-8 原样序列化（ensure_ascii=False）"
+
+    def test_append_schema_ddl_runs_once_then_skipped(self, monkeypatch):
+        """建表 DDL 惰性执行一次（_schema_ready 置位后不再跑）。"""
+        import contextlib
+
+        from src.api.conversation_store import ConversationStore
+
+        store = ConversationStore.__new__(ConversationStore)
+        store._conn_string = "postgresql://fake"
+        store._schema_ready = False
+        store._schema_lock = __import__("threading").Lock()
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__.return_value = cur
+        conn.cursor.return_value.__enter__.return_value = cur
+
+        @contextlib.contextmanager
+        def _fake_db_connection():
+            yield conn
+
+        monkeypatch.setattr("src.api.conversation_store.db_connection", _fake_db_connection)
+
+        store.save_session("u", "s", [{"role": "user", "content": "q"}])
+        assert store._schema_ready is True
+        all_sql = " ".join(c[0][0] for c in cur.execute.call_args_list)
+        assert "CREATE TABLE IF NOT EXISTS conversations" in all_sql
+
+        cur.reset_mock()
+        store.save_session("u", "s", [{"role": "user", "content": "q2"}])
+        # 第二次操作不再跑 DDL（execute 只应被 INSERT 调用）
+        sqls = [c[0][0] for c in cur.execute.call_args_list]
+        assert not any("CREATE TABLE" in s for s in sqls)
 
 
 class TestSaveSessionRoute:

@@ -180,23 +180,29 @@ class PkulawMCPClient:
     # 预算埋点（AGENTS.md 规则 8：新增付费外部依赖必接预算）
     # ------------------------------------------------------------------
     def _run(self, purpose: str, arguments: dict[str, Any]) -> Any:
-        """同步驱动一次 MCP 调用（含预算 check/record），失败抛 RuntimeError。
+        """同步驱动一次 MCP 调用（含预算预占/归还），失败抛 RuntimeError。
 
         兼容同步与异步调用上下文：若在运行中事件循环内（LangGraph 流式路径
         在 async 端点下执行本同步节点），asyncio.run 会报
         "cannot be called from a running event loop"，故回退到独立线程内运行。
+
+        预算口径（2026-09-03 整改）：调用前**原子预占**，成功后不再重复计数，
+        失败则归还——与 LLM callback / Tavily 保持一致，避免 TOCTOU 放大限额。
         """
         from src.observability.cost_budget import BudgetExceededError, KIND_PKULAW, get_budget
 
         budget = get_budget()
-        budget.check(KIND_PKULAW)  # 超限 → BudgetExceededError（上层识别为额度用尽）
+        budget.check_and_reserve(KIND_PKULAW)  # 超限 → BudgetExceededError（上层识别为额度用尽）
         try:
             raw = _run_async(self._a_call(purpose, arguments))
         except BudgetExceededError:
             raise
         except Exception as e:
+            try:
+                budget.release(KIND_PKULAW)
+            except Exception as rel_err:
+                logger.warning(f"北大法宝预算配额归还失败（忽略）: {rel_err}")
             raise RuntimeError(f"北大法宝 MCP 调用失败（{purpose}）: {e}") from e
-        budget.record(KIND_PKULAW)
         return raw
 
     # ------------------------------------------------------------------

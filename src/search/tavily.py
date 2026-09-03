@@ -24,6 +24,14 @@ from src.observability.cost_budget import (
 logger = logging.getLogger(__name__)
 
 
+def _release_budget(kind: str, n: int = 1) -> None:
+    """归还预占的配额（调用失败时）；归还失败只告警，不影响主链路。"""
+    try:
+        get_budget().release(kind, n)
+    except Exception as e:
+        logger.warning(f"预算配额归还失败（忽略）: {e}")
+
+
 class TavilySearchClient:
     """Tavily 官方 SDK 封装。
 
@@ -85,9 +93,9 @@ class TavilySearchClient:
             detail = self._init_error or "缺少 TAVILY_API_KEY"
             raise RuntimeError(f"Tavily 未配置或初始化失败: {detail}")
 
-        # F14：Tavily 按次计费，调用前熔断检查
+        # F14：Tavily 按次计费，调用前原子预占配额（并发安全，见 cost_budget 文档）
         try:
-            get_budget().check(KIND_TAVILY)
+            get_budget().check_and_reserve(KIND_TAVILY)
         except BudgetExceededError:
             # 上抛给工具层 → ToolResult(ok=False)，ReAct 循环继续（不阻断回答）
             raise
@@ -98,14 +106,10 @@ class TavilySearchClient:
         try:
             resp = self._client.search(query=query, max_results=k)
         except Exception as e:
+            _release_budget(KIND_TAVILY)
             raise RuntimeError(f"Tavily 搜索失败: {e}") from e
 
-        # 成功才计数
-        try:
-            get_budget().record(KIND_TAVILY)
-        except Exception as e:
-            logger.warning(f"预算计数失败（忽略）: {e}")
-
+        # 成功：配额已在调用前预占，此处不再重复计数（否则日限额被腰斩）
         raw_results = (resp or {}).get("results", []) or []
         results = []
         for r in raw_results:

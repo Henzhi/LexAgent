@@ -313,6 +313,13 @@ async function handleSend(query) {
   await nextTick()
   scrollBottom()
 
+  // 问题发出即建立会话：先把已发出的用户提问落库并刷新左侧列表，
+  // 让新对话在提问瞬间就出现在侧边栏，而不是等回答回来才刷新出现
+  // （满足"提问即建对话"预期；B 类确认场景也会先建空壳，确认后由
+  // runStream 结尾的 persistSession 补上答案）。
+  await persistSession()
+  await refreshSessions()
+
   if (rewriteEnabled.value) {
     await doRewrite(query, recent)
   } else {

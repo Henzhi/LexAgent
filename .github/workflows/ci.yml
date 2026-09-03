@@ -29,3 +29,26 @@ jobs:
 
       - name: Test (unit)
         run: uv run pytest tests/ -v --tb=short --ignore=tests/test_api.py
+
+  frontend-build:
+    # 前端此前零校验（审查报告：构建失败不会在 CI 暴露）。npm ci + vite build
+    # 双门禁：lock 文件不一致直接失败，构建产物写回 ../static（emptyOutDir）。
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build

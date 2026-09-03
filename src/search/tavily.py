@@ -123,4 +123,12 @@ class TavilySearchClient:
                     "score": float(r.get("score") or 0.0),
                 }
             )
+        # F15：成功调用落 usage_logs（失败/超限不记，与 F14 语义一致）。
+        # 观测组件故障不拖垮主链路（record_tavily_usage 内部吞异常）。
+        try:
+            from src.observability.usage_store import record_tavily_usage
+
+            record_tavily_usage(depth="basic")
+        except Exception as e:  # pragma: no cover - 防御
+            logger.warning(f"Tavily usage 落库失败（忽略）: {e}")
         return results

@@ -203,6 +203,15 @@ class PkulawMCPClient:
             except Exception as rel_err:
                 logger.warning(f"北大法宝预算配额归还失败（忽略）: {rel_err}")
             raise RuntimeError(f"北大法宝 MCP 调用失败（{purpose}）: {e}") from e
+        # F15：成功调用落 usage_logs（失败/超限不记，与 F14 语义一致；一条埋点
+        # 覆盖 Agent 工具与固定管线两条路径——它们都汇到 _run）。观测组件故障
+        # 不拖垮主链路（record_pkulaw_usage 内部吞异常）。
+        try:
+            from src.observability.usage_store import record_pkulaw_usage
+
+            record_pkulaw_usage(purpose=purpose)
+        except Exception as e:  # pragma: no cover - 防御
+            logger.warning(f"北大法宝 usage 落库失败（忽略）: {e}")
         return raw
 
     # ------------------------------------------------------------------

@@ -145,6 +145,37 @@ class TestRecordUsage:
         sql, params = cur.executed[0]
         assert params[14] is True
 
+    def test_record_tavily_usage_basic(self, monkeypatch):
+        cur = _FakeCursor()
+        _patch_connect(monkeypatch, cur)
+        usage_store.record_tavily_usage(depth="basic")
+        sql, params = cur.executed[-1]
+        assert params[4] == "tavily"
+        assert params[5] == "tavily-search"
+        assert params[6] == "basic"
+        assert params[13] == 1  # credits
+        assert params[15] == usage_store.tavily_cost_cny(1)
+
+    def test_record_pkulaw_usage_semantic(self, monkeypatch):
+        """语义检索 purpose → 125 积分 × point_cny"""
+        cur = _FakeCursor()
+        _patch_connect(monkeypatch, cur)
+        usage_store.record_pkulaw_usage(purpose="article_search")
+        sql, params = cur.executed[-1]
+        assert params[4] == "pkulaw"
+        assert params[5] == "pkulaw-article_search"
+        assert params[6] == "article_search"
+        assert params[13] == 125
+        assert params[15] == usage_store.pkulaw_cost_cny(125)
+
+    def test_record_pkulaw_usage_keyword(self, monkeypatch):
+        """精确/关键词 purpose → 25 积分"""
+        cur = _FakeCursor()
+        _patch_connect(monkeypatch, cur)
+        usage_store.record_pkulaw_usage(purpose="article_exact")
+        sql, params = cur.executed[-1]
+        assert params[13] == 25
+
 
 # ---------------------------------------------------------------------------
 # 计价纯函数
@@ -188,11 +219,13 @@ class TestCosting:
         assert llm_cost_cny(model="qwen2.5", backend="", prompt_tokens=100, completion_tokens=10) == 0.0
 
     def test_pkulaw_credits_mapping(self):
-        assert pkulaw_credits_for_tool("search_article") == 125
-        assert pkulaw_credits_for_tool("search_case") == 125
-        assert pkulaw_credits_for_tool("get_article") == 25
-        assert pkulaw_credits_for_tool("get_law_list") == 25
+        # purpose 语义（PkulawMCPClient._run 入参）：语义检索类 125 / 精确类 25 / 识别类 125
+        assert pkulaw_credits_for_tool("article_search") == 125
+        assert pkulaw_credits_for_tool("case_search") == 125
+        assert pkulaw_credits_for_tool("article_exact") == 25
+        assert pkulaw_credits_for_tool("law_list") == 25
         assert pkulaw_credits_for_tool("verify_law") == 125
+        assert pkulaw_credits_for_tool("verify_provision") == 125
         assert pkulaw_credits_for_tool("unknown_tool") == 125  # 未知按 recognition 兜底
 
     def test_pkulaw_and_tavily_cost(self):

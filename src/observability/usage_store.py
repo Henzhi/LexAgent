@@ -29,12 +29,13 @@ SOURCE_TAVILY = "tavily"
 SOURCE_PKULAW = "pkulaw"
 _SOURCES = (SOURCE_LLM, SOURCE_TAVILY, SOURCE_PKULAW)
 
-# pkulaw 工具 → 价格表键（官方积分：search 语义 125 / keyword 精确 25 / recognition 识别 125）
+# pkulaw purpose → 价格表键（官方积分：search 语义 125 / keyword 精确 25 / recognition 识别 125）
+# ⚠️ purpose 是 PkulawMCPClient._run(purpose, ...) 的实际入参取值，不是工具展示名
 _PKULAW_TOOL_POINTS_KEY = {
-    "search_article": "pkulaw.search.points_per_call",  # 法条语义检索
-    "search_case": "pkulaw.search.points_per_call",  # 类案语义检索
-    "get_article": "pkulaw.keyword.points_per_call",  # 法条精确取条
-    "get_law_list": "pkulaw.keyword.points_per_call",  # 法规关键词列表
+    "article_search": "pkulaw.search.points_per_call",  # 法条语义检索（search_article 走这）
+    "case_search": "pkulaw.search.points_per_call",  # 类案语义检索（search_case 走这）
+    "article_exact": "pkulaw.keyword.points_per_call",  # 法条精确取条（get_article）
+    "law_list": "pkulaw.keyword.points_per_call",  # 法规关键词列表（get_law_list）
     "verify_law": "pkulaw.recognition.points_per_call",  # 法条识别溯源
     "verify_case": "pkulaw.recognition.points_per_call",  # 案号识别溯源
     "verify_provision": "pkulaw.recognition.points_per_call",  # 法条核验对照
@@ -201,6 +202,50 @@ def record_llm_usage(
         cache_miss_tokens=cache_miss_tokens,
         est=est,
         cost_cny=cost,
+        user_id=user_id,
+        request_id=request_id,
+        session_id=session_id,
+    )
+
+
+def record_tavily_usage(
+    *,
+    depth: str = "basic",
+    user_id: str = "default",
+    request_id: str | None = None,
+    session_id: str | None = None,
+) -> None:
+    """Tavily 搜索落库（按 depth 折算 credits → 金额）。失败 debug 吞掉。"""
+    depth = str(depth or "basic").lower()
+    credits = int(get_price(f"tavily.{depth}.credits_per_call") or 0)
+    record_usage(
+        source=SOURCE_TAVILY,
+        model="tavily-search",
+        tool=depth,
+        credits=credits,
+        cost_cny=tavily_cost_cny(credits),
+        user_id=user_id,
+        request_id=request_id,
+        session_id=session_id,
+    )
+
+
+def record_pkulaw_usage(
+    *,
+    purpose: str,
+    user_id: str = "default",
+    request_id: str | None = None,
+    session_id: str | None = None,
+) -> None:
+    """北大法宝 MCP 落库（按 purpose 折算积分 → 金额）。失败 debug 吞掉。"""
+    purpose = str(purpose or "")
+    credits = pkulaw_credits_for_tool(purpose)
+    record_usage(
+        source=SOURCE_PKULAW,
+        model=f"pkulaw-{purpose}" if purpose else "pkulaw",
+        tool=purpose or None,
+        credits=credits,
+        cost_cny=pkulaw_cost_cny(credits),
         user_id=user_id,
         request_id=request_id,
         session_id=session_id,

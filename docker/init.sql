@@ -267,3 +267,84 @@ COMMENT ON COLUMN query_logs.llm_tokens_used IS 'LLM 消耗的 token 总数（�
 COMMENT ON COLUMN query_logs.total_latency_ms IS '总耗时（毫秒）';
 COMMENT ON COLUMN query_logs.stage_timings IS '各阶段耗时 JSONB: {intent_ms, memory_ms, rewrite_ms, retrieve_ms, rerank_ms, generate_ms}';
 COMMENT ON COLUMN query_logs.created_at IS '记录时间';
+
+-- ============================================================
+-- 7. 用量计费日志表 + 价格表（F15，M4 前置；旁路观测，不动 F14 熔断）
+-- ============================================================
+
+-- 每次付费调用一行（LLM 每次调用 / Tavily 每次搜索 / pkulaw 每次 MCP 调用）
+-- 用途：成本核算 / 用量趋势 / 归因分析（哪个模型、哪类工具、哪次会话、哪类场景）
+-- 设计要点：
+--   - cost_cny 为写入时按当时价格表算好的金额快照 —— 之后改价格不漂移历史
+--   - cache_hit/miss_tokens 拆分存储（DeepSeek 缓存命中价比未命中便宜 50 倍，
+--     必须拆开否则金额高估近一倍；LLM 需记全量输入时按 miss 口径兜底）
+--   - est=TRUE 表示该行 token 为估算值（Ollama / 流式无 usage 时回退 tiktoken）
+--   - 写入失败只打 debug 日志，观测组件故障绝不拖垮主链路（与 query_logs 同原则）
+CREATE TABLE IF NOT EXISTS usage_logs (
+    id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,  -- 日志 ID
+    ts                TIMESTAMPTZ DEFAULT now() NOT NULL,          -- 调用时间
+    day               DATE NOT NULL,                               -- 冗余日期（便于日聚合/分区）
+    user_id           VARCHAR(128) NOT NULL DEFAULT 'default',     -- 发起用户（预留分账）
+    request_id        VARCHAR(64),                                 -- 关联 request_id（与 query_logs 对齐）
+    session_id        VARCHAR(128),                                -- 会话 ID（可空，非会话内调用为空）
+    source            VARCHAR(16) NOT NULL,                        -- 来源: llm | tavily | pkulaw
+    model             VARCHAR(64) NOT NULL,                        -- deepseek-v4-flash | qwen2.5 | tavily-search | pkulaw-*
+    tool              VARCHAR(64),                                 -- 具体工具: llm 无；tavily 的 depth；pkulaw 的 purpose(search/verify...)
+    backend           VARCHAR(16),                                 -- deepseek | ollama | external
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,                  -- 输入 token（含缓存）
+    completion_tokens INTEGER NOT NULL DEFAULT 0,                  -- 输出 token
+    cache_hit_tokens  INTEGER NOT NULL DEFAULT 0,                  -- 缓存命中输入 token
+    cache_miss_tokens INTEGER NOT NULL DEFAULT 0,                  -- 缓存未命中输入 token
+    total_tokens      INTEGER NOT NULL DEFAULT 0,                  -- 总 token（llm 用）
+    credits           INTEGER NOT NULL DEFAULT 0,                  -- 积分/credit 消耗（tavily/pkulaw 按次计价）
+    est               BOOLEAN NOT NULL DEFAULT FALSE,              -- TRUE=估算值非真实 usage
+    cost_cny          NUMERIC(12,6) NOT NULL DEFAULT 0,            -- 金额快照（写入时按价格表算好）
+    created_at        TIMESTAMPTZ DEFAULT now() NOT NULL           -- 落库时间
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_logs_day ON usage_logs (day);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_req ON usage_logs (request_id);
+CREATE INDEX IF NOT EXISTS idx_usage_logs_ts  ON usage_logs (ts);
+
+COMMENT ON TABLE usage_logs IS '用量计费日志表（F15）：每次付费外部调用一行，存金额快照供成本核算与归因';
+COMMENT ON COLUMN usage_logs.id IS '日志 ID';
+COMMENT ON COLUMN usage_logs.ts IS '调用时间';
+COMMENT ON COLUMN usage_logs.day IS '冗余日期（便于日聚合/分区）';
+COMMENT ON COLUMN usage_logs.user_id IS '发起用户（预留分账，当前默认 default）';
+COMMENT ON COLUMN usage_logs.request_id IS '关联请求 ID（与 query_logs.request_id 对齐，可串起整次查询）';
+COMMENT ON COLUMN usage_logs.session_id IS '会话 ID（非会话内调用为空）';
+COMMENT ON COLUMN usage_logs.source IS '来源: llm | tavily | pkulaw';
+COMMENT ON COLUMN usage_logs.model IS '模型/服务名: deepseek-v4-flash | qwen2.5 | tavily-search | pkulaw-*';
+COMMENT ON COLUMN usage_logs.tool IS '具体工具: llm 无; tavily 的 depth; pkulaw 的 purpose(search/verify...)';
+COMMENT ON COLUMN usage_logs.backend IS 'LLM 后端: deepseek | ollama | external';
+COMMENT ON COLUMN usage_logs.prompt_tokens IS '输入 token（含缓存）';
+COMMENT ON COLUMN usage_logs.completion_tokens IS '输出 token';
+COMMENT ON COLUMN usage_logs.cache_hit_tokens IS '缓存命中输入 token（DeepSeek 按命中/未命中分档计价）';
+COMMENT ON COLUMN usage_logs.cache_miss_tokens IS '缓存未命中输入 token';
+COMMENT ON COLUMN usage_logs.total_tokens IS '总 token（llm 用）';
+COMMENT ON COLUMN usage_logs.credits IS '积分/credit 消耗（tavily/pkulaw 按次计价的原始单位）';
+COMMENT ON COLUMN usage_logs.est IS 'TRUE=token 为估算值非真实 usage（Ollama/流式无 usage 时）';
+COMMENT ON COLUMN usage_logs.cost_cny IS '金额快照（写入时按当时价格表算好，改价不漂移历史）';
+COMMENT ON COLUMN usage_logs.created_at IS '落库时间';
+
+-- 价格表：key-value，config 默认值首启灌入，前端可动态编辑
+-- key 约定:
+--   llm.deepseek.input_hit_cny_per_m  / input_miss_cny_per_m / output_cny_per_m
+--   llm.ollama.input_cny_per_m        / output_cny_per_m（默认 0）
+--   tavily.credit_cny                 （PAYG $0.008/credit 折算，免费额度内仅估算参考）
+--   pkulaw.point_cny                  （元/积分，充值档折算）
+--   pkulaw.search.points_per_call / pkulaw.verify.points_per_call / pkulaw.recognition.points_per_call
+CREATE TABLE IF NOT EXISTS pricing (
+    key         TEXT PRIMARY KEY,
+    value       NUMERIC(16,8) NOT NULL,
+    unit        VARCHAR(16) NOT NULL DEFAULT 'cny',  -- cny | point | credit | token
+    note        TEXT,
+    updated_at  TIMESTAMPTZ DEFAULT now() NOT NULL
+);
+
+COMMENT ON TABLE pricing IS '价格表（F15）：外部 API 单价配置，config 默认值首启灌入，前端可编辑';
+COMMENT ON COLUMN pricing.key IS '价格键（见表注释 key 约定）';
+COMMENT ON COLUMN pricing.value IS '价格值';
+COMMENT ON COLUMN pricing.unit IS '单位: cny | point | credit | token';
+COMMENT ON COLUMN pricing.note IS '备注（如查证日期/依据）';
+COMMENT ON COLUMN pricing.updated_at IS '最后更新时间';

@@ -209,10 +209,7 @@ class TestCosting:
         assert abs(cost - expected) < 1e-9
 
     def test_ollama_free(self):
-        assert (
-            llm_cost_cny(model="qwen2.5:7b", backend="ollama", prompt_tokens=5000, completion_tokens=500)
-            == 0.0
-        )
+        assert llm_cost_cny(model="qwen2.5:7b", backend="ollama", prompt_tokens=5000, completion_tokens=500) == 0.0
 
     def test_qwen_name_free_without_backend(self):
         """模型名含 qwen 且不含 deepseek → 本地模型免费（即使 backend 缺失）。"""
@@ -349,9 +346,22 @@ class TestRead:
 
     def test_detail_returns_rows(self, monkeypatch):
         row = (
-            "2026-09-03 10:00:00+00", "default", "req-1", None,
-            "llm", "deepseek-v4-flash", None, "deepseek",
-            1000, 200, 800, 200, 1200, 0, False, 0.0012,
+            "2026-09-03 10:00:00+00",
+            "default",
+            "req-1",
+            None,
+            "llm",
+            "deepseek-v4-flash",
+            None,
+            "deepseek",
+            1000,
+            200,
+            800,
+            200,
+            1200,
+            0,
+            False,
+            0.0012,
         )
         _patch_connect(monkeypatch, _FakeCursor(rows=[row]))
         out = usage_store.read_usage_detail("2026-09-03")

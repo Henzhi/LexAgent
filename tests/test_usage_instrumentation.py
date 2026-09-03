@@ -42,9 +42,7 @@ class TestTavilyInstrumentation:
     def test_success_records_usage(self, monkeypatch):
         self._reset_budget(monkeypatch)
         client = self._client()
-        client._client.search.return_value = {
-            "results": [{"title": "t", "url": "u", "content": "c", "score": 0.9}]
-        }
+        client._client.search.return_value = {"results": [{"title": "t", "url": "u", "content": "c", "score": 0.9}]}
 
         with patch("src.observability.usage_store.record_tavily_usage") as mock_rec:
             out = client.search("工伤认定")

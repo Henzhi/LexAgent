@@ -333,7 +333,7 @@ COMMENT ON COLUMN usage_logs.created_at IS '落库时间';
 --   llm.ollama.input_cny_per_m        / output_cny_per_m（默认 0）
 --   tavily.credit_cny                 （PAYG $0.008/credit 折算，免费额度内仅估算参考）
 --   pkulaw.point_cny                  （元/积分，充值档折算）
---   pkulaw.search.points_per_call / pkulaw.verify.points_per_call / pkulaw.recognition.points_per_call
+--   pkulaw.search.points_per_call / pkulaw.keyword.points_per_call / pkulaw.recognition.points_per_call
 CREATE TABLE IF NOT EXISTS pricing (
     key         TEXT PRIMARY KEY,
     value       NUMERIC(16,8) NOT NULL,

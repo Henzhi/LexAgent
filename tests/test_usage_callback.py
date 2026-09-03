@@ -101,9 +101,10 @@ class TestEstimatePath:
         # on_llm_start 缓存 prompt → on_llm_end 无 usage → 估算
         cb.on_llm_start({}, ["请解释"], run_id="r1")
         msg = FakeAIMessage(usage_metadata=None, content="回答内容若干字")
-        with patch("src.observability.usage_store.record_llm_usage") as mock_rec, patch(
-            "src.memory.token_budget.TokenBudget.count", side_effect=[10, 8]
-        ) as mock_count:
+        with (
+            patch("src.observability.usage_store.record_llm_usage") as mock_rec,
+            patch("src.memory.token_budget.TokenBudget.count", side_effect=[10, 8]) as mock_count,
+        ):
             cb.on_llm_end(msg, run_id="r1")
         _, kw = mock_rec.call_args
         assert kw["est"] is True
@@ -115,9 +116,7 @@ class TestEstimatePath:
     def test_llm_result_legacy_shape(self):
         """兼容老版本 callback 传 LLMResult（generations[0][0].message）"""
         cb = _handler()
-        msg = FakeAIMessage(
-            usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
-        )
+        msg = FakeAIMessage(usage_metadata={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15})
         llm_result = SimpleNamespace(generations=[[SimpleNamespace(message=msg)]])
         with patch("src.observability.usage_store.record_llm_usage") as mock_rec:
             cb.on_llm_end(llm_result)

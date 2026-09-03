@@ -16,7 +16,7 @@ LexAgent 是一套**法律 RAG 智能问答系统**，正从固定管线 RAG 重
 | 层 | 技术 |
 | :--- | :--- |
 | 语言 | Python 3.12+（uv 管理依赖），前端 Vue3 + Vite |
-| API | FastAPI + SSE 流式（`/api/chat`、`/api/chat/stream` 免认证；conversations/knowledge/crawl 需 Bearer） |
+| API | FastAPI + SSE 流式（`/api/chat`、`/api/chat/stream` 免认证；conversations/knowledge/crawl/budget/usage 需 Bearer） |
 | 编排 | LangGraph 1.2 StateGraph（手动 ReAct）；**D-M3-13 起 LLM 层与工具层走 LangChain 标准生态**：`BaseChatModel` + `bind_tools` |
 | LLM | 自研 `LLMBackend.chat_with_tools()`；DeepSeek `deepseek-v4-flash`（主）+ Ollama qwen2.5（降级） |
 | 检索 | pgvector(halfvec+HNSW) + BM25 条件混合（RRF）+ bge-reranker 精排 + 相邻扩展 |
@@ -29,13 +29,13 @@ LexAgent 是一套**法律 RAG 智能问答系统**，正从固定管线 RAG 重
 src/
 ├── agents/          # LangGraph 编排：graph.py（图）、react_nodes.py（ReAct）、nodes.py（固定管线）、state.py、prompts.py
 │   └── tools/       # 工具层：base.py（ToolSpec/ToolResult）、registry.py、retrieve_knowledge.py、web_search.py
-├── llm/             # LLM 后端：factory.py、openai_backend.py、ollama_backend.py、failover.py、retry.py
+├── llm/             # LLM 后端：factory.py、openai_backend.py、ollama_backend.py、failover.py、retry.py、budget_callback.py（F14）、usage_callback.py（F15）
 ├── search/          # 外部搜索：tavily.py、legal_sources.py（M2）、fusion.py（M2）
 ├── rag/             # 检索链：retriever.py、engine.py、intent.py、scenes.py（M3/F11 场景分类）
 ├── api/             # FastAPI 路由
 ├── memory/          # 会话记忆 + hallucination_guard.py 幻觉守卫
-├── observability/   # query_log.py 查询追踪
-└── config.py        # 全部配置（.env 加载）
+├── observability/   # 可观测：query_log.py 查询追踪、cost_budget.py（F14 次数熔断）、usage_store.py（F15 用量计费存储/计价/价格表）
+└── config.py        # 全部配置（.env 加载）；PRICING_DEFAULTS（F15 价格默认值）
 tests/               # pytest（FakeRetriever/FakeToolLLM，不依赖外部服务）
 docs/                # PRD、架构设计、ADR、评测报告
 ```
@@ -95,6 +95,16 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - **两条接入路径**：① 后端源——`PkulawLegalClient` 注册进 `LegalSourceClient` 门面，`legal_source_search` 自动融合（与既有国家库/案例库/小包公并列）；② ReAct 工具——`pkulaw_search`（检索）/ `pkulaw_verify`（核验+加链）按 `PKULAW_ENABLED` 与客户端可用性注册。
    - **预算熔断**：北大法宝按积分计费，新增 `KIND_PKULAW`（kind=`pkulaw`，`BUDGET_MAX_PKULAW_CALLS_PER_DAY` 默认 200），每次成功调用 `cost_budget` 先 check 后 record；超限工具层返回「法宝额度已用尽」、不阻断主链路（与 Tavily 同级降级语义）。
    - **配置只在 `.env`**：`PKULAW_MCP_URL` / `PKULAW_MCP_TOKEN`（聚合端点 Bearer），**严禁入库**（`.env` 已 gitignore）。
+
+12. **用量计费面板（F15，旁路观测）**：在 F14「次数熔断」之外新增一套 **token/金额观测层**，回答"每天烧了多少钱、花在哪"。方案 `docs/F15-日志与Token计费面板-技术方案.md`。
+    - **架构：旁路，不动 F14 熔断主链路**。熔断继续按次数（实时、原子、便宜），面板展示层按 token/金额。改动要新增独立链路，禁止在 `cost_budget.py` / `LLMBudgetCallbackHandler` 里混入 token 计数——预算 handler 的 `on_llm_end` 语义是「不再计数」（配额已在 start 预占，再记会把日限额腰斩），token 采集是另一关注点。
+    - **埋点三位置 + 计价收敛**：LLM 走 `src/llm/usage_callback.py`（`LLMUsageCallbackHandler`，构造 ChatModel 挂 `[*budget_callbacks(), *usage_callbacks(backend, model)]`，两后端都要挂）；Tavily 在 `search()` 成功返回处；pkulaw 在 `PkulawMCPClient._run()` 成功返回前——**一个埋点覆盖 Agent 工具与固定管线两条路径**。失败/超限不记。金额计算全部收敛在 `src/observability/usage_store.py`（`llm_cost_cny` / `pkulaw_cost_cny` / `tavily_cost_cny`），埋点只传原始量。
+    - **DeepSeek 缓存价差 50 倍**：缓存命中 ¥0.02 / 未命中 ¥1 / 输出 ¥2（每百万，2026-09-03 刊例）。ReAct 循环 system prompt+历史几乎次次命中，**不拆 cache hit/miss 会高估近一倍**。解析三级降级：usage_metadata.input_token_details.cache_read → response_metadata.usage.prompt_cache_hit_tokens → 全 miss 兜底。流式需 `ChatOpenAI(stream_usage=True)`；Ollama/拿不到 usage 时 tiktoken 估算标 `est=True`。
+    - **存储**：`usage_logs` 表每次付费调用一行（source/model/tool/backend、cache_hit/miss_tokens、credits、est、`cost_cny` **金额快照**——写入时按当时价格表算好，改价不漂移历史，明细留原始 token/积分可重算）；`pricing` 表 key-value。**不建 rollup**（个人实例日几百行，GROUP BY 毫秒级；聚合统一走 `usage_store.read_usage_*`，将来量大换物化视图不动 API）。
+    - **价格表**：`config.PRICING_DEFAULTS`（默认值）→ lifespan `ensure_pricing_defaults()` 首启幂等灌入 pricing 表 → 前端 `/usage` 页动态编辑（`PUT /api/usage/pricing`，只认 config 已知键，未知键忽略）。进程级价格缓存写后失效。
+    - **写失败 debug 级吞掉、读失败 fail-open**——观测组件故障绝不拖垮主链路（与 query_logs / cost_budget 同原则）。
+    - **API**（全部 `require_registered_user`，守护在 `tests/test_route_auth_guard.py`）：`GET /api/usage/summary?days=`（按日补零）/ `detail?day=&offset=&limit=` / `breakdown?days=&group=source|model|tool` / `pricing(GET|PUT)`。
+    - **金额口径注意**：Tavily/北大法宝是**积分制**（Tavily 免费 1000 credits/月、法宝注册送 1 万+每日可领），面板金额按价格表折算**仅是估算参考**，真实支出以官方 console 为准——别把面板金额当成真实账单对外承诺。
 
 12. **SSE 断线重连（D-M3-12 + D-0902-4，已实现）**：事件日志是重连补发的唯一真相源——`_bridge_sync_stream` 的 worker **先把事件写入 `StreamEventLog`（带 seq）再投递在线队列**，在线丢弃无妨。**只有主动取消（/chat/cancel）杀 worker**；被动断线（有日志）worker 继续跑完持续写日志，无 `request_id` 立即停。判定收敛在 `_on_exit_gone`，重放/跟进语义在 `resume_stream`。改桥接前必读：在线协程退出与 worker 生命周期是两条独立线，别把「杀 worker」挂在断开信号上（那正是本设计废除的旧行为）。
     - **归属校验（D-0902-4）**：`/chat/stream` 发起时用软鉴权身份登记流创建者（`StreamEventLog.set_owner`，TTL 同事件日志），`/chat/stream/resume` 校验「请求者 == 创建者」，不匹配 403——resume 重放的是问答全文，登录用户之间也要隔离。**新增能产生可重放流的接口时，必须同步登记 owner**，否则重放内容对所有登录用户裸奔。

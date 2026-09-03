@@ -4,6 +4,14 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-03】feat(F15)：日志与 Token 计费面板（6 commits，测试 →870+）**：M3 全部收尾后首个新功能，**旁路新增一套 token/金额观测层，不动 F14 次数熔断主链路**。方案 `docs/F15-日志与Token计费面板-技术方案.md`。
+  - **DDL**：`docker/init.sql` 新增 `usage_logs`（每次付费调用一行：source/model/tool/backend、cache_hit/miss_tokens 拆分、est 估算标记、`cost_cny` 金额快照——改价不漂移历史，明细留原始 token/积分可重算）+ `pricing`（key-value 价格表）。`tests/test_f15_usage_ddl.py`（6 项文件级守卫防列失配）。
+  - **存储层**：`src/observability/usage_store.py`——usage_logs 落库（失败 debug 吞掉，观测故障不拖垮主链路）、计价纯函数（deepseek 按 cache hit/miss 分档计价、ollama/qwen 免费、pkulaw 工具→积分映射 purpose 语义：语义检索 125/精确 25/识别 125）、聚合查询（纯 SQL GROUP BY **不建 rollup**，summary 补零到 N 天保证趋势图连续）、价格表 list/upsert/reset + 进程级缓存。`config.py` 新增 `PRICING_DEFAULTS`（官方刊例 2026-09-03 查证：deepseek-v4-flash 命中 ¥0.02/未命中 ¥1/输出 ¥2 每百万、tavily $0.008/credit 免费额度内仅估算、北大法宝 ¥18/6000 积分起）。`tests/test_usage_store.py`（26 项）。
+  - **LLM 埋点**：`src/llm/usage_callback.py` `LLMUsageCallbackHandler`——**独立于预算 handler**（后者 on_llm_end 语义是「不再计数」防重复计数，token 采集是另一关注点不能混入）；on_llm_end 读 usage_metadata，DeepSeek cache 拆分三级降级（usage_metadata.input_token_details → response_metadata.usage.prompt_cache_hit_tokens → 全 miss 兜底），流式/Ollama 无 usage 时 tiktoken 估算标 est；on_llm_error 不记。openai/ollama 两后端 ChatModel 挂 `[*budget_callbacks(), *usage_callbacks(backend, model)]`，ChatOpenAI 开 `stream_usage=True`。`tests/test_usage_callback.py`（11 项）。
+  - **外部 API 埋点**：Tavily `search()` 成功后 `record_tavily_usage`；pkulaw `_run()` 成功返回前 `record_pkulaw_usage(purpose)`——一个埋点覆盖 Agent 工具与固定管线两条路径；失败/超限不记。`tests/test_usage_instrumentation.py`（4 项）。
+  - **API**：`/api/usage/summary|detail|breakdown|pricing(GET|PUT)` 五接口，全部 `require_registered_user` 硬鉴权（登记进 `test_route_auth_guard.py` MUST_BE_HARD）；lifespan 首启 `ensure_pricing_defaults` 幂等灌默认价（失败静默）。`tests/test_usage_api.py`（13 项）。
+  - **前端**：`frontend/src/views/UsagePanel.vue`（/usage 路由）——KPI 卡（今日 tokens/费用/调用/熔断状态）+ 近 N 日费用柱状（纯 CSS 无新依赖）+ 按来源构成 + 调用明细分页（est 徽标）+ 价格设置抽屉（改价即时生效/恢复默认）；ChatView 顶栏加「用量计费」入口。`vite build` 通过（70 modules）。
+
 - **【2026-09-03】fix(前端)：切换/新建对话丢消息与串会话（会话级隔离）**：`ChatView` 保存链路此前用**全局单值 savedCount**、且保存请求在异步链里才读 `chat.sessionId`/`chat.messages`——回答生成中切走或切走后旧请求收尾，会把内容：
   ① 保存进**新会话**（DB append 串话，B 会话看到 A 的回复）；② 或因为视图已切走、`isActiveView=false` 而**不保存**（切回 A "回复没了"，只剩已落库的问题）。改动：
   - `persistSession(sid, extraMsgs?)`：基线改**按会话独立**（`savedCounts[sid]`）；body 在**调用瞬间快照**、sid 固化，异步链不再读全局状态——已排队的保存不受切换影响；

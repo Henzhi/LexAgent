@@ -4,6 +4,17 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-03】审查报告中长期项收尾（9 commits，测试 810→868）**：按 `docs/代码审查报告-2026-09-01.md` 中期/长期清单逐项修复（每项红→绿→全量回归→独立 commit）。
+  - **fix（测试环境隔离）**：conftest autouse 清空 `TAVILY_API_KEY`（patch 使用点 `src.agents.tools` 而非 src.config——模块级导入副本改不动）——修复 2 个随本机 .env 漂移的用例（`test_tool_result_failure_marked` / `test_parallel_tool_calls_sse_events`，基线 810→808 的 2 个失败）。
+  - **fix（F14 预算计数 TOCTOU）**：check(GET) 与 record(INCRBY) 两次往返存在并发窗口，日限额被放大到 limit+(并发-1)。改**预占模型**：`reserve()`/`release()`/`check_and_reserve()`，Redis 走 Lua 原子脚本（INCRBY→比较→超限回滚），失败归还；`check()` 保持只读（入口前置拦截用）。Lua 失败退化**非原子 Redis 路径**而非进程内计数——否则 reserve 写内存、used() 读 Redis 两边不一致会让熔断彻底失效。enforce=false 观察期照实计数不拦截。三处埋点（LLM callback / Tavily / pkulaw）预占后不再重复 record（否则日限额腰斩）、失败路径 release。`tests/test_budget_atomic.py`（20 项，含 40 线程并发断言成功数恰等于 limit）。
+  - **feat（降级可观测化）**：`/api/health` 新增 `degraded`/`degraded_reason`/`active_backend`/`budget_exceeded`——主后端一次 401 静默切 Ollama 的场景运维终于可见。FailoverLLMBackend 记录降级原因（创建期/运行期/回切清空）、LLMAdapter 透出；观测失败 fail-open（健康检查挂掉会让 LB 摘实例，比信息缺失严重）。`tests/test_health_degraded.py`（13 项）。
+  - **perf（PG 连接池）**：新增 `src/db/pool.py`——进程级 ThreadedConnectionPool（minconn/maxconn 默认 2/20，惰性创建，import 不触发建连）、每连接自动 register_vector、`db_connection()` 上下文管理器（异常回滚、归还兜底、池不可用退化一次性直连 fail-open）。auth 的 4 处调用点（register/login/load_token_cache/verify_token——每个认证请求的热路径）与 intent/law_centroids 一次性直连接入。测试期连接池强制关闭（conftest：db-mock 测试打桩的是全局 psycopg2.connect）。`tests/test_db_pool.py`（12 项）。长尾：6 个 store 类「单连接+锁 → 每操作借用」另行改造。
+  - **perf（前端流式渲染节流 + 会话增量保存）**：ChatView 每 token `nextTick()+scrollHeight`（强制同步布局）改 rAF 合并；会话保存从每轮上传全量 messages（O(n²) 流量）改 `mode=append` 增量——服务端 SQL 内 JSONB `||` 原子拼接，前端 savedCount 基线（首次全量/加载后追加/失败不推进基线重传/串行化防并发重复），记忆固化按追加后总条数触发且取全量历史。`tests/test_session_append.py`（6 项）。
+  - **ci（前端 job）**：CI 新增 frontend-build（npm ci + vite build）——此前前端改动零校验。
+  - **fix（Markdown 渲染器换成熟方案）**：自研渲染器每加语法都要重新证明安全 → markdown-it（html=false/linkify/breaks）+ DOMPurify 白名单双层防御 + 链接强制 target=_blank & rel=noopener。bundle 151→297KB（gzip 58→117KB）换安全可维护性。
+  - **build（Vite 升级）**：vite 5.4 EOL（esbuild 0.21.5 在 CVE 范围）→ 7.3 + plugin-vue 6；`build.outDir='../static'` 显式 `emptyOutDir: true`（实证旧 hash 产物已积压 6+ 个）。
+  - **fix（Token 迁移 HttpOnly Cookie）**：凭据从 localStorage 迁到 HttpOnly + SameSite=Strict Cookie（30 天，Secure 由 COOKIE_SECURE 控制）——XSS 无法再窃取。get_current_user 先 Cookie 后 Bearer（兼容通道保留）；新增无鉴权幂等 `POST /auth/logout` 清 Cookie；前端 stores/auth.js 只留非机密用户名 + 一次性清残留 lawrag_token，路由守卫改查 username，登录页 onMounted 用 /auth/me 实测 Cookie。`tests/test_auth_cookie.py`（9 项，DB-free）。
+
 - **【2026-09-02】审查整改收尾（B1–B8，9 commits，测试 784→810）**：按 `docs/代码审查报告-2026-09-01.md` 剩余未完成问题逐项 TDD 修复（每项红→绿→全量回归→独立 commit，新增守护测试均做过「回退转红」验证）。
   - **fix（B1 降级盲区）**：重试耗尽此前抛裸 `RuntimeError` 丢状态码，failover 判定「非 4xx」不降级——持续 429/5xx 时整条链路失败，Ollama 兜底用不上。新增哨兵 `LLMRetryExhaustedError`（`retry.py`，携带 last_error 的 status_code），openai_backend 三处「已重试 N 次」改抛它，failover 视为主后端不可用 → 降级（裸 RuntimeError 仍不降级，防误判）。`tests/test_retry_exhausted_failover.py`（10 项）。
   - **fix（B2 降级单向不可恢复）**：一次瞬时 401/403 就让进程永久切 Ollama，只能重启。failover 降级后进入冷却窗口（默认 300s，`recovery_cooldown_seconds`=0 禁用回切），冷却结束后**下一次真实请求兼作健康探测**——成功回切、失败继续降级并刷新冷却（不为探测单独发 ping，零额外 Token/RTT，探测失败由备用端无感应答）。⚠️ 复用真实请求做探测 = 探测期一次额外的主后端调用失败会被吞掉并走备用，属有意取舍。`graph.py::_react_enabled` 由构造期固化改**动态属性**（能力构造期定、降级实时求值），ReAct 图与固定管线图预构建、运行时切换——回切后 ReAct 能力自动回来。`tests/test_failover_recovery.py`（14 项）。

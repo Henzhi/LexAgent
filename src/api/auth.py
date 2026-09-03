@@ -18,7 +18,7 @@ import time
 import psycopg2
 from fastapi import Depends, Request, HTTPException
 
-from src.config import PG_CONN
+from src.db.pool import db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +93,6 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _get_db():
-    """获取数据库连接"""
-    return psycopg2.connect(PG_CONN)
-
-
 def register_user(username: str, password: str) -> dict:
     """
     注册新用户。
@@ -110,25 +105,23 @@ def register_user(username: str, password: str) -> dict:
     token = secrets.token_hex(32)
     token_hash = _hash_token(token)
 
-    conn = _get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO users (username, password_hash, token_hash, display_name) VALUES (%s, %s, %s, %s) RETURNING id",
-                (username, password_hash, token_hash, username),
-            )
-            user_id = str(cur.fetchone()[0])
-        conn.commit()
+    with db_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO users (username, password_hash, token_hash, display_name) VALUES (%s, %s, %s, %s) RETURNING id",
+                    (username, password_hash, token_hash, username),
+                )
+                user_id = str(cur.fetchone()[0])
+            conn.commit()
 
-        _token_cache[token_hash] = user_id
-        logger.info(f"新用户注册: {username} (id={user_id})")
+            _token_cache[token_hash] = user_id
+            logger.info(f"新用户注册: {username} (id={user_id})")
 
-        return {"user_id": user_id, "token": token, "username": username}
-    except psycopg2.errors.UniqueViolation:
-        conn.rollback()
-        raise HTTPException(status_code=409, detail=f"用户名 '{username}' 已存在")
-    finally:
-        conn.close()
+            return {"user_id": user_id, "token": token, "username": username}
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+            raise HTTPException(status_code=409, detail=f"用户名 '{username}' 已存在")
 
 
 def login_user(username: str, password: str) -> dict:
@@ -138,8 +131,7 @@ def login_user(username: str, password: str) -> dict:
     连续失败次数超限将被临时锁定（防爆破）。
     """
     _check_login_allowed(username)
-    conn = _get_db()
-    try:
+    with db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT id, password_hash FROM users WHERE username = %s",
@@ -176,14 +168,11 @@ def login_user(username: str, password: str) -> dict:
         logger.info(f"用户登录: {username} (id={user_id})")
 
         return {"user_id": user_id, "token": token, "username": username}
-    finally:
-        conn.close()
 
 
 def load_token_cache():
     """启动时将数据库中所有用户的 token 加载到内存缓存"""
-    conn = _get_db()
-    try:
+    with db_connection() as conn:
         with conn.cursor() as cur:
             # 确保表存在（首次启动时可能还未创建）
             cur.execute("""
@@ -207,8 +196,6 @@ def load_token_cache():
         for user_id, token_hash in rows:
             _token_cache[token_hash] = str(user_id)
         logger.info(f"Token 缓存加载完成: {len(_token_cache)} 个用户")
-    finally:
-        conn.close()
 
 
 def verify_token(token: str) -> str | None:
@@ -220,8 +207,7 @@ def verify_token(token: str) -> str | None:
     if user_id:
         return user_id
 
-    conn = _get_db()
-    try:
+    with db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM users WHERE token_hash = %s", (token_hash,))
             row = cur.fetchone()
@@ -229,8 +215,6 @@ def verify_token(token: str) -> str | None:
             user_id = str(row[0])
             _token_cache[token_hash] = user_id
             return user_id
-    finally:
-        conn.close()
 
     return None
 

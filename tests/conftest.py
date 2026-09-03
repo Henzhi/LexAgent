@@ -34,6 +34,14 @@ def mock_env(monkeypatch):
     monkeypatch.setattr("src.agents.tools.TAVILY_API_KEY", "")
     monkeypatch.setenv("TAVILY_API_KEY", "")
 
+    # ⚠️ 连接池在测试期强制关闭（2026-09-03 引入连接池后）。原因：db-mock 类
+    # 测试（test_intent_v2 / test_query_log / test_memory 等）打桩的是全局
+    # psycopg2.connect，而 src.db.pool 的池一旦初始化成功（本机 docker 的 PG
+    # 常驻时必然成功）会绕过 mock 直连真实库，测试结果随环境漂移。
+    # 关闭后 db_connection() 走一次性直连路径 → 恰好命中这些测试的既有打桩点。
+    monkeypatch.setattr("src.db.pool._pool", None, raising=False)
+    monkeypatch.setattr("src.db.pool._pool_init_error", "test-env-force-off", raising=False)
+
 
 @pytest.fixture
 def fake_retriever():

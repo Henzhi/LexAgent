@@ -68,14 +68,11 @@ class LawCentroids:
 
     @staticmethod
     def _load_rows() -> list[tuple[str, Any]]:
-        import psycopg2
+        from src.db.pool import db_connection
 
-        from src.config import PG_CONN
-
-        conn = psycopg2.connect(PG_CONN)
         sums: dict[str, np.ndarray] = {}
         counts: dict[str, int] = {}
-        try:
+        with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT metadata->>'law_name', embedding FROM document_chunks "
@@ -89,8 +86,6 @@ class LawCentroids:
                         v = np.asarray([float(x) for x in str(emb).strip("[]").split(",")], dtype=np.float32)
                         sums[law_name] = sums.get(law_name, np.zeros_like(v)) + v
                         counts[law_name] = counts.get(law_name, 0) + 1
-        finally:
-            conn.close()
         return [(name, sums[name] / max(counts[name], 1)) for name in sums]
 
     def _build(self, rows: list[tuple[str, Any]]) -> None:

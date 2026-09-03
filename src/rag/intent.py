@@ -204,11 +204,9 @@ def _fetch_law_count() -> int | None:
 
     count = None
     try:
-        from src.config import PG_CONN
-        import psycopg2
+        from src.db.pool import db_connection
 
-        conn = psycopg2.connect(PG_CONN)
-        try:
+        with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT count(*) FROM documents "
@@ -216,8 +214,6 @@ def _fetch_law_count() -> int | None:
                 )
                 row = cur.fetchone()
                 count = int(row[0]) if row else None
-        finally:
-            conn.close()
         _capability_count_cache["count"] = count
         _capability_count_cache["ts"] = now
     except Exception:

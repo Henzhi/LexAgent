@@ -46,7 +46,16 @@ export const useChatStore = defineStore('chat', () => {
   // 2026-09-04：刷新后由 sessionStorage 的快照重建（traces 用于恢复思考区，
   // lastSeq/answer/sources 用于按游标续流）。
   const pending = loadPending()
-  const activeStream = ref(pending ? { sid: pending.sid, requestId: pending.requestId, traces: pending.traces || [] } : null)
+  // connected：当前流是否有一条"活着的 SSE 连接"（2026-09-04 防重复续流）。
+  // 从 sessionStorage 快照重建（刷新后）必然没有活连接 → false，此时才允许
+  // resume；切页保活的流连接仍在（beginStream → true），回到页面绝不能再发
+  // resume，否则同一流被两个消费者读取：内容互相覆盖、收尾各自落库 → 回答
+  // 在服务端出现两条。
+  const activeStream = ref(
+    pending
+      ? { sid: pending.sid, requestId: pending.requestId, traces: pending.traces || [], connected: false }
+      : null,
+  )
 
   // 续流进度（非响应式：token 高频更新，无需驱动渲染，只在持久化与收尾时用）
   let progress = pending
@@ -85,11 +94,16 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function beginStream(sid, requestId, seed = null) {
-    activeStream.value = { sid, requestId, traces: seed?.traces || [] }
+    activeStream.value = { sid, requestId, traces: seed?.traces || [], connected: true }
     progress = seed
       ? { lastSeq: seed.lastSeq || 0, answer: seed.answer || '', sources: seed.sources || [] }
       : { lastSeq: 0, answer: '', sources: [] }
     schedulePersist()
+  }
+
+  // 标记当前流是否拥有活连接（resumeIfPending 发起续流前调用，见上方说明）
+  function markConnected(v) {
+    if (activeStream.value) activeStream.value.connected = !!v
   }
 
   // 更新续流游标 / 已生成内容（非渲染路径，节流落盘）
@@ -183,6 +197,7 @@ export const useChatStore = defineStore('chat', () => {
     activeStream,
     beginStream,
     endStream,
+    markConnected,
     updateStream,
     streamProgress,
     messagesOf,

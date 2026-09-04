@@ -13,6 +13,8 @@
   - **前端·切会话后台续跑（D-0904-1）**：`handleSelect`/`handleNewChat` 不再 abort，改走 store 新增的 `switchSession()`——把仍有生成在跑的旧会话现场保活到 `drafts[sid]`，SSE 继续写入 `messagesOf(sid)`，跑完由 `persistSession(sid, [msg])` 精确落回原会话，切回即见完整答案；「停止」与登出仍是真取消（并清续流快照）。
   - **前端·刷新后自动续流（D-0904-2）**：进行中的流快照 `{sid, requestId, lastSeq, answer, sources, traces}` 写入 sessionStorage（500ms 节流，traces 只留最近 80 条），`onMounted` 先重建在途回答再调 `/chat/stream/resume` 按 seq 游标续流；快照超 9 分钟视为过期丢弃，续流失败降级为「上次的回答已中断，请重新提问」。
   - **后端·孤儿流宽限回收（D-0904-3，根治白烧）**：`_bridge_sync_stream` 断线时给流打 deadline（`STREAM_ORPHAN_GRACE_SECONDS`，默认 30s，`config.py`），worker 迭代时超时无人认领即 `gen.close()` 停止；`/chat/stream/resume` 到达即认领并清除（生成继续跑完），重连连接自身断开后重新进入宽限期；主动取消/无日志流语义不变。配 0 可关闭回收。
+  - **fix(切页回来重复续流)**：切页保活时原 SSE 连接仍存活，`onMounted` 的续流会造成同一流**双消费**——内容互相覆盖、收尾各自落库，服务端出现两条相同回答。store 的 `activeStream` 增加 `connected` 标记（`beginStream` → true；从快照重建 → false），`resumeIfPending` 仅在无活连接时发起并立即置 true。
+  - **test(前端)**：新增 `frontend/src/stores/chat.test.js`（vitest，13 项：快照节流写入/游标推进不回退/traces 截断 80 条/endStream 匹配清理/分桶 messagesOf/switchSession 保活与丢弃/newSession 保活/快照恢复 connected=false/过期丢弃/损坏不抛/markConnected），`npm test` 接入；人工验收清单见 `docs/前端会话语义回归清单-2026-09-04.md`。
   - **测试**：新增 `tests/test_stream_orphan_reclaim.py`（9 项：孤儿登记过期/认领/grace=0 旧行为/未认领停止/认领后跑完/取消仍立即停/注册表清理/resume 认领）。
 
 - **【2026-09-03】fix(用量口径/CI/切页回显加固)**：

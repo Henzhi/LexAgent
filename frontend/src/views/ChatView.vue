@@ -690,6 +690,11 @@ async function consumeGeneration(query, recent, sid, continuation, opts = {}) {
 async function resumeIfPending() {
   const st = chat.activeStream
   if (!st || st.sid !== chat.sessionId) return
+  // 切页保活场景原 SSE 连接还活着（connected=true）：续流会造成同一流双消费
+  // ——内容互相覆盖、收尾各自落库，服务端出现两条相同回答。只有刷新后
+  // （内存态从快照重建、无任何活连接）才真正需要续流。
+  if (st.connected) return
+  chat.markConnected(true)
   await consumeGeneration('', [], st.sid, null, { resume: true })
 }
 

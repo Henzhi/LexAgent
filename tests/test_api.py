@@ -26,6 +26,10 @@ pg_required = pytest.mark.skipif(not _pg_available(), reason="PostgreSQL 不可�
 
 
 class TestHealth:
+    # /api/health 会做引擎状态检查（retriever 连 PG），无 PG 时 503——
+    # 与本文件其他用例同为 DB 依赖，补挂 pg_required（2026-09-04：
+    # 此前漏挂，本机无 PG 时用例直接失败而非跳过；CI 本就 ignore 本文件）
+    @pg_required
     def test_health_ok(self, client):
         r = client.get("/api/health")
         assert r.status_code == 200

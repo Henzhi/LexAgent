@@ -235,8 +235,12 @@ onMounted(async () => {
     router.replace('/login')
     return
   }
+  viewActive.value = true
   await refreshSessions()
   await loadCurrentSession()
+  // 刷新 / 切页回来：本会话若留有未完成的生成，按服务端事件游标续流，
+  // 把断线期间后端已经产出（且仍会继续产出）的内容接回来。
+  await resumeIfPending()
 })
 
 async function refreshSessions() {
@@ -251,15 +255,39 @@ async function loadCurrentSession() {
   // 切页保活：本会话仍有生成在进行（SSE 未被路由切换中断，store 已含最新流式
   // 内容）→ 不重拉历史覆盖正在增长的答案，只恢复组件局部状态（思考轨迹）。
   if (chat.activeStream && chat.activeStream.sid === sid) {
+    // 刷新后消息区是空的（Pinia 重建），先把历史拉回来补上"用户提问"，
+    // 否则续流回填的回答会孤零零悬在那里看不到问题。
+    if (chat.messages.length === 0) {
+      try {
+        const data = await loadHistory(sid)
+        if (data.history?.length) {
+          chat.messages = data.history
+          chat.setBaseline(sid, chat.messages.length)
+        }
+      } catch { /* 历史拉取失败不阻断续流，继续回填进行中的回答 */ }
+    }
     // 直接绑定 store 里进行中的同一响应式数组（勿用展开拷贝）：切回页面后，
     // 后台线程仍在向 activeStream.traces 实时追加，绑同一引用才能持续渲染。
     thinkingTraces.value = chat.activeStream.traces || []
     thinkingOpen.value = true
-    const last = chat.messages[chat.messages.length - 1]
-    if (last?.role === 'assistant' && last.content) {
+    // 刷新后内存消息已随 Pinia 重建而清空 —— 用 sessionStorage 快照把进行中的
+    // 回答先回填出来（否则用户看到的是"只剩提问、回答空白"），随后由
+    // resumeIfPending 按游标续上剩余部分。
+    const prog = chat.streamProgress()
+    if (prog.answer) {
+      const last = chat.messages[chat.messages.length - 1]
+      const draft = {
+        role: 'assistant',
+        content: prog.answer,
+        sources: prog.sources || [],
+        thinking: [...(chat.activeStream.traces || [])],
+      }
+      if (last?.role === 'assistant') chat.messages[chat.messages.length - 1] = draft
+      else chat.messages.push(draft)
       answered.value = true
       thinkingOpen.value = false
     }
+    chat.sending = true  // 续流期间保持"生成中"状态（输入禁用 + 可停止）
     await nextTick()
     scrollBottom()
     return
@@ -393,6 +421,8 @@ function stopGeneration() {
   abortController.value?.abort()
   if (currentRequestId.value) {
     cancelChat(currentRequestId.value)
+    // 明确停止即清掉续流快照：这一轮不再需要重连续上
+    chat.endStream(chat.sessionId, currentRequestId.value)
   }
 }
 
@@ -448,20 +478,43 @@ async function confirmContinue(query, recent, sid, scene, confirmId) {
 //   落库、思考轨迹镜像），组件卸载期间只跳过"组件局部/DOM"更新；切回时 onMounted
 //   从 store 恢复现场，不会出现"切走被掐断、回来又全部冒出来"。
 // - D-M3-12 断线重连逻辑保持不变（attempt 0 首次连接，失败按 seq 游标 resume）。
-async function consumeGeneration(query, recent, sid, continuation) {
-  const ctrl = abortController.value
+async function consumeGeneration(query, recent, sid, continuation, opts = {}) {
+  // opts.resume：刷新 / 切页回来后按游标续流（不重新发起提问，沿用原 request_id）
+  const resuming = !!opts.resume
+  const st = chat.activeStream
+  if (resuming && (!st || st.sid !== sid)) return
+  // 固化本请求 id：切会话后新请求会覆盖全局 currentRequestId，收尾时用它判断
+  // "我是否仍是当前请求"，避免旧流收尾误清新请求的状态。
+  const myRequestId = resuming ? st.requestId : currentRequestId.value
+  let ctrl = abortController.value
+  if (!ctrl || ctrl.signal.aborted) {
+    ctrl = new AbortController()
+    abortController.value = ctrl
+  }
   // 当前视图是否仍停留在本请求所属会话（切换会话后不再向新会话视图写入状态）
   const isActiveView = () => chat.sessionId === sid
   // 是否可以更新组件局部状态 / DOM（切页卸载期间为 false，但 store 写入照常）
   const canPaint = () => isActiveView() && viewActive.value
-  const localThinking = []  // 本次请求产生的思考轨迹（独立于视图，供中断保存）
+  // 本流的思考轨迹归属判断：切会话后 activeStream 可能已被新请求占用，
+  // 只有仍属于自己的流才追加 trace（否则会串到新会话的思考区）
+  const myStream = () => {
+    const s = chat.activeStream
+    return s && s.requestId === myRequestId ? s : null
+  }
+  // 续流起点：接着快照里已累积的内容继续长，断线期间已生成的部分不丢
+  const seed = resuming ? chat.streamProgress() : { answer: '', sources: [], lastSeq: 0 }
+  const localThinking = resuming ? [...(st?.traces || [])] : []  // 独立于视图，供中断保存
   // 跨 try/catch 共享：正常收尾与中断保存都要用到（放函数顶层，勿下沉到 try 块内）
-  let answer = ''
-  let sources = []
-  chat.beginStream(sid, currentRequestId.value)
+  let answer = seed.answer || ''
+  let sources = seed.sources || []
+  if (resuming) {
+    currentRequestId.value = myRequestId  // 续流期间"停止"作用在被续的这条流上
+  } else {
+    chat.beginStream(sid, myRequestId)
+  }
   try {
-    let lastSeq = 0   // D-M3-12：已收到的最大 seq，重连时作为续流游标
-    let attempt = 0
+    let lastSeq = seed.lastSeq || 0   // D-M3-12：已收到的最大 seq，重连时作为续流游标
+    let attempt = resuming ? 1 : 0    // 续流直接进入 resume 分支
     while (true) {
       try {
         const iter = attempt === 0
@@ -472,31 +525,39 @@ async function consumeGeneration(query, recent, sid, continuation) {
                   sceneId: continuation.scene,
                   query,
                   history: recent,
-                  requestId: currentRequestId.value,
+                  requestId: myRequestId,
                   confirmId: continuation.confirmId,
                 },
                 { signal: ctrl?.signal },
               )
-            : streamChat(query, recent, sid, { signal: ctrl?.signal, requestId: currentRequestId.value }))
-          : resumeChat(currentRequestId.value, lastSeq, { signal: ctrl?.signal })
+            : streamChat(query, recent, sid, { signal: ctrl?.signal, requestId: myRequestId }))
+          : resumeChat(myRequestId, lastSeq, { signal: ctrl?.signal })
         if (attempt > 0) {
           // D-M3-12 断线重连：后端在断线后继续跑完写事件日志，这里按游标补发续流
           if (canPaint()) {
-            thinkingTraces.value.push({ text: `连接中断，正在重连续流…（第 ${attempt} 次）`, kind: 'thinking' })
+            const tip = resuming && attempt === 1
+              ? '正在接续上次的回答…'
+              : `连接中断，正在重连续流…（第 ${attempt} 次）`
+            thinkingTraces.value.push({ text: tip, kind: 'thinking' })
           }
         }
         for await (const msg of iter) {
-          if (typeof msg.seq === 'number') lastSeq = msg.seq
+          if (typeof msg.seq === 'number') {
+            lastSeq = msg.seq
+            chat.updateStream({ seq: msg.seq })
+          }
           if (msg.type === 'thinking') {
             const t = { text: msg.content, kind: 'thinking' }
             localThinking.push(t)
-            if (chat.activeStream) chat.activeStream.traces.push(t)
+            const s = myStream()
+            if (s) s.traces.push(t)
             if (canPaint()) thinkingTraces.value.push(t)
           } else if (msg.type === 'tool_call') {
             // F4 过程透明化：记录工具调用
             const t = { text: `正在调用 ${msg.tool}`, kind: 'tool_call' }
             localThinking.push(t)
-            if (chat.activeStream) chat.activeStream.traces.push(t)
+            const s = myStream()
+            if (s) s.traces.push(t)
             if (canPaint()) thinkingTraces.value.push(t)
           } else if (msg.type === 'tool_result') {
             // F4 过程透明化：记录工具结果摘要；ok=false 用告警样式区分
@@ -505,18 +566,22 @@ async function consumeGeneration(query, recent, sid, continuation) {
               kind: msg.ok === false ? 'tool_result_error' : 'tool_result',
             }
             localThinking.push(t)
-            if (chat.activeStream) chat.activeStream.traces.push(t)
+            const s = myStream()
+            if (s) s.traces.push(t)
             if (canPaint()) thinkingTraces.value.push(t)
           } else if (msg.type === 'clear') {
             // 校验未通过，清掉最后一条 assistant 消息重新生成
-            if (canPaint()) {
-              while (chat.messages.length > 0 && chat.messages[chat.messages.length - 1].role === 'assistant') {
-                chat.messages.pop()
-              }
+            const list = chat.messagesOf(sid)
+            while (list.length > 0 && list[list.length - 1].role === 'assistant') {
+              list.pop()
             }
             answer = ''
+            chat.updateStream({ answer })
           } else if (msg.type === 'meta') {
-            if (msg.sources?.length) sources = msg.sources
+            if (msg.sources?.length) {
+              sources = msg.sources
+              chat.updateStream({ sources })
+            }
           } else if (msg.type === 'confirmation_required') {
             // F12：B 类场景需人工确认，本次流到此结束，等用户确认后同连接续跑
             confirmState.value = {
@@ -535,18 +600,18 @@ async function consumeGeneration(query, recent, sid, continuation) {
               thinkingOpen.value = false  // 思考结束，折叠
             }
             answer += msg.content
-            if (isActiveView()) {
-              // store 消息更新不依赖组件是否挂载：切页期间也持续累积，
-              // 回来即见最新内容（不会"被掐断/延迟全冒出来"）
-              const last = chat.messages[chat.messages.length - 1]
-              if (last?.role === 'assistant') {
-                last.content = answer
-              } else {
-                chat.messages.push({ role: 'assistant', content: answer })
-              }
-              // rAF 节流：同帧内多个 token 只触发一次滚动（不再逐 token 强制布局）
-              if (canPaint()) scheduleScroll()
+            chat.updateStream({ answer })
+            // 写本请求所属会话的消息数组（后台会话照样累积：切走后跑完落库，
+            // 切回即见完整答案；不再受 isActiveView 限制）
+            const list = chat.messagesOf(sid)
+            const last = list[list.length - 1]
+            if (last?.role === 'assistant') {
+              last.content = answer
+            } else {
+              list.push({ role: 'assistant', content: answer })
             }
+            // rAF 节流：同帧内多个 token 只触发一次滚动（不再逐 token 强制布局）
+            if (canPaint()) scheduleScroll()
           }
         }
         // 流结束兜底：把最后一批 token 的滚动补上（此时 scheduleScroll 可能
@@ -558,18 +623,22 @@ async function consumeGeneration(query, recent, sid, continuation) {
         // D-M3-12：仅"非用户主动取消的网络中断"自动重连续流（最多 2 次）；
         // 用户点停止（AbortError）、无游标可续、无 request_id → 交外层处理
         const cancelled = e?.name === 'AbortError' || ctrl?.signal?.aborted
-        if (cancelled || !currentRequestId.value || lastSeq === 0 || attempt >= 2) throw e
+        if (cancelled || !myRequestId || lastSeq === 0 || attempt >= 2) throw e
         attempt += 1
       }
     }
     if (confirmState.value.open) {
       // F12 等待确认：本次流无回答，不保存会话（确认后续跑正常保存）
     } else if (!answer) {
-      if (canPaint()) chat.messages.push({ role: 'assistant', content: '抱歉，没有生成回答，请重试。' })
+      if (canPaint()) chat.messagesOf(sid).push({ role: 'assistant', content: '抱歉，没有生成回答，请重试。' })
     } else {
       const assistantMsg = { role: 'assistant', content: answer, thinking: [...localThinking], sources }
-      if (isActiveView()) {
-        chat.messages[chat.messages.length - 1] = assistantMsg
+      // 写回本请求所属会话（切走后也能精确落位），不再依赖当前视图
+      const list = chat.messagesOf(sid)
+      if (list.length && list[list.length - 1]?.role === 'assistant') {
+        list[list.length - 1] = assistantMsg
+      } else {
+        list.push(assistantMsg)
       }
       // 写回发起时的会话（sid 固定）：即使期间切走了视图，回答也落回原会话。
       // 保存进 store 级串行队列即可，无需阻塞本流收尾（失败由链内吞掉并在
@@ -584,63 +653,88 @@ async function consumeGeneration(query, recent, sid, continuation) {
       if (answer) {
         // 中断但已有部分/完整回答：落库到发起会话，避免"切换对话后回复没了"
         const partialMsg = { role: 'assistant', content: answer, thinking: [...localThinking], sources }
-        if (isActiveView()) {
-          chat.messages[chat.messages.length - 1] = partialMsg
+        const list = chat.messagesOf(sid)
+        if (list.length && list[list.length - 1]?.role === 'assistant') {
+          list[list.length - 1] = partialMsg
+        } else {
+          list.push(partialMsg)
         }
         persistSession(sid, [partialMsg]).catch(() => {})
       } else if (canPaint()) {
-        chat.messages.push({ role: 'assistant', content: '已停止生成。' })
+        chat.messagesOf(sid).push({ role: 'assistant', content: '已停止生成。' })
       }
     } else if (canPaint()) {
-      chat.messages.push({ role: 'assistant', content: `请求失败: ${e.message}` })
+      // 续流失败（事件日志过期等）给出人话提示，而不是抛一句"重连失败: 404"
+      const text = /重连|过期/.test(e?.message || '')
+        ? '上次的回答已中断（服务端缓存已过期），请重新提问。'
+        : `请求失败: ${e.message}`
+      chat.messagesOf(sid).push({ role: 'assistant', content: text })
     }
   }
   // 收尾守卫：本请求仍是最新请求才清理共享状态（isActiveView 只判视图会话，
   // 不够——切换后新会话可能已发起新请求，旧请求收尾不得把新请求的 controller
   // 清空、也不得把新请求的 sending 置 false）
-  const isCurrentRequest = abortController.value === ctrl
-  if (isCurrentRequest) {
-    chat.endStream(sid, currentRequestId.value)
-    if (isActiveView()) {
-      chat.sending = false
-      abortController.value = null
-    }
+  // endStream 内部会校验 sid + requestId：后台会话的流跑完时也要清掉
+  // activeStream / 续流快照（否则下次刷新会去续一条早已结束的流）。
+  chat.endStream(sid, myRequestId)
+  const isCurrentRequest = currentRequestId.value === myRequestId
+  if (isCurrentRequest && isActiveView()) {
+    chat.sending = false
+    abortController.value = null
   }
 }
 
+// 刷新 / 切页回来：本会话留有未完成的生成 → 按服务端事件游标续流。
+// 后端 D-M3-12 在断线后会继续把这一轮跑完并写事件日志，不续流等于白烧 Token
+// 且用户永远看不到内容；这里续上，内容与正常生成完全一致。
+async function resumeIfPending() {
+  const st = chat.activeStream
+  if (!st || st.sid !== chat.sessionId) return
+  await consumeGeneration('', [], st.sid, null, { resume: true })
+}
+
 async function handleNewChat() {
-  abortController.value?.abort()  // 中断未完成的生成，避免后端继续消耗
-  chat.endStream(chat.sessionId, currentRequestId.value)
+  // 2026-09-04（用户选定语义）：新建会话不再中断生成 —— 旧会话仍在跑的回答
+  // 会在后台跑完并落库，切回去就是完整答案。要立刻停请用"停止"按钮或登出。
+  confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '' }
+  chat.newSession()  // 内部走 switchSession：保活仍有流在跑的旧会话现场
+  // 旧流交由后台自行跑完：断开与"停止"能力的绑定，避免误停后台会话
+  abortController.value = null
   currentRequestId.value = ''
-  chat.newSession()
-  const sid = chat.sessionId
+  chat.resetBaseline(chat.sessionId)  // 新会话：增量保存基线归零
   chat.sending = false
-  chat.messages = []
-  chat.resetBaseline(sid)  // 新会话：增量保存基线归零
   thinkingTraces.value = []
   answered.value = false
-  confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '' }
   await refreshSessions()
 }
 
-async function handleSelect(sessionId) {
-  abortController.value?.abort()  // 中断未完成的生成
-  chat.endStream(chat.sessionId, currentRequestId.value)
-  currentRequestId.value = ''
-  chat.sessionId = sessionId
-  sessionStorage.setItem('lawrag_session', sessionId)
-  chat.sending = false
-  chat.messages = []
-  chat.resetBaseline(sessionId)  // 切换会话：基线归零，由 loadCurrentSession 重新建立
-  thinkingTraces.value = []
-  answered.value = false
+async function handleSelect(targetId) {
+  // 2026-09-04（用户选定语义）：切换会话同样不中断生成 —— 原会话的回答后台
+  // 跑完并落库，切回即见完整答案（此前 abort 只是断开连接，后端按 D-M3-12
+  // 仍会跑完整轮，结果谁也收不到：前端空白 + Token 照扣）。
   confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '' }
+  chat.switchSession(targetId)
+  abortController.value = null
+  currentRequestId.value = ''
+  const running = chat.activeStream?.sid === targetId
+  chat.sending = !!running
+  thinkingTraces.value = running ? (chat.activeStream.traces || []) : []
+  thinkingOpen.value = true
+  answered.value = false
   await loadCurrentSession()
 }
 
 async function handleDelete(sessionId) {
   try {
     await deleteConversation(sessionId)
+    // 被删会话仍有生成在跑：答案已无处可落，立即停掉（省 Token）
+    if (chat.activeStream?.sid === sessionId) {
+      abortController.value?.abort()
+      cancelChat(currentRequestId.value)
+      chat.endStream(sessionId, currentRequestId.value)
+      abortController.value = null
+      currentRequestId.value = ''
+    }
     await refreshSessions()
     if (chat.sessionId === sessionId) handleNewChat()
   } catch (e) {
@@ -650,9 +744,13 @@ async function handleDelete(sessionId) {
 }
 
 function doLogout() {
-  abortController.value?.abort()  // 登出即停：不继续为已登出的用户烧 Token
+  // 登出即停：身份已变，续流会被归属校验拒绝（resume 403），留着快照只会
+  // 让下次登录误触重连。这里发 /chat/cancel 真正中断后端生成。
+  abortController.value?.abort()
+  if (currentRequestId.value) cancelChat(currentRequestId.value)
   chat.endStream(chat.sessionId, currentRequestId.value)
   currentRequestId.value = ''
+  abortController.value = null
   chat.newSession()
   auth.logout()
   router.replace('/login')

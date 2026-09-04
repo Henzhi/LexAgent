@@ -8,6 +8,13 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-04】fix(体验/成本)：离开会话后 Token 白烧 + 回答变空白（D-0904-1/2/3）**：用户实测「生成中切换对话 / 切到其他页面 / 刷新页面 → 仍在消耗 Token 但前端输出消失」。
+  - **根因**：后端 D-M3-12 语义为"被动断线后继续跑完并写事件日志，等前端按游标重连补发"，但前端只在**网络抖动**分支才 resume；切换会话只 `abort()`（不发 `/chat/cancel`）、刷新/关页面零处置 → 后端一律判定"断线等重连"把整轮烧完；而答案落库由前端 `persistSession` 负责，前端一断，产出既不在前端也不在服务端 → 空白 + 扣费。
+  - **前端·切会话后台续跑（D-0904-1）**：`handleSelect`/`handleNewChat` 不再 abort，改走 store 新增的 `switchSession()`——把仍有生成在跑的旧会话现场保活到 `drafts[sid]`，SSE 继续写入 `messagesOf(sid)`，跑完由 `persistSession(sid, [msg])` 精确落回原会话，切回即见完整答案；「停止」与登出仍是真取消（并清续流快照）。
+  - **前端·刷新后自动续流（D-0904-2）**：进行中的流快照 `{sid, requestId, lastSeq, answer, sources, traces}` 写入 sessionStorage（500ms 节流，traces 只留最近 80 条），`onMounted` 先重建在途回答再调 `/chat/stream/resume` 按 seq 游标续流；快照超 9 分钟视为过期丢弃，续流失败降级为「上次的回答已中断，请重新提问」。
+  - **后端·孤儿流宽限回收（D-0904-3，根治白烧）**：`_bridge_sync_stream` 断线时给流打 deadline（`STREAM_ORPHAN_GRACE_SECONDS`，默认 30s，`config.py`），worker 迭代时超时无人认领即 `gen.close()` 停止；`/chat/stream/resume` 到达即认领并清除（生成继续跑完），重连连接自身断开后重新进入宽限期；主动取消/无日志流语义不变。配 0 可关闭回收。
+  - **测试**：新增 `tests/test_stream_orphan_reclaim.py`（9 项：孤儿登记过期/认领/grace=0 旧行为/未认领停止/认领后跑完/取消仍立即停/注册表清理/resume 认领）。
+
 - **【2026-09-03】fix(用量口径/CI/切页回显加固)**：
   - **fix(usage_logs 无法按请求聚合，D-0903 续)**：LLM/Tavily/pkulaw 埋点落库时 request_id/session_id 全空（ChatModel 长驻单例、callback 构造时无请求上下文）。新增 `src/observability/usage_context.py`（threading.local 请求级上下文）——SSE 流在桥接 worker 线程、同步 /api/chat 在线程池线程都是「一线程一请求」，入口 `set_usage_ctx` / finally `clear`；`usage_store.record_usage` 落库时用 `resolve_ctx` 兜底填充（显式传参优先）。现在用量面板可按 request_id 聚合出「一次提问」的完整 token/费用。
   - **fix(CI 失败① Reranker OSError)**：`Reranker.__init__` 强制 `local_files_only` 加载，CI 无模型缓存直接 OSError 打崩 lifespan（`with TestClient` 的 usage_api 13 项全 ERROR）。改为加载失败降级 `self._model=None`（`available=False`），`rerank()` 短路原样返回候选——精排是可选的 quality 增益，辅助组件故障不拖垮主链路（D-M3-8 同款）。

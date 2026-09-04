@@ -108,6 +108,13 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 
 12. **SSE 断线重连（D-M3-12 + D-0902-4，已实现）**：事件日志是重连补发的唯一真相源——`_bridge_sync_stream` 的 worker **先把事件写入 `StreamEventLog`（带 seq）再投递在线队列**，在线丢弃无妨。**只有主动取消（/chat/cancel）杀 worker**；被动断线（有日志）worker 继续跑完持续写日志，无 `request_id` 立即停。判定收敛在 `_on_exit_gone`，重放/跟进语义在 `resume_stream`。改桥接前必读：在线协程退出与 worker 生命周期是两条独立线，别把「杀 worker」挂在断开信号上（那正是本设计废除的旧行为）。
     - **归属校验（D-0902-4）**：`/chat/stream` 发起时用软鉴权身份登记流创建者（`StreamEventLog.set_owner`，TTL 同事件日志），`/chat/stream/resume` 校验「请求者 == 创建者」，不匹配 403——resume 重放的是问答全文，登录用户之间也要隔离。**新增能产生可重放流的接口时，必须同步登记 owner**，否则重放内容对所有登录用户裸奔。
+    - **孤儿流宽限回收（D-0904-3）**：被动断线后 worker 继续跑，是为了让重连方补到完整内容；但用户刷新后不回来 / 直接关标签页时没有任何人会来认领，这一轮就纯白烧。故断线时给流打 deadline（`_ORPHAN_DEADLINES`，`STREAM_ORPHAN_GRACE_SECONDS` 默认 30s、配 0 关闭），worker 每次 yield 后检查、超时即 `gen.close()` 停止；`/chat/stream/resume` 到达**必须调 `_claim_stream()` 认领**（清除 deadline），重连连接自身断开时重新打 deadline。⚠️ 新增「能让流继续跑」的入口时，别忘了认领——漏认领的表现是用户重连后答案被拦腰截断。测试 `tests/test_stream_orphan_reclaim.py`。
+
+13. **前端：离开会话时的生成语义（D-0904-1 / D-0904-2）**：答案落库由前端 `persistSession` 负责，所以"前端断开"必须成对处理——**要么真停（abort + `/chat/cancel`），要么让它跑完并落库，绝不能只 abort**（那是最差组合：后端照烧、结果谁也收不到）。当前语义：
+   - **切换 / 新建会话 → 后台续跑并落库**：走 `stores/chat.js` 的 `switchSession()`（把仍有流在跑的旧会话现场保活到 `drafts[sid]`），SSE 继续写 `messagesOf(sid)`，跑完 `persistSession(sid, [msg])` 精确落回原会话。**不要再写 `abortController.abort()`**。
+   - **刷新 / 切页回来 → 自动续流**：流快照持久化在 sessionStorage（`lawrag_pending_stream`，500ms 节流），`onMounted` 重建在途回答后调 `resumeChat(requestId, lastSeq)` 续流；快照超 9 分钟丢弃（事件日志 TTL 600s 留余量），续流失败降级提示「已中断，请重新提问」。快照存 sessionStorage 而非 localStorage：多标签页会话独立，不会把 A 标签页的流续到 B。
+   - **只有「停止」按钮与登出才真取消**（abort + `/chat/cancel` + 清快照）；删除正在生成的会话同样立即停（答案已无处可落）。
+   - **请求身份用 `myRequestId` 固化**：`consumeGeneration` 内一律用本请求 id 判断"我是否仍是当前请求"，不要读全局 `currentRequestId` 判断——切会话后新请求会覆盖它，旧流收尾会误清新请求状态 / 清不掉自己的 `activeStream`。
 
 ## 代码规范
 

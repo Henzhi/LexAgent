@@ -42,7 +42,7 @@ from .auth import (
     set_auth_cookie,
     clear_auth_cookie,
 )
-from src.config import AGENT_ENABLED, LLM_MAX_CONCURRENCY
+from src.config import AGENT_ENABLED, LLM_MAX_CONCURRENCY, STREAM_ORPHAN_GRACE_SECONDS
 from src.memory.confirmation_store import get_confirmation_store
 from src.observability.cost_budget import get_budget
 from src.observability.stream_log import get_stream_log
@@ -559,6 +559,52 @@ _CANCEL_LOCK = threading.Lock()
 # 重连重放完即止（生成已不在进行）。
 _ACTIVE_STREAMS: dict[str, float] = {}
 
+# 孤儿流宽限表（request_id → 停止生成的单调时刻）。
+#
+# D-M3-12 的语义是「被动断线后继续跑完，等前端按 seq 游标重连补发」，但前端
+# 并非每次断开都会重连：用户刷新后没回来、直接关标签页、切走会话后不再关注
+# —— 这些情况下后端仍会把整轮 LLM 烧完，产出无人接收（用户看到的是"回答空白
+# + 额度照扣"）。这里给断线后的流打一个宽限 deadline：
+#   - resume 到达 → 认领（弹出 deadline），生成继续跑完；
+#   - 超过 STREAM_ORPHAN_GRACE_SECONDS 无人认领 → worker 立即停止生成。
+# 设 STREAM_ORPHAN_GRACE_SECONDS=0 即关闭回收，退回旧行为。
+_ORPHAN_DEADLINES: dict[str, float] = {}
+_ORPHAN_LOCK = threading.Lock()
+
+
+def _mark_orphan(stream_id: str) -> None:
+    """标记流进入孤儿宽限期（断线且无人认领时到期即停）。"""
+    if not stream_id or STREAM_ORPHAN_GRACE_SECONDS <= 0:
+        return
+    with _ORPHAN_LOCK:
+        _ORPHAN_DEADLINES[stream_id] = time.monotonic() + STREAM_ORPHAN_GRACE_SECONDS
+
+
+def _claim_stream(stream_id: str) -> None:
+    """重连续流时认领：清除孤儿 deadline，生成得以继续跑完。"""
+    if not stream_id:
+        return
+    with _ORPHAN_LOCK:
+        _ORPHAN_DEADLINES.pop(stream_id, None)
+
+
+def _orphan_expired(stream_id: str) -> bool:
+    """孤儿宽限期是否已过（worker 迭代时轮询，超时即应停止生成）。"""
+    if not stream_id:
+        return False
+    with _ORPHAN_LOCK:
+        deadline = _ORPHAN_DEADLINES.get(stream_id)
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def _drop_orphan(stream_id: str) -> None:
+    """流终局（正常结束 / 取消 / 停止）时清理孤儿登记。"""
+    if not stream_id:
+        return
+    with _ORPHAN_LOCK:
+        _ORPHAN_DEADLINES.pop(stream_id, None)
+
+
 # 后台任务强引用集合（2026-09-01 审查整改）：asyncio 只持任务弱引用，
 # fire-and-forget 的返回值丢弃后任务可能在完成前被 GC。add + 完成时 discard。
 _BACKGROUND_TASKS: set = set()
@@ -668,26 +714,35 @@ async def resume_stream(
         logger.warning("[resume] 流无归属登记（旧版本创建），按旧行为放行重放")
 
     async def _gen():
+        # 认领：清除孤儿 deadline —— 有人接手这一轮，生成可以放心跑完
+        _claim_stream(request_id)
         last = max(0, int(after_seq))
         # 兜底时限与日志 TTL 同量级：防止对端半开连接把协程挂死
         deadline = time.monotonic() + 600
-        while True:
-            ended = False
-            for ev in log.read_after(request_id, last):
-                last = int(ev.get("seq", last))
-                if ev.get("type") == "__stream_end__":
-                    ended = True
+        try:
+            while True:
+                ended = False
+                for ev in log.read_after(request_id, last):
+                    last = int(ev.get("seq", last))
+                    if ev.get("type") == "__stream_end__":
+                        ended = True
+                        break
+                    yield _sse(ev)
+                if ended or request_id not in _ACTIVE_STREAMS:
+                    break  # 终局；或生成已不在进行（取消/重启）——重放完即止
+                if time.monotonic() > deadline:
+                    yield _sse({"type": "error", "content": "重连等待超时，请重新发起提问"})
                     break
-                yield _sse(ev)
-            if ended or request_id not in _ACTIVE_STREAMS:
-                break  # 终局；或生成已不在进行（取消/重启）——重放完即止
-            if time.monotonic() > deadline:
-                yield _sse({"type": "error", "content": "重连等待超时，请重新发起提问"})
-                break
-            if await _is_disconnected(request):
-                break
-            await asyncio.sleep(0.5)
-        yield "data: [DONE]\n\n"
+                if await _is_disconnected(request):
+                    break
+                await asyncio.sleep(0.5)
+            yield "data: [DONE]\n\n"
+        finally:
+            # 重连连接本身也断了、而生成仍在进行 → 重新进入孤儿宽限期。
+            # 用户可能还会再刷新/再重连一次，给他 STREAM_ORPHAN_GRACE_SECONDS
+            # 的时间；超时无人认领则由 worker 停止生成（不再白烧）。
+            if request_id in _ACTIVE_STREAMS:
+                _mark_orphan(request_id)
 
     return StreamingResponse(
         _gen(),
@@ -735,6 +790,17 @@ async def _bridge_sync_stream(
             return True
         return await _is_disconnected(request)
 
+    def _note_client_gone() -> None:
+        """客户端离开：先按 D-M3-12 决定终止语义，再给"继续跑完"的流打孤儿 deadline。
+
+        只有「被动断线 + 有事件日志」时 worker 才会继续跑（等重连补发），
+        也只有这种情况需要孤儿回收；主动取消 / 无日志的流 worker 立即就停，
+        再打 deadline 没有意义。
+        """
+        _on_exit_gone(stop, cancel_event, stream_id)
+        if stream_id and not stop.is_set():
+            _mark_orphan(stream_id)
+
     q: _queue.Queue = _queue.Queue(maxsize=64)
     stop = threading.Event()
     loop = asyncio.get_running_loop()
@@ -753,6 +819,11 @@ async def _bridge_sync_stream(
                     # 主动取消：在当前（生成器执行）线程 close，GeneratorExit
                     # 立即在挂起的 yield 点投递，底层 LLM 流的 finally
                     # 立即关闭连接，停止 Token 消耗。
+                    gen.close()
+                    break
+                if _orphan_expired(stream_id):
+                    # 断线后无人重连认领（用户已离开）：不再把这一轮烧完
+                    logger.info(f"[stream] 孤儿流超时未认领，停止生成: {stream_id[:8]}…")
                     gen.close()
                     break
                 # 先落日志再投递（D-M3-12）：写失败只告警，事件照常在线投递
@@ -785,6 +856,7 @@ async def _bridge_sync_stream(
                 event_log.append_end(stream_id)
             if stream_id:
                 _ACTIVE_STREAMS.pop(stream_id, None)
+                _drop_orphan(stream_id)
             if gen is not None:
                 try:
                     gen.close()
@@ -804,7 +876,7 @@ async def _bridge_sync_stream(
                 item = await asyncio.to_thread(q.get, True, 1.0)
             except _queue.Empty:
                 if await _client_gone():
-                    _on_exit_gone(stop, cancel_event, stream_id)
+                    _note_client_gone()
                     break
                 continue
 
@@ -817,7 +889,7 @@ async def _bridge_sync_stream(
 
             # 产出前检查断开
             if await _client_gone():
-                _on_exit_gone(stop, cancel_event, stream_id)
+                _note_client_gone()
                 break  # 被动断线（有日志）：worker 继续跑完写日志（见 finally）
             yield item
     finally:

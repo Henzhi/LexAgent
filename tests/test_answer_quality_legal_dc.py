@@ -112,10 +112,36 @@ class TestBuildJudgePrompt:
 
 
 class TestResumeHelpers:
-    def test_load_jsonl_and_done_ids(self, tmp_path: Path):
+    def test_load_jsonl_and_dedupe_last(self, tmp_path: Path):
         p = tmp_path / "x.jsonl"
-        p.write_text('{"src_id": 1, "accuracy": 3}\n\n{"src_id": 2, "accuracy": null}\n', encoding="utf-8")
+        p.write_text(
+            '{"src_id": 2, "error": "超时"}\n\n{"src_id": 1, "answer": "a"}\n{"src_id": 2, "answer": "补跑成功"}\n',
+            encoding="utf-8",
+        )
         rows = aq.load_jsonl(p)
-        assert len(rows) == 2
-        assert aq.done_ids(rows) == {1, 2}
+        assert len(rows) == 3
+        # 同 src_id 取最后一条（error 重试成功的最新行），按 src_id 排序输出
+        assert [(r["src_id"], r.get("answer", "")) for r in aq.dedupe_last(rows)] == [(1, "a"), (2, "补跑成功")]
         assert aq.load_jsonl(tmp_path / "missing.jsonl") == []
+
+    def test_done_gen_ids_retries_error_rows(self):
+        rows = [
+            {"src_id": 1, "error": ""},
+            {"src_id": 2, "error": "URLError: 断网"},
+            {"src_id": 3, "error": "", "confirmation_required": True},
+        ]
+        assert aq.done_gen_ids(rows) == {1, 3}  # error 行不算完成 → 重跑自动补
+
+    def test_done_judge_ids_retries_unscored(self):
+        rows = [
+            {"src_id": 1, "accuracy": 4},
+            {"src_id": 2, "accuracy": None, "comment": "judge 调用失败"},
+        ]
+        assert aq.done_judge_ids(rows) == {1}
+
+    def test_result_paths_tag_isolation(self):
+        g0, j0 = aq.result_paths("")
+        assert g0.name == "aq_gen.jsonl" and j0.name == "aq_judge.jsonl"
+        g1, j1 = aq.result_paths("review")
+        assert g1.name == "aq_gen_review.jsonl" and j1.name == "aq_judge_review.jsonl"
+        assert g1 != g0 and j1 != j0

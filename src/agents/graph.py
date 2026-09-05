@@ -625,7 +625,12 @@ class LawAgentGraph:
                         }
                         for d in docs
                     ]
-                    yield {"type": "meta", "sources": sources, "is_casual": False}
+                    yield {
+                        "type": "meta",
+                        "sources": sources,
+                        "is_casual": False,
+                        "degraded": _backend_degraded(self.llm),
+                    }
                 else:
                     # 重试：复用首次检索结果（不再推送 sources）
                     docs = cached_docs
@@ -819,7 +824,7 @@ class LawAgentGraph:
                 "type": "thinking",
                 "content": f"⚖️ 检测到网络信息与内部库就《{laws}》存在出入，已按内部库优先裁决",
             }
-        yield {"type": "meta", "sources": sources, "is_casual": False}
+        yield {"type": "meta", "sources": sources, "is_casual": False, "degraded": _backend_degraded(self.llm)}
 
         # ---- 最终答案分块推送（D2：非流式决策 + SSE 分块模拟流式）----
         yield {"type": "thinking", "content": "📝 正在输出回答..."}

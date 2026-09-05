@@ -41,8 +41,15 @@ if str(PROJECT_ROOT) not in sys.path:
 DATA_DIR = EVAL_DIR / "data" / "legal_dc"
 SUBSET_PATH = DATA_DIR / "answer_quality_subset.json"
 RESULTS_DIR = DATA_DIR / "results"
-GEN_PATH = RESULTS_DIR / "aq_gen.jsonl"
+GEN_PATH = RESULTS_DIR / "aq_gen.jsonl"  # 默认 tag（基线）；对比跑用 --tag review 等隔离
 JUDGE_PATH = RESULTS_DIR / "aq_judge.jsonl"
+
+
+def result_paths(tag: str) -> tuple[Path, Path]:
+    """按 tag 隔离结果文件（基线与带审核的对比跑不混写；paired 对比要同题两份答案）。"""
+    suffix = f"_{tag}" if tag else ""
+    return RESULTS_DIR / f"aq_gen{suffix}.jsonl", RESULTS_DIR / f"aq_judge{suffix}.jsonl"
+
 
 # 复用 lexeval_eval 的 SSE 解析与后端约定（端口 8001）
 _spec = importlib.util.spec_from_file_location("lexeval_eval", EVAL_DIR / "scripts" / "lexeval_eval.py")
@@ -124,6 +131,25 @@ def done_ids(rows: list[dict]) -> set[int]:
     return {r["src_id"] for r in rows if "src_id" in r}
 
 
+def dedupe_last(rows: list[dict]) -> list[dict]:
+    """同 src_id 多行时取**最后一条**（error 行重试成功后同 id 两行，消费端只认最新）。"""
+    out: dict[int, dict] = {}
+    for r in rows:
+        if "src_id" in r:
+            out[r["src_id"]] = r
+    return [out[k] for k in sorted(out)]
+
+
+def done_gen_ids(rows: list[dict]) -> set[int]:
+    """生成层"已完成"判定：**error 行不算完成**——断网等故障的失败条目重跑时自动补跑。"""
+    return {r["src_id"] for r in rows if "src_id" in r and not r.get("error")}
+
+
+def done_judge_ids(rows: list[dict]) -> set[int]:
+    """评判层"已完成"判定：打分缺失（解析/调用失败）不算完成，重跑自动补评。"""
+    return {r["src_id"] for r in rows if r.get("accuracy") is not None}
+
+
 def aggregate(judged: list[dict]) -> dict:
     """聚合评判结果：整体均值 + 题型分型 + 分数分布。
 
@@ -164,15 +190,22 @@ def aggregate(judged: list[dict]) -> dict:
 
 def render_report(agg: dict, gen_rows: list[dict], meta: dict) -> str:
     """聚合结果 + 生成层诊断 → Markdown 报告。"""
+    tag = meta.get("tag") or "baseline"
+    title = (
+        "B3 回答质量评测报告（Legal-DC 重叠子集）" if meta.get("tag") else "B3 回答质量基线报告（Legal-DC 重叠子集）"
+    )
+    n_degraded = sum(1 for g in gen_rows if g.get("degraded"))
     lines = [
-        "# B3 回答质量基线报告（Legal-DC 重叠子集）",
+        f"# {title}",
         "",
         f"- 评测时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 运行标签：**{tag}**（结果文件 aq_gen{'_' + tag if meta.get('tag') else ''}.jsonl）",
         f"- 数据源：{meta.get('source', 'Legal-DC')} 重叠子集 {meta.get('subset_n', '?')} 条"
         f"（seed={meta.get('seed', '?')} 分层抽样），本轮实际评测前 {meta.get('evaluated_n', '?')} 条"
         "（2026-09-05 基线按 100 条裁剪，断点续跑可随时补至全量）",
         f"- 生成层：{len(gen_rows)} 条有产出，{sum(1 for g in gen_rows if g.get('error'))} 条请求失败，"
-        f"{sum(1 for g in gen_rows if g.get('confirmation_required'))} 条触发场景确认未作答",
+        f"{sum(1 for g in gen_rows if g.get('confirmation_required'))} 条触发场景确认未作答"
+        + (f"，**{n_degraded} 条由降级后端（Ollama）生成——对比判读前须剔除或重跑**" if n_degraded else ""),
         "",
         "## 一、LLM-as-judge 总评",
         "",
@@ -250,6 +283,7 @@ def stream_chat_full(base_url: str, query: str, top_k: int = 5, timeout: int = 4
     tokens: list[str] = []
     sources: list[dict] = []
     confirmation = False
+    degraded = False
     for block in buf.split("\n\n"):
         for line in block.split("\n"):
             if not line.startswith("data: "):
@@ -266,24 +300,26 @@ def stream_chat_full(base_url: str, query: str, top_k: int = 5, timeout: int = 4
                 tokens.append(ev.get("content", ""))
             elif et == "meta":
                 sources = ev.get("sources", []) or []
+                degraded = bool(ev.get("degraded"))  # 主后端降级（Ollama）出的答案，对比时须可辨识
             elif et == "confirmation_required":
                 confirmation = True
     return {
         "answer": "".join(tokens).strip(),
         "sources": sources,
         "confirmation_required": confirmation,
+        "degraded": degraded,
         "elapsed": time.time() - t0,
     }
 
 
-def run_generation(items: list[dict], base_url: str, top_k: int = 5) -> list[dict]:
-    """顺序生成（追加式续跑：跳过 GEN_PATH 已有 src_id）。"""
-    GEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    done = done_ids(load_jsonl(GEN_PATH))
+def run_generation(items: list[dict], base_url: str, top_k: int = 5, gen_path: Path = GEN_PATH) -> list[dict]:
+    """顺序生成（追加式续跑：跳过已完成 src_id；error 行不算完成，重跑自动补跑）。"""
+    gen_path.parent.mkdir(parents=True, exist_ok=True)
+    done = done_gen_ids(load_jsonl(gen_path))
     todo = [it for it in items if it["src_id"] not in done]
-    print(f"[生成] 已完成 {len(done)} 条，本轮待跑 {len(todo)} 条 → {GEN_PATH.name}")
+    print(f"[生成] 已完成 {len(done)} 条，本轮待跑 {len(todo)} 条 → {gen_path.name}")
     results = []
-    with open(GEN_PATH, "a", encoding="utf-8") as f:
+    with open(gen_path, "a", encoding="utf-8") as f:
         for i, item in enumerate(todo):
             row = {
                 "src_id": item["src_id"],
@@ -294,6 +330,7 @@ def run_generation(items: list[dict], base_url: str, top_k: int = 5) -> list[dic
                 "answer": "",
                 "n_sources": 0,
                 "error": "",
+                "degraded": False,
             }
             try:
                 res = stream_chat_full(base_url, item["query"], top_k=top_k)
@@ -302,14 +339,17 @@ def run_generation(items: list[dict], base_url: str, top_k: int = 5) -> list[dic
                     n_sources=len(res["sources"]),
                     elapsed=round(res["elapsed"], 1),
                     confirmation_required=res["confirmation_required"],
+                    degraded=res.get("degraded", False),
                 )
-            except Exception as e:  # 网络抖动/超时记为失败行，续跑可重来
+            except Exception as e:  # 网络抖动/超时记为失败行（不计完成，续跑自动补）
                 row["error"] = f"{type(e).__name__}: {e}"
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
             f.flush()
             results.append(row)
             status = (
-                "确认" if row.get("confirmation_required") else ("错误" if row["error"] else f"{len(row['answer'])}字")
+                "确认"
+                if row.get("confirmation_required")
+                else ("错误" if row["error"] else f"{len(row['answer'])}字{'(降级)' if row['degraded'] else ''}")
             )
             print(f"  [{i + 1}/{len(todo)}] #{item['src_id']} {item['class']} {row['elapsed']}s {status}")
     return results
@@ -331,14 +371,19 @@ def build_judge_prompt(item: dict, answer: str) -> str:
     )
 
 
-def run_judge(gen_rows: list[dict], subset_by_id: dict[int, dict], limit: int) -> list[dict]:
-    """LLM-as-judge（追加式续跑）：对已生成条目打分，结果写 JUDGE_PATH。"""
+def run_judge(
+    gen_rows: list[dict], subset_by_id: dict[int, dict], limit: int, judge_path: Path = JUDGE_PATH
+) -> list[dict]:
+    """LLM-as-judge（追加式续跑）：对已生成条目打分，结果写 judge_path。
+
+    gen_rows 传入前须 dedupe_last（同 src_id 重试成功后多行，只评最新一条）。
+    """
     import src.config  # noqa: F401  # factory 直读 os.getenv，须先经 config 加载 .env
     from src.llm.factory import create_llm_backend  # 延迟导入：--report 不需要 LLM
 
     llm = create_llm_backend(temperature=0.0)
-    JUDGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    done = done_ids(load_jsonl(JUDGE_PATH))
+    judge_path.parent.mkdir(parents=True, exist_ok=True)
+    done = done_judge_ids(load_jsonl(judge_path))
     todo = [
         g
         for g in gen_rows
@@ -392,24 +437,30 @@ def main() -> None:
     ap.add_argument("--generate", type=int, default=0, help="生成回答条数（0=跳过）")
     ap.add_argument("--judge", type=int, default=0, help="评判条数（0=跳过；-1=全部已生成）")
     ap.add_argument("--report", action="store_true", help="汇总评判结果出报告")
+    ap.add_argument("--tag", default="", help="结果文件标签（对比跑隔离用，如 review → aq_gen_review.jsonl）")
     ap.add_argument("--base-url", default=BASE_URL_DEFAULT)
     ap.add_argument("--top-k", type=int, default=5)
     ap.add_argument("--output", default=str(PROJECT_ROOT / "docs" / "B3-答案质量基线报告.md"))
     args = ap.parse_args()
 
+    gen_path, judge_path = result_paths(args.tag)
+    if args.tag:
+        print(f"[tag={args.tag}] 生成 → {gen_path.name} | 评判 → {judge_path.name}")
+
     if args.generate:
         subset = json.loads(SUBSET_PATH.read_text(encoding="utf-8"))
         items = subset["items"][: args.generate]
-        run_generation(items, args.base_url, top_k=args.top_k)
+        run_generation(items, args.base_url, top_k=args.top_k, gen_path=gen_path)
 
-    gen_rows = load_jsonl(GEN_PATH)
+    # 消费端统一去重取最新（error 行重试成功后同 id 多行）
+    gen_rows = dedupe_last(load_jsonl(gen_path))
     if args.judge != 0:
         subset = json.loads(SUBSET_PATH.read_text(encoding="utf-8"))
         subset_by_id = {it["src_id"]: it for it in subset["items"]}
-        run_judge(gen_rows, subset_by_id, limit=args.judge if args.judge > 0 else 10**9)
+        run_judge(gen_rows, subset_by_id, limit=args.judge if args.judge > 0 else 10**9, judge_path=judge_path)
 
     if args.report:
-        judged = load_jsonl(JUDGE_PATH)
+        judged = dedupe_last(load_jsonl(judge_path))
         agg = aggregate(judged)
         subset = json.loads(SUBSET_PATH.read_text(encoding="utf-8"))
         report = render_report(
@@ -420,6 +471,7 @@ def main() -> None:
                 "seed": subset.get("seed"),
                 "subset_n": len(subset["items"]),
                 "evaluated_n": len(gen_rows),
+                "tag": args.tag,
             },
         )
         out = Path(args.output)

@@ -14,6 +14,7 @@ from langgraph.graph.message import add_messages
 # Agent 维度标识（C2 / M4 阶段 2 预埋）：tool_log 与 SSE 工具事件标注"谁在执行"。
 # 阶段 2 子 Agent（审核/类案/文书）接入时传各自 id，主 Agent 恒为 "main"。
 AGENT_MAIN = "main"
+AGENT_REVIEW = "review"  # 审核子图（M4 阶段 2 第一个真子 Agent，D-M4-3）
 
 
 class AgentState(TypedDict):
@@ -61,3 +62,5 @@ class AgentState(TypedDict):
     # ---- M4 阶段 1（D-M4-1）----
     plan: dict  # 执行计划（scenes.build_plan 产出的 AgentPlan asdict）：工具白名单/确认要求，
     # agent_node 按 plan.tools 收窄 schema（空 = 不限制，A 类行为不变）
+    # ---- M4 阶段 2（D-M4-3）----
+    review: dict  # 审核子图产物（判定契约）：verdict/layer/issues/feedback/unbacked_citations

@@ -19,14 +19,15 @@ import logging
 import time
 from contextlib import contextmanager
 from dataclasses import asdict
-from typing import Iterator
+from typing import Callable, Iterator
 
 from langgraph.graph import StateGraph, END
 
-from src.config import AGENT_MAX_TOOL_TURNS, AGENT_REACT_ENABLED
-from src.agents.state import AGENT_MAIN, AgentState
+from src.config import AGENT_MAX_TOOL_TURNS, AGENT_REACT_ENABLED, AGENT_REVIEW_ENABLED, REVIEW_VERIFY_MAX_CITATIONS
+from src.agents.state import AGENT_MAIN, AGENT_REVIEW, AgentState
 from src.agents.nodes import make_nodes, build_hierarchical_context, build_budgeted_prompt
 from src.agents.react_nodes import make_react_nodes
+from src.agents.review import make_review_subgraph
 from src.agents.tools import ToolRegistry, build_default_tools
 from src.rag.retriever import BaseRetriever
 from src.rag.engine import RAG_PROMPT_TEMPLATE
@@ -101,6 +102,15 @@ class LawAgentGraph:
         nodes = make_nodes(llm, retriever, memory_manager, top_k, max_retries)
         self._nodes = nodes
 
+        # M4 阶段 2（D-M4-3）：审核子图 —— validate 槽位的升级实现。图结构确定性
+        # 编译一次；开关在调用期动态求值（_validate_wrapper 内读 AGENT_REVIEW_ENABLED，
+        # 遵循 D-0902-3 同款纪律：不把开关在构造期固化）。pkulaw 可用性由节点内
+        # registry.has() 实时判断（PKULAW_ENABLED 变更无需重建图）。
+        self._review_graph = make_review_subgraph(
+            llm, self.registry, max_retries=max_retries, verify_max_citations=REVIEW_VERIFY_MAX_CITATIONS
+        )
+        self._validate_node = self._make_validate_wrapper()
+
         # M1：ReAct 图开关 —— 能力（AGENT_REACT_ENABLED + LLM 支持工具）在构造期决定；
         # 「主后端是否降级」在 B2 起改为动态求值（见 _react_enabled 属性）：
         # 降级 → 固定管线，failover 冷却探测回切后自动拿回 ReAct 能力（AC-7 保留）。
@@ -149,6 +159,43 @@ class LawAgentGraph:
         """完整管线图（ask() 用）：ReAct 可用时含 agent/tools 循环，降级时固定管线。"""
         return self._react_graph if self._react_enabled else self._fixed_graph
 
+    @staticmethod
+    def _review_sse_event(review: dict | None) -> dict | None:
+        """审核结果 → SSE 事件（M4 阶段 2；agent 维度=review，C2 埋点消费方）。
+
+        前端按 type 分发，未知 type 自然忽略——additive 事件不破坏旧客户端。
+        """
+        if not review:
+            return None
+        return {
+            "type": "review",
+            "verdict": review.get("verdict", ""),
+            "layer": review.get("layer", ""),
+            "issues": review.get("issues", []),
+            "feedback": review.get("feedback", ""),
+            "agent": AGENT_REVIEW,
+        }
+
+    def _make_validate_wrapper(self) -> Callable:
+        """validate 槽位（M4 阶段 2，D-M4-3）：审核子图 | 旧 validate 节点。
+
+        开关每次调用实时读取（monkeypatch/配置热切均生效，D-0902-3 纪律）；
+        false = 与升级前逐字一致的旧 validate 路径（逃生通道）。
+        """
+        legacy_validate = self._nodes["validate"]
+
+        def validate(state: AgentState) -> dict:
+            if AGENT_REVIEW_ENABLED:
+                merged = self._review_graph.invoke(state)
+                return {
+                    k: merged[k]
+                    for k in ("validation_passed", "validation_feedback", "retry_count", "review")
+                    if k in merged
+                }
+            return legacy_validate(state)
+
+        return validate
+
     # ------------------------------------------------------------------
     # 图构建
     # ------------------------------------------------------------------
@@ -162,7 +209,7 @@ class LawAgentGraph:
         builder.add_node("memory_retrieve", nodes["memory_retrieve"])
         builder.add_node("retrieve", nodes["retrieve"])
         builder.add_node("generate", nodes["generate"])
-        builder.add_node("validate", nodes["validate"])
+        builder.add_node("validate", self._validate_node)
 
         builder.set_entry_point("intent")
         builder.add_conditional_edges(
@@ -197,7 +244,7 @@ class LawAgentGraph:
         builder.add_node("agent", react["agent"])
         builder.add_node("tools", react["tools"])
         builder.add_node("generate", nodes["generate"])
-        builder.add_node("validate", nodes["validate"])
+        builder.add_node("validate", self._validate_node)
 
         builder.set_entry_point("intent")
         builder.add_conditional_edges(
@@ -363,6 +410,7 @@ class LawAgentGraph:
                 "scene_kind": scene.kind,
                 "scene_matched": scene.matched,
                 "plan": asdict(plan),
+                "review": {},
             }
             t2 = time.time()
             result = self._graph.invoke(initial)
@@ -515,6 +563,7 @@ class LawAgentGraph:
                 "scene_kind": scene.kind,
                 "scene_matched": scene.matched,
                 "plan": asdict(plan),
+                "review": {},
             }
 
             # 3. 记忆检索
@@ -621,7 +670,11 @@ class LawAgentGraph:
                 # 6. Validate
                 t5 = time.time()
                 yield {"type": "thinking", "content": "🔎 审核回答质量..."}
-                state.update(self._nodes["validate"](state))
+                _upd = self._validate_node(state)
+                state.update(_upd)
+                _rev = self._review_sse_event(_upd.get("review"))
+                if _rev:
+                    yield _rev
                 if trace is not None:
                     trace.stage("validate", int((time.time() - t5) * 1000))
                 if state.get("validation_passed", True):
@@ -730,7 +783,11 @@ class LawAgentGraph:
         yield {"type": "thinking", "content": "🔎 审核回答质量..."}
         validated = False
         for _attempt in range(self.max_retries + 1):
-            state.update(self._nodes["validate"](state))
+            _upd = self._validate_node(state)
+            state.update(_upd)
+            _rev = self._review_sse_event(_upd.get("review"))
+            if _rev:
+                yield _rev
             if state.get("validation_passed", True):
                 validated = True
                 break

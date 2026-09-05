@@ -34,6 +34,15 @@ def mock_env(monkeypatch):
     monkeypatch.setattr("src.agents.tools.TAVILY_API_KEY", "")
     monkeypatch.setenv("TAVILY_API_KEY", "")
 
+    # ⚠️ 北大法宝同理（2026-09-05，M4 审核子图时实证）：本机 .env 配了
+    # PKULAW_MCP_URL/TOKEN 时，build_default_tools 会注册**真客户端**，
+    # 审核子图 L3 对未回源引用的核验会打真实 MCP 端点（测试触网）。
+    # patch 使用点 PKULAW_ENABLED（from-import 副本），需要 pkulaw 工具的
+    # 测试显式注入 FakePkulawClient 自行注册。
+    monkeypatch.setattr("src.agents.tools.PKULAW_ENABLED", False)
+    monkeypatch.delenv("PKULAW_MCP_URL", raising=False)
+    monkeypatch.delenv("PKULAW_MCP_TOKEN", raising=False)
+
     # ⚠️ 连接池在测试期强制关闭（2026-09-03 引入连接池后）。原因：db-mock 类
     # 测试（test_intent_v2 / test_query_log / test_memory 等）打桩的是全局
     # psycopg2.connect，而 src.db.pool 的池一旦初始化成功（本机 docker 的 PG

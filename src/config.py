@@ -190,6 +190,13 @@ AGENT_REACT_ENABLED = os.getenv("AGENT_REACT_ENABLED", "true").lower() == "true"
 # ReAct 工具调用轮数上限（REQ-UW4），达到上限强制产出答案
 AGENT_MAX_TOOL_TURNS = _safe_int("AGENT_MAX_TOOL_TURNS", 5)
 
+# 审核子图（M4 阶段 2，D-M4-3）：三层审核（规则守卫+LLM 审核+定向回源核验）替换旧
+# validate 的单次 LLM PASS 判定。false 回退旧 validate 行为（逃生通道）。
+# LLM 层替换旧 validator 的一次调用总量不变；pkulaw 定向核验只对未回源引用触发。
+AGENT_REVIEW_ENABLED = os.getenv("AGENT_REVIEW_ENABLED", "true").lower() == "true"
+# 单次审核最多送法宝核验的引用条数（预算护栏：只有疑似幻觉引用才消耗积分）
+REVIEW_VERIFY_MAX_CITATIONS = _safe_int("REVIEW_VERIFY_MAX_CITATIONS", 3)
+
 # 工具结果摘要长度上限（字符）：SSE tool_result.summary 展示 + LLM 回灌，控制上下文膨胀
 TOOL_RESULT_SUMMARY_MAX_CHARS = _safe_int("TOOL_RESULT_SUMMARY_MAX_CHARS", 300)
 

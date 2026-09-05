@@ -218,7 +218,9 @@ class TestAgentStreamRetry:
             return result
 
         agent._nodes["retrieve"] = fake_retrieve
-        agent._nodes["validate"] = fake_validate
+        # M4 阶段 2（D-M4-3）：validate 槽位改为 wrapper（审核子图|旧节点动态切换），
+        # _stream_react 与两条图都经 self._validate_node 调用——打桩须打实际调用点。
+        agent._validate_node = fake_validate
         return agent, llm, retrieve_calls
 
     def test_retry_reuses_retrieval_and_meta_sent_once(self):

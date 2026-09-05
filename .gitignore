@@ -124,3 +124,11 @@ static/
 # frontend/dist/ 由 dist/ 规则覆盖
 # 用户私人文档（不纳入版本库）
 面试问答-法律RAG智能问答系统.md
+
+# 用户私人求职材料（简历/面试讲解，不纳入版本库）
+docs/resume-*.tex
+docs/简历-*
+
+# Legal-DC 外部基准（无 LICENSE，仅本地使用）：克隆源与衍生数据集不入库，
+# 只提交构建/评测脚本与统计报告（evaluation/scripts/build_legal_dc_dataset.py 等）
+evaluation/data/legal_dc/

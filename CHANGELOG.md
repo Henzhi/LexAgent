@@ -8,6 +8,13 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-05】feat(M4 阶段 1 + B3 基线)：plan 对象落地 + eval_answer_quality 基线建成（D-M4-2）**
+  - **C1（M4 阶段 1，D-M4-2）**：`src/rag/scenes.py` 新增 `AgentPlan` + `build_plan()`——场景分类结果从「打标签」升级为「出计划」（场景+工具白名单+确认要求），`ask()`/`stream()` 写入 `state.plan`。**工具白名单只对 B 类生效**：`agent_node` 按 `plan.tools` 过滤发给模型的 schema，`SCENES.tools` 字段首次被消费（交集为空 fail-open 不收窄）；**A 类/未命中不收窄**，A 类行为与现状逐字一致（回归守卫 `tests/test_c1_plan.py`）。F12 确认单载荷新增 `tools` 字段（确认单即 plan 雏形）。
+  - **C2（阶段 2 预埋）**：`tool_log` 条目与 SSE `tool_call`/`tool_result` 事件新增 `agent` 维度（主 Agent 恒 `"main"`，`src/agents/state.py::AGENT_MAIN`）——阶段 2 子 Agent 接入时 SSE 可区分「谁在说话」。
+  - **B3（阶段 2 硬前置）**：`eval_answer_quality` 基线建成——① `evaluation/scripts/build_legal_dc_dataset.py`：Legal-DC（无 LICENSE，snapshot 锁 `1f4422e`，克隆与衍生数据均 gitignore）与知识库法名归一化求交集，实测重叠 **198 部规章 / 1062 QA（42.9%）**，按题型分层抽样 150 条（概括归纳 96 / 逻辑推理 33 / 概念解释 17 / 其他 4）；② `evaluation/scripts/eval_answer_quality_legal_dc.py`：真实系统批量生成（`/api/chat/stream`，追加式断点续跑）+ DeepSeek LLM-as-judge（准确性/完整性/可靠性 1-5）+ 题型分型报告。基线数字见 `docs/B3-答案质量基线报告.md`。
+  - **B4**：ollama SDK 0.4.9→0.6.2 升级后的 Embedding 路径真实验证通过——bge-m3 单条/批量 `client.embed()` 正常（1024 维、L2 范数 1.0、语义区分度在），并经 B3 基线生成全链路（embed→pgvector 检索→引用命中）持续佐证。
+  - **杂务**：私人求职材料与 Legal-DC 数据目录加入 gitignore。
+
 - **【2026-09-04】fix(体验/成本)：离开会话后 Token 白烧 + 回答变空白（D-0904-1/2/3）**：用户实测「生成中切换对话 / 切到其他页面 / 刷新页面 → 仍在消耗 Token 但前端输出消失」。
   - **根因**：后端 D-M3-12 语义为"被动断线后继续跑完并写事件日志，等前端按游标重连补发"，但前端只在**网络抖动**分支才 resume；切换会话只 `abort()`（不发 `/chat/cancel`）、刷新/关页面零处置 → 后端一律判定"断线等重连"把整轮烧完；而答案落库由前端 `persistSession` 负责，前端一断，产出既不在前端也不在服务端 → 空白 + 扣费。
   - **前端·切会话后台续跑（D-0904-1）**：`handleSelect`/`handleNewChat` 不再 abort，改走 store 新增的 `switchSession()`——把仍有生成在跑的旧会话现场保活到 `drafts[sid]`，SSE 继续写入 `messagesOf(sid)`，跑完由 `persistSession(sid, [msg])` 精确落回原会话，切回即见完整答案；「停止」与登出仍是真取消（并清续流快照）。

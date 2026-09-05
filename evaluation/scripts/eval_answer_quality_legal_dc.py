@@ -391,9 +391,9 @@ def run_judge(
     ]
     if limit > 0:
         todo = todo[:limit]
-    print(f"[评判] 已完成 {len(done)} 条，本轮待评 {len(todo)} 条 → {JUDGE_PATH.name}")
+    print(f"[评判] 已完成 {len(done)} 条，本轮待评 {len(todo)} 条 → {judge_path.name}")
     results = []
-    with open(JUDGE_PATH, "a", encoding="utf-8") as f:
+    with open(judge_path, "a", encoding="utf-8") as f:
         for i, row in enumerate(todo):
             item = subset_by_id[row["src_id"]]
             prompt = build_judge_prompt(item, row["answer"])

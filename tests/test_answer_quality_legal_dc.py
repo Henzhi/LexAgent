@@ -145,3 +145,27 @@ class TestResumeHelpers:
         g1, j1 = aq.result_paths("review")
         assert g1.name == "aq_gen_review.jsonl" and j1.name == "aq_judge_review.jsonl"
         assert g1 != g0 and j1 != j0
+
+
+class TestRunJudgeWritesTaggedPath:
+    def test_judge_writes_to_given_path_not_default(self, tmp_path: Path, monkeypatch):
+        """回归（2026-09-05 实证）：路径参数化只改签名漏改函数体写入点，
+        25 条 review 判分被追加进基线 aq_judge.jsonl——judge 必须写调用方指定路径。"""
+        import json as _json
+
+        class _FakeLLM:
+            def chat(self, prompt, history=None, system_prompt=None):
+                return '{"accuracy": 4, "completeness": 4, "reliability": 4, "comment": "ok"}'
+
+        monkeypatch.setattr("src.llm.factory.create_llm_backend", lambda **k: _FakeLLM())
+        gen_rows = [{"src_id": 7, "class": "其他", "answer": "答案", "error": "", "confirmation_required": False}]
+        subset_by_id = {7: {"query": "q", "reference_answer": "r", "supporting_documents": []}}
+        target = tmp_path / "aq_judge_review.jsonl"
+        aq.run_judge(gen_rows, subset_by_id, limit=10**9, judge_path=target)
+        assert target.exists() and aq.done_judge_ids(aq.load_jsonl(target)) == {7}
+        # 默认文件不被触碰
+        assert (
+            not (aq.JUDGE_PATH).exists()
+            or aq.JUDGE_PATH.stat().st_size == 0
+            or _json.loads(aq.JUDGE_PATH.read_text(encoding="utf-8").splitlines()[0]).get("src_id") != 7
+        )

@@ -120,6 +120,11 @@
             <span class="rewrite-hint">该场景会基于您的描述生成正式内容，请确认执行范围后再继续</span>
           </div>
           <div class="rewrite-note">{{ confirmState.prompt }}</div>
+          <!-- M4 D-M4-2：场景工具白名单（后端 confirmation_required.tools），让用户知道确认后会用哪些工具 -->
+          <div v-if="confirmState.tools.length" class="rewrite-tools">
+            <span class="rewrite-tools-label">将使用工具</span>
+            <span v-for="t in confirmState.tools" :key="t" class="rewrite-tool-chip">{{ toolLabel(t) }}</span>
+          </div>
           <div class="rewrite-actions">
             <button class="btn-confirm" @click="confirmProceed">确认执行</button>
             <button class="btn-original" @click="confirmCancel">取消</button>
@@ -190,7 +195,19 @@ watch(rewriteEnabled, v => localStorage.setItem('lawrag_rewrite', v ? '1' : '0')
 // 后端产出 confirmation_required 事件并结束流；用户点"确认执行"后在同一
 // SSE 连接上直接续跑生成（2026-09-03，无需重新发起 stream）。
 // recent 记录本提问之前的轮次，供续跑请求携带（不能把当前问题再当历史）。
-const confirmState = ref({ open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '' })
+// tools = 场景工具白名单（M4 阶段 1，D-M4-2），确认单上展示"将使用哪些工具"。
+const confirmState = ref({ open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '', tools: [] })
+
+// 工具名 → 展示名（M4 D-M4-2：确认单白名单徽签；未知工具名原样展示）
+const TOOL_LABELS = {
+  retrieve_knowledge: '内部知识库检索',
+  web_search: '网络检索',
+  legal_source_search: '官方法律源核验',
+  pkulaw_search: '北大法宝检索',
+  pkulaw_verify: '法宝逐条核验',
+  memory: '会话记忆',
+}
+const toolLabel = (name) => TOOL_LABELS[name] || name
 
 // 确认执行：直接在同一 SSE 连接上续跑生成（2026-09-03 交互优化 —— 不再像 v1 那样
 // 确认后还要"重新发送一次请求"）。服务端已写入标记，旧逻辑/其他入口重发 stream 仍兼容。
@@ -593,6 +610,7 @@ async function consumeGeneration(query, recent, sid, continuation, opts = {}) {
               query,
               recent,  // 缓存"本提问之前的轮次"，续跑请求携带（勿带当前问题）
               sid,
+              tools: Array.isArray(msg.tools) ? msg.tools : [],  // M4 D-M4-2：场景工具白名单
             }
           } else if (msg.type === 'token') {
             if (!answered.value && canPaint()) {
@@ -701,7 +719,7 @@ async function resumeIfPending() {
 async function handleNewChat() {
   // 2026-09-04（用户选定语义）：新建会话不再中断生成 —— 旧会话仍在跑的回答
   // 会在后台跑完并落库，切回去就是完整答案。要立刻停请用"停止"按钮或登出。
-  confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '' }
+  confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '', tools: [] }
   chat.newSession()  // 内部走 switchSession：保活仍有流在跑的旧会话现场
   // 旧流交由后台自行跑完：断开与"停止"能力的绑定，避免误停后台会话
   abortController.value = null
@@ -717,7 +735,7 @@ async function handleSelect(targetId) {
   // 2026-09-04（用户选定语义）：切换会话同样不中断生成 —— 原会话的回答后台
   // 跑完并落库，切回即见完整答案（此前 abort 只是断开连接，后端按 D-M3-12
   // 仍会跑完整轮，结果谁也收不到：前端空白 + Token 照扣）。
-  confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '' }
+  confirmState.value = { open: false, scene: '', sceneName: '', prompt: '', confirmId: '', query: '', recent: [], sid: '', tools: [] }
   chat.switchSession(targetId)
   abortController.value = null
   currentRequestId.value = ''
@@ -919,6 +937,17 @@ onBeforeUnmount(() => {
 .rewrite-hint { font-size: 13px; color: var(--color-text-muted); }
 .rewrite-loading { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--color-text-muted); padding: 4px 0; }
 .rewrite-note { font-size: 13px; color: var(--color-text-muted); margin-bottom: 8px; }
+/* M4 D-M4-2：确认单工具白名单徽签 */
+.rewrite-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.rewrite-tools-label { font-size: 12px; color: var(--color-text-muted); }
+.rewrite-tool-chip {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+}
 .rewrite-orig {
   background: var(--color-primary-light);
   border-left: 3px solid var(--color-primary);

@@ -24,7 +24,7 @@ from typing import Iterator
 from langgraph.graph import StateGraph, END
 
 from src.config import AGENT_MAX_TOOL_TURNS, AGENT_REACT_ENABLED
-from src.agents.state import AgentState
+from src.agents.state import AGENT_MAIN, AgentState
 from src.agents.nodes import make_nodes, build_hierarchical_context, build_budgeted_prompt
 from src.agents.react_nodes import make_react_nodes
 from src.agents.tools import ToolRegistry, build_default_tools
@@ -707,6 +707,7 @@ class LawAgentGraph:
                             "tool": tc.name,
                             "arguments": tc.arguments,
                             "turn": turn,
+                            "agent": AGENT_MAIN,  # C2：阶段 2 子 Agent 事件在此标注各自 id
                         }
                 elif node_name == "tools":
                     # SSE: 工具执行结果（F4，summary 已截断 ≤300 字符）
@@ -717,6 +718,7 @@ class LawAgentGraph:
                             "ok": res.ok,
                             "summary": res.summary,
                             "turn": turn,
+                            "agent": AGENT_MAIN,
                         }
 
         state = final_state

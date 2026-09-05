@@ -11,6 +11,10 @@ from typing import TypedDict, Annotated
 
 from langgraph.graph.message import add_messages
 
+# Agent 维度标识（C2 / M4 阶段 2 预埋）：tool_log 与 SSE 工具事件标注"谁在执行"。
+# 阶段 2 子 Agent（审核/类案/文书）接入时传各自 id，主 Agent 恒为 "main"。
+AGENT_MAIN = "main"
+
 
 class AgentState(TypedDict):
     """多 Agent 工作流共享状态

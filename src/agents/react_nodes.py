@@ -23,7 +23,7 @@ import time
 from typing import Any, Callable
 
 from src.agents.prompts import REACT_SYSTEM_PROMPT
-from src.agents.state import AgentState
+from src.agents.state import AGENT_MAIN, AgentState
 from src.agents.tools.base import SOURCE_INTERNAL_KB, SOURCE_LEGAL, SOURCE_WEB, ToolResult
 from src.agents.tools.registry import ToolRegistry
 from src.llm.base import ToolCall
@@ -309,6 +309,7 @@ def make_react_nodes(
                     "source": result.source,
                     "elapsed_ms": int((time.time() - t0) * 1000),
                     "turn": state.get("agent_turns", 0) or 0,
+                    "agent": AGENT_MAIN,  # C2：agent 维度（阶段 2 子 Agent 传各自 id）
                 }
             )
             if not result.ok:

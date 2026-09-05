@@ -169,7 +169,8 @@ def render_report(agg: dict, gen_rows: list[dict], meta: dict) -> str:
         "",
         f"- 评测时间：{time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"- 数据源：{meta.get('source', 'Legal-DC')} 重叠子集 {meta.get('subset_n', '?')} 条"
-        f"（seed={meta.get('seed', '?')} 分层抽样）",
+        f"（seed={meta.get('seed', '?')} 分层抽样），本轮实际评测前 {meta.get('evaluated_n', '?')} 条"
+        "（2026-09-05 基线按 100 条裁剪，断点续跑可随时补至全量）",
         f"- 生成层：{len(gen_rows)} 条有产出，{sum(1 for g in gen_rows if g.get('error'))} 条请求失败，"
         f"{sum(1 for g in gen_rows if g.get('confirmation_required'))} 条触发场景确认未作答",
         "",
@@ -203,11 +204,25 @@ def render_report(agg: dict, gen_rows: list[dict], meta: dict) -> str:
             )
         lines += [
             "",
-            "## 三、评判口径",
+            "## 三、阶段 2 目标线（对照）",
+            "",
+            "下表是 2026-09-05 定下的阶段 2 工作目标（团队约定参考线，非路线图硬性标准）：",
+            "审核子图/类案子图上线后重跑本管线，逐项对照——达标即证明「多 Agent 优于单 Agent」。",
+            "",
+            "| 指标 | 基线（本报告） | 阶段 2 目标线 |",
+            "|------|----------------|----------------|",
+            f"| 三维总分均值 | {agg['total_mean']} / 15 | ≥ 12 / 15 |",
+            f"| 可靠性均分 | {agg['reliability']} / 5 | ≥ 4.0 / 5 |",
+            f"| 硬失败条数（总分 ≤5） | {sum(v for k, v in agg['score_dist'].items() if k <= 5)} 条 | 减半 |",
+            f"| 可靠性低分（≤2）条数 | {agg['low_reliability']} 条 | 显著收缩 |",
+            "| 逻辑推理型总分 | 见分型表 | 不落后于整体均分 |",
+            "",
+            "## 四、评判口径",
             "",
             "- judge 为主 LLM 后端（DeepSeek，temperature=0）；"
             "评分 1-5 整数，三维总分 3-15；解析失败不计入均值。"
             "本基线用于 M4 阶段 2 前后对比（多 Agent 是否优于单 Agent），关注相对变化而非绝对分。",
+            "- judge 与被评系统同为 DeepSeek（同源评审），通常偏宽容，可靠性短板只会被低估不会被夸大。",
         ]
     else:
         lines.append("无有效评判结果。")
@@ -400,7 +415,12 @@ def main() -> None:
         report = render_report(
             agg,
             gen_rows,
-            meta={"source": subset.get("source"), "seed": subset.get("seed"), "subset_n": len(subset["items"])},
+            meta={
+                "source": subset.get("source"),
+                "seed": subset.get("seed"),
+                "subset_n": len(subset["items"]),
+                "evaluated_n": len(gen_rows),
+            },
         )
         out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)

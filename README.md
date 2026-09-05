@@ -216,6 +216,7 @@ ReAct 模式下 `/api/chat/stream` 会在答案前推送 Agent 执行过程：
 {"event": "tool_call",   "data": {"tool": "retrieve_knowledge", "arguments": {"query": "民事诉讼法 最新修订"}, "agent": "main"}}
 {"event": "tool_result", "data": {"tool": "retrieve_knowledge", "summary": "检索到 5 条相关条文…", "ok": true, "agent": "main"}}
 {"event": "confirmation_required", "data": {"scene": "...", "scene_name": "合同起草", "prompt": "...", "options": [...], "confirm_id": "...", "tools": ["retrieve_knowledge", "web_search"]}}
+{"event": "review",          "data": {"verdict": "pass", "layer": "llm", "issues": [], "feedback": "...", "agent": "review"}}
 ```
 
 前端据此渲染「正在调用 XX 工具」过程卡片与 F12 确认卡；事件带递增 `seq` 字段供断线续流游标使用。
@@ -337,7 +338,7 @@ env -u CODEBUDDY_MCP_CONFIG .venv/Scripts/python -m pytest -q
 | **M1 工具调用型 Agent** | ✅ 已完成（2026-08） | ReAct 循环、工具注册框架、Tavily 搜索、Failover 降级、SSE 透传、DeepSeek 默认后端 |
 | **M2 双路融合 + 法律垂直源** | ✅ 已完成（2026-08-28） | 三路证据融合（内部库优先）、国家法律法规库/人民法院案例库/北大法宝、断线重连 |
 | **M3 分场景确认 + 多 Agent** | ✅ 已完成（2026-08-30） | F14 预算熔断、F11 场景分类、F12 人工确认（进图前一次确认）、LangChain 生态迁移 |
-| **M4 多 Agent 演进** | 🚧 阶段 1 已完成（2026-09-05，D-M4-2） | plan 对象 + 场景工具白名单（B 类收窄 schema、A 类不变、确认单带 tools）、agent 维度埋点、`eval_answer_quality` 基线建成（Legal-DC 150 条）；路线见 `docs/M4-多Agent路线图.md` |
+| **M4 多 Agent 演进** | 🚧 阶段 1 完成 + 审核子图落地（2026-09-05，D-M4-2/3） | plan 对象 + 场景工具白名单（B 类收窄 schema、A 类不变、确认单带 tools）、agent 维度埋点、`eval_answer_quality` 基线建成（Legal-DC 150 条）；路线见 `docs/M4-多Agent路线图.md` |
 
 ---
 

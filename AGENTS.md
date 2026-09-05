@@ -6,7 +6,7 @@
 
 LexAgent 是一套**法律 RAG 智能问答系统**，正从固定管线 RAG 重构为**工具调用型自主 Agent**（详见 `docs/自主Agent重构PRD.md`）。
 
-- 里程碑：M1 工具调用型 Agent（已完成）→ M2 双路融合（已完成，2026-08-28）→ **M3 分场景人工确认（已完成，2026-08-30：F14/F11/F12/F13 全部收尾）** → M4 多 Agent 演进（已立项 D-M4-1，路线见 `docs/M4-多Agent路线图.md`；**阶段 1 已完成 2026-09-05：plan 对象+场景工具白名单，D-M4-2**；阶段 2 前置的 `eval_answer_quality` 基线见 `evaluation/scripts/eval_answer_quality_legal_dc.py`）
+- 里程碑：M1 工具调用型 Agent（已完成）→ M2 双路融合（已完成，2026-08-28）→ **M3 分场景人工确认（已完成，2026-08-30：F14/F11/F12/F13 全部收尾）** → M4 多 Agent 演进（已立项 D-M4-1，路线见 `docs/M4-多Agent路线图.md`；**阶段 1 已完成 2026-09-05：plan 对象+场景工具白名单，D-M4-2；阶段 2 进行中——审核子图已完成（D-M4-3），类案报告子图未启动；前置的 `eval_answer_quality` 基线已出分（总分 10.97/15，见 `docs/B3-答案质量基线报告.md`））
 - 双 LLM 后端：外接 API（DeepSeek，OpenAI 兼容）为主，Ollama 本地为降级
 - 双路检索：内部 pgvector 知识库（最高优先级法律依据）+ 网络搜索（Tavily，仅作线索）+ 官方法律源二次验证
 - 姊妹仓库 `Law-RAG-Agent` 为干净上游，**所有新代码只写在 LexAgent**
@@ -27,7 +27,7 @@ LexAgent 是一套**法律 RAG 智能问答系统**，正从固定管线 RAG 重
 
 ```
 src/
-├── agents/          # LangGraph 编排：graph.py（图）、react_nodes.py（ReAct）、nodes.py（固定管线）、state.py、prompts.py
+├── agents/          # LangGraph 编排：graph.py（图）、react_nodes.py（ReAct）、nodes.py（固定管线）、review.py（审核子图 M4）、state.py、prompts.py
 │   └── tools/       # 工具层：base.py（ToolSpec/ToolResult）、registry.py、retrieve_knowledge.py、web_search.py
 ├── llm/             # LLM 后端：factory.py、openai_backend.py、ollama_backend.py、failover.py、retry.py、budget_callback.py（F14）、usage_callback.py（F15）
 ├── search/          # 外部搜索：tavily.py、legal_sources.py（M2）、fusion.py（M2）
@@ -77,6 +77,12 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - **M4 阶段 1（D-M4-2，2026-09-05）工具白名单只对 B 类生效**：`agent_node` 按 `plan.tools` 过滤发给模型的 schema——`SCENES.tools` 字段首次被消费；**A 类/未命中 plan.tools 为空 = 全量工具表**（A 类行为与现状逐字一致，回归守卫 `tests/test_c1_plan.py::TestAskPathRegressionGuard`）；白名单与注册表交集为空时 **fail-open 不收窄**（场景清单与代码脱钩不阻断回答）。F12 确认单载荷新增 `tools` 字段。`tool_log` / SSE 工具事件已预埋 `agent` 维度（主 Agent 恒 `"main"`，`state.AGENT_MAIN`）。
    - **F12 v1 已实现（2026-08-30）——确认点同样在进图之前**：B 类且未确认 → `ask()`/`stream()` 在场景分类后产出 `confirmation_required`（载荷含 scene/scene_name/prompt/options/confirm_id）并结束流，**零 LLM 消耗**；确认标记存 `src/memory/confirmation_store.py` 的 `ConfirmationStore`（Redis `SETEX` key=`lexagent:confirm:{user}:{session}`，value=已确认 query 防换题 R7，TTL `CONFIRMATION_TTL_SECONDS` 默认 600s=Q7 决策）；Redis 不可用退化进程内、**读取异常 fail-open 回落 A 类**（确认机制故障不阻断主链路）。新接口 `POST /api/chat/confirm`（校验仅 B 类场景 id；approved=False 清标记返回 JSON）。**2026-09-03（D-0903-7）确认后同连接直接续跑**：`approved=True` 写标记后即返回 SSE 事件流（与 `/chat/stream` 共用 `_build_stream_response`，断线重连/取消/归属登记语义一致），前端 `confirmSceneStream` 消费，无需再发一次 `/chat/stream`——标记仍写，旧客户端重发 stream 依旧兼容。**v1 不接 `interrupt()`、不加 checkpointer、不改图**（理由见 `docs/M3-F12-人工确认技术方案.md`）。测试 `tests/test_f12_confirmation.py`。
    - ⚠️ 若将来要上「逐步骤确认」（v2，需在循环内中断），**必须先读该文档的风险 R1**：无 checkpointer 时 `interrupt()` **不报错**，图静默停住、答案为空，前端永远等不到结果而后端日志无任何异常。必须在图构建处加自检断言。
+9.5 **审核子图（M4 阶段 2，D-M4-3）**：`src/agents/review.py` 三层审核（规则守卫 → LLM 审核 → 定向回源核验）替换旧 validate，**旧重试语义与图结构零改动**（validate → should_retry → generate）。
+   - **validate 槽位是 wrapper**（`self._validate_node`）：开关 `AGENT_REVIEW_ENABLED` 每次调用动态求值（D-0902-3 纪律），false=旧 validate 逐字一致。**测试打桩必须打 `_validate_node`**，打 `nodes["validate"]` 不再生效（test_step7 已踩）。
+   - **L3 是定向核验不是全量核验**：只有「未回源引用」（`find_unbacked_citations`：引用的《法名》+第X条无检索结果支撑）才调 pkulaw_verify(provision)——pkulaw 按积分计费（200 次/日），全量核验会砍半日容量；法宝故障/额度耗尽/返回形态不明**一律 fail-open 放行**（`_verify_result_mismatch` 只认明确布尔标志）。
+   - **L2 容错三级**：JSON verdict → 旧 "PASS/理由" 文本（兼容老桩）→ fail-open 放行；审核是守门员不是单点故障源。
+   - SSE 新增 `review` 事件（`agent="review"`）；`state.review` = 判定契约（verdict/layer/issues/feedback/unbacked_citations），后续子 Agent 沿用此模式。
+   - conftest 已 patch `src.agents.tools.PKULAW_ENABLED` 并清 `PKULAW_MCP_URL/TOKEN`（本机 .env 配法宝时测试会注册真客户端触网）；需要 pkulaw 工具的测试显式注册 Fake。
    - 未命中场景时**保守回落 A 类**（`matched=False`），绝不因分类失败阻断回答。
 10. **LangChain 标准生态（D-M3-13）**：
    - LLM 层内部用 `BaseChatModel`（`ChatOpenAI` / `ChatOllama`），经 `.chat_model` 暴露。⚠️ `.model` **仍是模型名字符串**（历史字段，18 处调用点在读），两者别混淆。

@@ -8,6 +8,12 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-05】feat(M4 阶段 2)：审核子图（第一个真子 Agent，D-M4-3）**
+  - **三层结构**（`src/agents/review.py`，编译子图 `rule → llm → (verify)`）：L1 规则守卫（HallucinationGuard）；L2 LLM 审核（结构化 verdict/issues/feedback，兼容旧 "PASS/理由" 格式，解析失败 fail-open）；L3 **定向回源核验**——只有答案存在「未回源引用」（引用无检索结果支撑的幻觉信号）时才调 `pkulaw_verify(provision)` 对照权威原文，核验不一致走既有重试语义，法宝不可用/形态不明 fail-open 放行。**预算护栏：正常回答 0 次法宝调用**；LLM 层替换旧 validator 一次调用，总量不变。
+  - **接线**：两条图（固定管线/ReAct）与流式/同步四条路径的 validate 槽位统一为 `self._validate_node` wrapper（开关 `AGENT_REVIEW_ENABLED` 每次调用动态求值，false=旧 validate 逐字一致）；SSE 新增 `review` 事件（`agent="review"`，C2 维度首个消费方，前端未知 type 自然忽略）；`state.review` 判定契约（M4 路线图"子图产物写约定字段"首个落地）。
+  - **测试环境加固（conftest）**：patch 掉 `src.agents.tools.PKULAW_ENABLED` 并清空 `PKULAW_MCP_URL/TOKEN`——本机 .env 配了法宝时 `build_default_tools` 会注册**真客户端**，实证审核 L3 曾打真实 MCP 端点（测试触网）；需要 pkulaw 工具的测试显式注入 `FakePkulawClient` 注册。
+  - **测试**：新增 `tests/test_c3_review.py` 24 项（verdict 解析三级容错/引用抽取与回源判定/三层节点行为/开关动态求值/SSE 事件）；`test_step7` 打桩点改 `_validate_node`（validate 槽位已 wrapper 化）。全量 1025 passed。
+
 - **【2026-09-05】feat(M4 阶段 1 + B3 基线)：plan 对象落地 + eval_answer_quality 基线建成（D-M4-2）**
   - **C1（M4 阶段 1，D-M4-2）**：`src/rag/scenes.py` 新增 `AgentPlan` + `build_plan()`——场景分类结果从「打标签」升级为「出计划」（场景+工具白名单+确认要求），`ask()`/`stream()` 写入 `state.plan`。**工具白名单只对 B 类生效**：`agent_node` 按 `plan.tools` 过滤发给模型的 schema，`SCENES.tools` 字段首次被消费（交集为空 fail-open 不收窄）；**A 类/未命中不收窄**，A 类行为与现状逐字一致（回归守卫 `tests/test_c1_plan.py`）。F12 确认单载荷新增 `tools` 字段（确认单即 plan 雏形）。
   - **C2（阶段 2 预埋）**：`tool_log` 条目与 SSE `tool_call`/`tool_result` 事件新增 `agent` 维度（主 Agent 恒 `"main"`，`src/agents/state.py::AGENT_MAIN`）——阶段 2 子 Agent 接入时 SSE 可区分「谁在说话」。

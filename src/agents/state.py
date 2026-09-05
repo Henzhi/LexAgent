@@ -54,3 +54,6 @@ class AgentState(TypedDict):
     scene_id: str  # 场景 id（src/rag/scenes.py 的 SCENES，未命中为 legal_qa）
     scene_kind: str  # 场景类型：A（全自动）/ B（需人工确认，F12 依据）
     scene_matched: bool  # 是否命中场景清单（False 表示是保守回落的结果）
+    # ---- M4 阶段 1（D-M4-1）----
+    plan: dict  # 执行计划（scenes.build_plan 产出的 AgentPlan asdict）：工具白名单/确认要求，
+    # agent_node 按 plan.tools 收窄 schema（空 = 不限制，A 类行为不变）

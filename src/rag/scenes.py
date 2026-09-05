@@ -75,6 +75,45 @@ class SceneMatch:
         return self.kind == KIND_B
 
 
+@dataclass(frozen=True)
+class AgentPlan:
+    """执行计划（M4 阶段 1，D-M4-1 §4 阶段 1）：场景分类结果的**可消费**形态。
+
+    classify_scene 的产物从「打标签」升级为「出计划」：场景 + 工具白名单 +
+    确认要求打包成结构化对象，供 agent_node（工具过滤）与 F12 确认单（载荷
+    携带白名单）消费。本阶段仍是单 Agent 消费 plan，多 Agent 分发在阶段 2。
+    """
+
+    scene_id: str  # 场景 id（未命中回落为默认场景）
+    scene_name: str  # 场景名称
+    kind: str  # KIND_A / KIND_B
+    matched: bool  # 是否命中场景清单（False = 保守回落）
+    tools: tuple[str, ...]  # 工具白名单；**空 = 不限制，用全量工具表**
+    needs_confirmation: bool  # B 类确认要求（F12）
+
+    def restricts_tools(self) -> bool:
+        """是否按白名单收窄工具表。"""
+        return bool(self.tools)
+
+
+def build_plan(match: SceneMatch) -> AgentPlan:
+    """SceneMatch → AgentPlan（M4 阶段 1）。
+
+    工具白名单语义（M4 路线图原则一「A 类工具表不变」+ 阶段 1 退出判据
+    「A 类行为与现状逐字一致」）：
+    - B 类场景：白名单生效 —— `SCENES.tools` 字段首次被消费，确认单同屏展示；
+    - A 类 / 未命中回落：白名单置空 = 不收窄，主 Agent 工具表与现状完全一致。
+    """
+    return AgentPlan(
+        scene_id=match.scene_id,
+        scene_name=match.name,
+        kind=match.kind,
+        matched=match.matched,
+        tools=match.tools if match.kind == KIND_B else (),
+        needs_confirmation=match.kind == KIND_B,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 场景清单（数据层 —— 产品直接改这里）
 # ---------------------------------------------------------------------------

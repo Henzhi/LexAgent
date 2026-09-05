@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import contextmanager
+from dataclasses import asdict
 from typing import Iterator
 
 from langgraph.graph import StateGraph, END
@@ -30,7 +31,7 @@ from src.agents.tools import ToolRegistry, build_default_tools
 from src.rag.retriever import BaseRetriever
 from src.rag.engine import RAG_PROMPT_TEMPLATE
 from src.rag.intent import classify_query_type, is_capability_query, get_capability_reply
-from src.rag.scenes import KIND_B, classify_scene
+from src.rag.scenes import KIND_B, build_plan, classify_scene
 from src.memory.hallucination_guard import HallucinationGuard
 from src.memory.confirmation_store import get_confirmation_store
 from src.search.fusion import fuse_evidence
@@ -258,20 +259,23 @@ class LawAgentGraph:
     # 公开接口
     # ------------------------------------------------------------------
 
-    def _pending_confirmation(self, user_id: str, session_id: str, query: str, scene) -> dict | None:
+    def _pending_confirmation(self, user_id: str, session_id: str, query: str, plan) -> dict | None:
         """F12 v1（D-M3-9a）：B 类场景未确认时返回 confirmation_required 载荷，已确认返回 None。
 
         确认点在进图之前——此时未发生任何 LLM 调用，确认后由前端重新发起请求，
         重跑零浪费（不需要 checkpointer / interrupt）。
+        M4 阶段 1（D-M4-1）：确认单携带场景工具白名单（plan.tools）——
+        F12 确认单即 plan 的雏形，前端可展示"将使用哪些工具"。
         """
         if self._confirmation.is_confirmed(user_id, session_id, query):
             return None
         return {
-            "scene": scene.scene_id,
-            "scene_name": scene.name,
-            "prompt": f"即将执行「{scene.name}」流程，请确认后继续。",
+            "scene": plan.scene_id,
+            "scene_name": plan.scene_name,
+            "prompt": f"即将执行「{plan.scene_name}」流程，请确认后继续。",
             "options": ["确认", "取消"],
-            "confirm_id": f"{user_id or 'anon'}:{session_id or 'anon'}:{scene.scene_id}",
+            "confirm_id": f"{user_id or 'anon'}:{session_id or 'anon'}:{plan.scene_id}",
+            "tools": list(plan.tools),
         }
 
     def ask(
@@ -292,12 +296,14 @@ class LawAgentGraph:
 
             # 场景分类（M3 / F11，REQ-E1）：A 类全自动 / B 类需人工确认（F12 判据）
             # 纯字符串匹配，无外部依赖；未命中保守回落 A 类，不阻断回答（REQ-UW）
+            # M4 阶段 1（D-M4-1）：分类结果升级为结构化执行计划（plan）
             scene = classify_scene(query)
+            plan = build_plan(scene)
 
             # F12 v1 人工确认（D-M3-9a）：B 类且未确认 → 返回确认载荷，不进图
             # （双路径口径与 stream() 一致：确认分支都在场景分类后、FAQ 之前）
             if scene.kind == KIND_B:
-                confirmation = self._pending_confirmation(user_id, session_id, query, scene)
+                confirmation = self._pending_confirmation(user_id, session_id, query, plan)
                 if confirmation is not None:
                     if trace is not None:
                         trace.finalize(faq_cache_hit=False, retrieved_count=0)
@@ -356,6 +362,7 @@ class LawAgentGraph:
                 "scene_id": scene.scene_id,
                 "scene_kind": scene.kind,
                 "scene_matched": scene.matched,
+                "plan": asdict(plan),
             }
             t2 = time.time()
             result = self._graph.invoke(initial)
@@ -445,6 +452,7 @@ class LawAgentGraph:
             # 1.5 场景分类（M3 / F11，REQ-E1）：A 类全自动 / B 类需人工确认（F12 判据）
             # 闲聊已在上一步 return，此处只需处理法律类查询
             scene = classify_scene(query)
+            plan = build_plan(scene)
             scene_label = "需确认" if scene.kind == KIND_B else "全自动"
             yield {"type": "thinking", "content": f"📋 场景识别: {scene.name}（{scene.kind} 类 · {scene_label}）"}
 
@@ -452,7 +460,7 @@ class LawAgentGraph:
             # 确认点在进图之前，未发生任何 LLM 调用（零消耗）；前端确认后
             # 重新发起 /api/chat/stream（同 session_id），查到标记即正常执行。
             if scene.kind == KIND_B:
-                confirmation = self._pending_confirmation(user_id, session_id, query, scene)
+                confirmation = self._pending_confirmation(user_id, session_id, query, plan)
                 if confirmation is not None:
                     yield {"type": "confirmation_required", **confirmation}
                     if trace is not None:
@@ -506,6 +514,7 @@ class LawAgentGraph:
                 "scene_id": scene.scene_id,
                 "scene_kind": scene.kind,
                 "scene_matched": scene.matched,
+                "plan": asdict(plan),
             }
 
             # 3. 记忆检索

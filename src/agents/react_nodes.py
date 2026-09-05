@@ -202,6 +202,16 @@ def make_react_nodes(
         messages = _build_react_messages(state, sp)
         # 达到轮数上限 → 移除工具，强制模型产出最终答案（REQ-UW4）
         schemas = registry.to_openai_schemas() if turns < max_turns else []
+        # M4 阶段 1（D-M4-1）：按 plan 工具白名单收窄 schema —— SCENES.tools 首次被消费。
+        # 只有 B 类场景的 plan.tools 非空（build_plan：A 类/未命中不收窄，行为逐字不变）；
+        # 白名单与工具表交集为空时 fail-open 不收窄（场景清单与注册表脱钩时不阻断回答）。
+        allowed = list((state.get("plan") or {}).get("tools") or [])
+        if schemas and allowed:
+            filtered = [s for s in schemas if s.get("function", {}).get("name") in allowed]
+            if filtered:
+                schemas = filtered
+            else:
+                logger.warning(f"plan 工具白名单与注册表无交集（{allowed}），fail-open 不收窄")
         if not schemas:
             # 明确告知模型不能再调工具：不仅禁 DSML 语法，还要禁"过渡语"——
             # 历史案例：模型被强制作答时输出"让我进一步检索……"一句空话，

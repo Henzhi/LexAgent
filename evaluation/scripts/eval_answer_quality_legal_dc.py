@@ -36,6 +36,8 @@ except Exception:
 
 EVAL_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = EVAL_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))  # 延迟导入 src.llm.factory 用（judge 走统一后端入口）
 DATA_DIR = EVAL_DIR / "data" / "legal_dc"
 SUBSET_PATH = DATA_DIR / "answer_quality_subset.json"
 RESULTS_DIR = DATA_DIR / "results"
@@ -316,6 +318,7 @@ def build_judge_prompt(item: dict, answer: str) -> str:
 
 def run_judge(gen_rows: list[dict], subset_by_id: dict[int, dict], limit: int) -> list[dict]:
     """LLM-as-judge（追加式续跑）：对已生成条目打分，结果写 JUDGE_PATH。"""
+    import src.config  # noqa: F401  # factory 直读 os.getenv，须先经 config 加载 .env
     from src.llm.factory import create_llm_backend  # 延迟导入：--report 不需要 LLM
 
     llm = create_llm_backend(temperature=0.0)

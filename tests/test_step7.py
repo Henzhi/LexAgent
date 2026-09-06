@@ -249,6 +249,10 @@ class TestAgentStreamRetry:
             patch(
                 "src.memory.hallucination_guard.HallucinationGuard.guard", return_value={"blocked": False, "reason": ""}
             ),
+            # 本用例测的是【旧】重试语义（generate 兜底）；审核开时拒审走 ReAct 重跑
+            # （D-M4-4），不走 generate——故显式关闭审核（见 tests/test_c3_review.py 的
+            # react_retry 用例）。
+            patch("src.agents.graph.AGENT_REVIEW_ENABLED", False),
         ):
             for ev in agent.stream("行政拘留最长多久", history=[]):
                 events.append(ev)

@@ -61,6 +61,14 @@ def _supports_tools(llm) -> bool:
     return hasattr(llm, "chat_with_tools") or hasattr(getattr(llm, "_backend", None), "chat_with_tools")
 
 
+# M4 阶段 2（D-M4-4）：审核拒审后的重生成走 ReAct（带审核意见重新检索），
+# 不再退化到固定管线单次生成——实测退化路径会毁掉好答案（#192 14→3 案例）。
+_RETRY_FEEDBACK_TMPL = (
+    "系统审核意见：你上一版回答未通过审核（{fb}）。请重新检索核实，"
+    "并给出改进后的完整回答；若上一版基本正确，在其基础上修正问题即可。"
+)
+
+
 def _chunk_text(text: str, size: int = 16) -> Iterator[str]:
     """将长文本按块切分（SSE 分块推送模拟打字机效果，D2）。"""
     for i in range(0, len(text), size):
@@ -176,6 +184,27 @@ class LawAgentGraph:
             "agent": AGENT_REVIEW,
         }
 
+    def _make_react_retry_prep(self) -> Callable:
+        """react_retry 前置节点：把审核意见以 system 消息追加进 messages（add_messages 追加语义），
+        agent 重入时据此改进回答。"""
+        def prep(state: AgentState) -> dict:
+            fb = state.get("validation_feedback", "") or ""
+            return {"messages": [{"role": "system", "content": _RETRY_FEEDBACK_TMPL.format(fb=fb)}]}
+
+        return prep
+
+    @staticmethod
+    def _route_after_validate(state: AgentState) -> str:
+        """validate 之后的路由（仅 ReAct 图）：拒审时按开关动态选择重生成路径。
+
+        审核开 → react_retry（带意见重跑 ReAct 循环，D-M4-4）；
+        审核关 → retry（旧语义：固定 generate 节点兜底，逐字兼容）。
+        开关每次求值（D-0902-3 纪律），图结构同时注册两条边。
+        """
+        if state.get("validation_passed", True):
+            return "end"
+        return "react_retry" if AGENT_REVIEW_ENABLED else "retry"
+
     def _make_validate_wrapper(self) -> Callable:
         """validate 槽位（M4 阶段 2，D-M4-3）：审核子图 | 旧 validate 节点。
 
@@ -244,6 +273,7 @@ class LawAgentGraph:
         builder.add_node("agent", react["agent"])
         builder.add_node("tools", react["tools"])
         builder.add_node("generate", nodes["generate"])
+        builder.add_node("react_retry_prep", self._make_react_retry_prep())
         builder.add_node("validate", self._validate_node)
 
         builder.set_entry_point("intent")
@@ -260,12 +290,14 @@ class LawAgentGraph:
             {"tools": "tools", "final": "validate"},
         )
         builder.add_edge("tools", "agent")
+        # 拒审路由双注册：审核开走 react_retry（带意见重跑 ReAct），关走旧 generate 兜底
         builder.add_conditional_edges(
             "validate",
-            nodes["should_retry"],
-            {"retry": "generate", "end": END},
+            self._route_after_validate,
+            {"retry": "generate", "react_retry": "react_retry_prep", "end": END},
         )
         builder.add_edge("generate", "validate")
+        builder.add_edge("react_retry_prep", "agent")
 
         return builder.compile()
 
@@ -727,6 +759,49 @@ class LawAgentGraph:
     # ReAct 流式路径（M1）
     # ------------------------------------------------------------------
 
+    def _run_react_loop_events(self, state: dict) -> tuple[list[dict], dict]:
+        """跑一轮 ReAct 循环子图，返回 (SSE 事件列表, 终态)。
+
+        事件缓冲后整体返回（而非边跑边 yield）：审核拒审后需要重跑同一循环
+        （D-M4-4），helper 化让首轮与重跑复用同一映射逻辑。
+        """
+        events: list[dict] = []
+        final_state: dict = dict(state)
+        turn = 0
+        for mode, chunk in self._react_loop_graph.stream(state, stream_mode=["updates", "values"]):
+            if mode == "values":
+                final_state = chunk
+                continue
+            # mode == "updates"
+            for node_name, delta in (chunk or {}).items():
+                if node_name == "agent":
+                    turn = (delta or {}).get("agent_turns", turn) or turn
+                    # SSE: LLM 决策调用工具（F4）
+                    for tc in (delta or {}).get("tool_calls") or []:
+                        events.append(
+                            {
+                                "type": "tool_call",
+                                "tool": tc.name,
+                                "arguments": tc.arguments,
+                                "turn": turn,
+                                "agent": AGENT_MAIN,  # C2：阶段 2 子 Agent 事件在此标注各自 id
+                            }
+                        )
+                elif node_name == "tools":
+                    # SSE: 工具执行结果（F4，summary 已截断 ≤300 字符）
+                    for res in (delta or {}).get("tool_results") or []:
+                        events.append(
+                            {
+                                "type": "tool_result",
+                                "tool": res.tool,
+                                "ok": res.ok,
+                                "summary": res.summary,
+                                "turn": turn,
+                                "agent": AGENT_MAIN,
+                            }
+                        )
+        return events, final_state
+
     def _stream_react(
         self,
         state: dict,
@@ -748,36 +823,8 @@ class LawAgentGraph:
         #   "updates" → {节点名: 本节点状态增量}，用于映射 SSE tool_call / tool_result
         #   "values"  → 每个节点执行后的完整状态快照，最后一次即循环终态
         # 终止性由条件边保证：agent_node 达轮数上限会移除 tools 强制作答（REQ-UW4）。
-        final_state: dict = dict(state)
-        turn = 0
-        for mode, chunk in self._react_loop_graph.stream(state, stream_mode=["updates", "values"]):
-            if mode == "values":
-                final_state = chunk
-                continue
-            # mode == "updates"
-            for node_name, delta in (chunk or {}).items():
-                if node_name == "agent":
-                    turn = (delta or {}).get("agent_turns", turn) or turn
-                    # SSE: LLM 决策调用工具（F4）
-                    for tc in (delta or {}).get("tool_calls") or []:
-                        yield {
-                            "type": "tool_call",
-                            "tool": tc.name,
-                            "arguments": tc.arguments,
-                            "turn": turn,
-                            "agent": AGENT_MAIN,  # C2：阶段 2 子 Agent 事件在此标注各自 id
-                        }
-                elif node_name == "tools":
-                    # SSE: 工具执行结果（F4，summary 已截断 ≤300 字符）
-                    for res in (delta or {}).get("tool_results") or []:
-                        yield {
-                            "type": "tool_result",
-                            "tool": res.tool,
-                            "ok": res.ok,
-                            "summary": res.summary,
-                            "turn": turn,
-                            "agent": AGENT_MAIN,
-                        }
+        events, final_state = self._run_react_loop_events(state)
+        yield from events
 
         state = final_state
         answer = (state.get("answer", "") or "").strip() or "抱歉，暂时无法回答该问题。"
@@ -798,8 +845,18 @@ class LawAgentGraph:
                 break
             fb = state.get("validation_feedback", "")
             yield {"type": "clear", "content": ""}
-            yield {"type": "thinking", "content": f"❌ 未通过{f': {fb}' if fb else ''}，重新生成..."}
-            state.update(self._nodes["generate"](state))
+            if AGENT_REVIEW_ENABLED:
+                # D-M4-4：带审核意见重跑 ReAct 循环（重新检索核实），不退化到固定管线
+                yield {"type": "thinking", "content": f"❌ 未通过{f': {fb}' if fb else ''}，带审核意见重新检索..."}
+                state["messages"] = list(state.get("messages", []) or []) + [
+                    {"role": "system", "content": _RETRY_FEEDBACK_TMPL.format(fb=fb)}
+                ]
+                events, final_state = self._run_react_loop_events(state)
+                yield from events
+                state = final_state
+            else:
+                yield {"type": "thinking", "content": f"❌ 未通过{f': {fb}' if fb else ''}，重新生成..."}
+                state.update(self._nodes["generate"](state))
             answer = (state.get("answer", "") or "").strip() or "抱歉，暂时无法回答该问题。"
             state["answer"] = answer
         yield {"type": "thinking", "content": "✅ 审核通过" if validated else "⚠️ 审核未完全通过，已尽力生成"}

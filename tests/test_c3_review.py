@@ -11,6 +11,7 @@ from __future__ import annotations
 
 
 from src.agents import graph as graph_mod
+from src.agents.graph import LawAgentGraph
 from src.agents.review import (
     article_key,
     citation_backed,
@@ -24,6 +25,7 @@ from src.agents.review import (
 from src.agents.tools import build_default_tools
 from src.agents.tools.pkulaw_search import build_pkulaw_search_spec, build_pkulaw_verify_spec
 from src.llm.base import ToolCallResponse
+from src.memory.confirmation_store import ConfirmationStore
 from tests.fakes import FakePkulawClient, FakeRetriever, FakeToolLLM
 
 from tests.test_react_agent import _build_agent, _final_response
@@ -274,3 +276,108 @@ class TestGraphIntegration:
         agent = _build_agent(llm, monkeypatch)
         events = list(agent.stream("行政拘留合并执行最长多久", history=[], user_id="u1", session_id="s1"))
         assert not [e for e in events if e.get("type") == "review"]
+
+
+# ---------------------------------------------------------------------------
+# D-M4-4：拒审重生成走 ReAct（带审核意见），不再退化到固定管线
+# ---------------------------------------------------------------------------
+
+
+class _BothScriptLLM(FakeToolLLM):
+    """chat 与 chat_with_tools 分别脚本化（审核重试链路集成测试用）。
+
+    FakeToolLLM.chat 硬编码 "PASS"（旧 validate 桩语义），审核 verdict 需要独立脚本。
+    """
+
+    def __init__(self, tool_script=None, chat_script=None):
+        super().__init__(script=tool_script)
+        self.chat_script = list(chat_script or [])
+        self.chat_log: list[str] = []
+
+    def chat(self, user_message, history=None, system_prompt=None):
+        self.chat_log.append(user_message)
+        return self.chat_script.pop(0) if self.chat_script else "PASS"
+
+
+def _make_graph_max1(llm) -> LawAgentGraph:
+    retriever = FakeRetriever()
+    return LawAgentGraph(
+        retriever=retriever,
+        llm=llm,
+        top_k=3,
+        max_retries=1,  # 允许一次拒审重试
+        memory_manager=None,
+        faq_cache=None,
+        query_logger=None,
+        registry=build_default_tools(retriever),
+        confirmation_store=ConfirmationStore(redis_url=""),
+    )
+
+
+class TestRouteAfterValidate:
+    def test_dynamic_by_toggle(self, monkeypatch):
+        from src.agents.graph import LawAgentGraph as G
+
+        state_fail = {"validation_passed": False}
+        monkeypatch.setattr(graph_mod, "AGENT_REVIEW_ENABLED", True)
+        assert G._route_after_validate(state_fail) == "react_retry"
+        monkeypatch.setattr(graph_mod, "AGENT_REVIEW_ENABLED", False)
+        assert G._route_after_validate(state_fail) == "retry"
+        assert G._route_after_validate({"validation_passed": True}) == "end"
+
+
+class TestReactRetry:
+    def test_ask_reject_reruns_react_with_feedback(self, monkeypatch):
+        """拒审 → react_retry_prep 注入审核意见 → agent 重入 → 第二版答案胜出。"""
+        monkeypatch.setattr(graph_mod, "AGENT_REVIEW_ENABLED", True)
+        monkeypatch.setattr(graph_mod, "AGENT_REACT_ENABLED", True)
+        llm = _BothScriptLLM(
+            tool_script=[_final_response("第一版答案"), _final_response("第二版改进答案")],
+            chat_script=[_verdict_json("reject", "引用有误").content, _verdict_json("pass").content],
+        )
+        agent = _make_graph_max1(llm)
+        result = agent.ask("行政拘留合并执行最长多久", user_id="u1", session_id="s1")
+        assert result["answer"] == "第二版改进答案"
+        # 第二次 agent 决策的消息里必须带审核意见（system 注入）
+        second_msgs = llm.calls[1]["messages"]
+        assert any(m.get("role") == "system" and "审核意见" in str(m.get("content", "")) for m in second_msgs)
+        assert result["review"]["verdict"] == "pass"
+        assert result["validation_passed"] is True
+
+    def test_stream_reject_reruns_loop(self, monkeypatch):
+        monkeypatch.setattr(graph_mod, "AGENT_REVIEW_ENABLED", True)
+        monkeypatch.setattr(graph_mod, "AGENT_REACT_ENABLED", True)
+        llm = _BothScriptLLM(
+            tool_script=[_final_response("第一版答案"), _final_response("第二版改进答案")],
+            chat_script=[_verdict_json("reject", "引用有误").content, _verdict_json("pass").content],
+        )
+        agent = _make_graph_max1(llm)
+        events = list(agent.stream("行政拘留合并执行最长多久", history=[], user_id="u1", session_id="s1"))
+        tokens = "".join(e["content"] for e in events if e["type"] == "token")
+        assert "第二版改进答案" in tokens and "第一版答案" not in tokens
+        thinking = [e["content"] for e in events if e["type"] == "thinking"]
+        assert any("重新检索" in t for t in thinking)
+        reviews = [e for e in events if e.get("type") == "review"]
+        assert [r["verdict"] for r in reviews] == ["reject", "pass"]
+
+    def test_budget_exhausted_no_retry(self, monkeypatch):
+        """重试预算耗尽 → 强制放行，不再重跑。"""
+        monkeypatch.setattr(graph_mod, "AGENT_REVIEW_ENABLED", True)
+        monkeypatch.setattr(graph_mod, "AGENT_REACT_ENABLED", True)
+        llm = _BothScriptLLM(
+            tool_script=[_final_response("唯一版答案")],
+            chat_script=[_verdict_json("reject", "不行").content],  # max_retries=1? 不：retry_count 已 1
+        )
+        # max_retries=0 → 拒审即预算耗尽，验证强制放行不重跑
+        retriever = FakeRetriever()
+        agent0 = LawAgentGraph(
+            retriever=retriever,
+            llm=llm,
+            top_k=3,
+            max_retries=0,
+            registry=build_default_tools(retriever),
+            confirmation_store=ConfirmationStore(redis_url=""),
+        )
+        result = agent0.ask("行政拘留合并执行最长多久", user_id="u1", session_id="s1")
+        assert result["answer"] == "唯一版答案"  # 未被重生成
+        assert result["review"]["forced"] is True

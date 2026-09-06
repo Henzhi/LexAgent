@@ -8,6 +8,8 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-05】feat(M4)：审核校准 + ReAct 重生成（D-M4-4，25 条配对数据驱动）**：首轮带审核对比（25 条配对）显示总分 12.12→12.76、可靠性 3.72→4.20，但拒审率 60% 偏高且出现「好答案被拒→固定管线重生成→劣化放行」案例（#192 基线 14→3）。两项修正：① L2 审核标准收窄为只拦硬伤（幻觉引用/明显法律错误/空转），完整性小缺口不再触发重生成；② 拒审重生成走 ReAct——`react_retry_prep` 节点注入审核意见 system 消息，agent 带意见重新检索（同步路径图边 react_retry、流式路径重跑循环子图），`AGENT_REVIEW_ENABLED=false` 保持旧 generate 兜底逐字兼容。测试 +4（react_retry 路由/同步/流式/预算耗尽），全量 1029 passed。
+
 - **【2026-09-05】feat(M4 阶段 2)：审核子图（第一个真子 Agent，D-M4-3）**
   - **三层结构**（`src/agents/review.py`，编译子图 `rule → llm → (verify)`）：L1 规则守卫（HallucinationGuard）；L2 LLM 审核（结构化 verdict/issues/feedback，兼容旧 "PASS/理由" 格式，解析失败 fail-open）；L3 **定向回源核验**——只有答案存在「未回源引用」（引用无检索结果支撑的幻觉信号）时才调 `pkulaw_verify(provision)` 对照权威原文，核验不一致走既有重试语义，法宝不可用/形态不明 fail-open 放行。**预算护栏：正常回答 0 次法宝调用**；LLM 层替换旧 validator 一次调用，总量不变。
   - **接线**：两条图（固定管线/ReAct）与流式/同步四条路径的 validate 槽位统一为 `self._validate_node` wrapper（开关 `AGENT_REVIEW_ENABLED` 每次调用动态求值，false=旧 validate 逐字一致）；SSE 新增 `review` 事件（`agent="review"`，C2 维度首个消费方，前端未知 type 自然忽略）；`state.review` 判定契约（M4 路线图"子图产物写约定字段"首个落地）。

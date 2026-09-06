@@ -83,6 +83,7 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - **L2 容错三级**：JSON verdict → 旧 "PASS/理由" 文本（兼容老桩）→ fail-open 放行；审核是守门员不是单点故障源。
    - SSE 新增 `review` 事件（`agent="review"`）；`state.review` = 判定契约（verdict/layer/issues/feedback/unbacked_citations），后续子 Agent 沿用此模式。
    - conftest 已 patch `src.agents.tools.PKULAW_ENABLED` 并清 `PKULAW_MCP_URL/TOKEN`（本机 .env 配法宝时测试会注册真客户端触网）；需要 pkulaw 工具的测试显式注册 Fake。
+   - **拒审重生成走 ReAct（D-M4-4）**：react 图 `validate →(react_retry)→ react_retry_prep（注入审核意见 system 消息）→ agent`，流式路径重跑循环子图；**开关关闭时 retry 仍走旧 generate 节点**（两条边都注册，路由动态求值）。测试打桩注意：测旧 generate 兜底语义的用例须显式钉 `AGENT_REVIEW_ENABLED=False`（test_step7 已钉）。
    - 未命中场景时**保守回落 A 类**（`matched=False`），绝不因分类失败阻断回答。
 10. **LangChain 标准生态（D-M3-13）**：
    - LLM 层内部用 `BaseChatModel`（`ChatOpenAI` / `ChatOllama`），经 `.chat_model` 暴露。⚠️ `.model` **仍是模型名字符串**（历史字段，18 处调用点在读），两者别混淆。

@@ -27,11 +27,6 @@ jobs:
       - name: Format check
         run: uv run ruff format --check src/ tests/
 
-      - name: Collect (diagnose)
-        # 诊断 2026-09-07 CI Test 34s 崩溃：先单独收集，collection error 会直接
-        # 暴露在 step 日志与 annotations 里（定位后可移除本步）。
-        run: uv run pytest tests/ --collect-only -q
-
       - name: Test (unit)
         run: uv run pytest tests/ -v --tb=short --ignore=tests/test_api.py
 

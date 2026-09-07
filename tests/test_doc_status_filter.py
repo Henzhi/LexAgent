@@ -60,8 +60,7 @@ class TestSearchPathsFilterActive:
         """主向量检索（HNSW）：失效/重复文档的 chunk 不得进入召回。"""
         body = _func_body(PGVECTOR_STORE, "search")
         assert ACTIVE_PREDICATE in body, (
-            "PgvectorStore.search 丢失了 d.status = 'active' 谓词——"
-            "superseded/duplicate 文档将重新参与检索（D-0907-1）"
+            "PgvectorStore.search 丢失了 d.status = 'active' 谓词——superseded/duplicate 文档将重新参与检索（D-0907-1）"
         )
 
     def test_bm25_source_filters_active(self):
@@ -85,8 +84,6 @@ class TestIngestTitleNormalization:
         """D-0907-3：入库标题必须归一，否则尾空格会让同一部法被重复入库。"""
         from src.knowledge.ingestion.pipeline import normalize_document_title
 
-        assert normalize_document_title(" 中华人民共和国公司法(2023修订) ") == (
-            "中华人民共和国公司法(2023修订)"
-        )
+        assert normalize_document_title(" 中华人民共和国公司法(2023修订) ") == ("中华人民共和国公司法(2023修订)")
         assert normalize_document_title("某法  名称\n\t带空白 ") == "某法 名称 带空白"
         assert normalize_document_title(None) == ""

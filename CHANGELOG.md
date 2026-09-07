@@ -8,6 +8,14 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-07】fix(知识库)：版本新鲜度治理——旧法版本与重复副本不再参与检索（D-0907-1~4）**：体检发现同一部法律的新旧版本与重复副本在库中共存且 `status` 恒为 `active`，检索会召回已废止条文（刑法无后缀版不含修正案十二：问「民企董事同业经营是否入刑」、单位行贿量刑均会答错）。
+  - **判定脚本（新增，`evaluation/scripts/check_law_version_conflicts.py`）**：默认 dry-run，`--apply` 才写回且写前自动导出备份 JSON；按「逐条正文比对」分型（current / superseded / duplicate / partial / keep / ambiguous）。判定前按 `metadata->>'paragraph_index'` 还原原文顺序、剥离【罪名】标题、中文与阿拉伯条号归一——**初版按文件名判断得到的「24 组全冲突」结论被证伪**：实际仅 8 份真版本冲突 + 19 份重复/残缺入库 + 6 份修正案系列合法并存。
+  - **写回结果（已执行）**：active 1039 → **1012**，新增 superseded 8 / duplicate 19，**可检索 chunks 53235 → 49357**；抽查刑法第 165 条现只命中 (2023修正) 版（含「其他公司、企业的董事、监事、高级管理人员」）。**不删任何行与 chunk**，回滚照备份 JSON 改回 active 即可，不需重建向量索引。
+  - **真版本冲突 8 份**（差异条数即影响面）：刑法 505 条中 8 条（修正案十二：165/166/387/391/393 等量刑条款）、宪法（1982）52 条、食品安全法 4 条，另有 5 份残缺副本（监察法仅 3 条、行政复议法 10 条、立法法 14 条、道交法 18 条、公司法 49 条入库）。社保法/著作权法各 1~2 条差异，留人工确认未处置。
+  - **检索层补漏**：`law_centroids._load_rows()` 补 `d.status='active'`（主检索路径 `PgvectorStore.search()` 与 `article_router` 本就有过滤——字段长期未被写入，属半截功能）；新增 `tests/test_doc_status_filter.py` 捕获真实 SQL 断言三条路径都带 status 谓词，防新增检索路径漏过滤。
+  - **管道长效**：`IngestionPipeline.normalize_document_title()`，标题在**查重之前**归一（去首尾与内部多余空白），消除「文件名尾空格 → 当作两部法重复入库」。
+  - **测试**：新增 `tests/test_check_law_version_conflicts.py`（25 项，DB-free）+ `tests/test_doc_status_filter.py`（4 项）；全量回归见下。文档：`docs/知识库版本新鲜度体检报告-2026-09-07.md`。
+
 - **【2026-09-05】feat(M4)：审核校准 + ReAct 重生成（D-M4-4，25 条配对数据驱动）**：首轮带审核对比（25 条配对）显示总分 12.12→12.76、可靠性 3.72→4.20，但拒审率 60% 偏高且出现「好答案被拒→固定管线重生成→劣化放行」案例（#192 基线 14→3）。两项修正：① L2 审核标准收窄为只拦硬伤（幻觉引用/明显法律错误/空转），完整性小缺口不再触发重生成；② 拒审重生成走 ReAct——`react_retry_prep` 节点注入审核意见 system 消息，agent 带意见重新检索（同步路径图边 react_retry、流式路径重跑循环子图），`AGENT_REVIEW_ENABLED=false` 保持旧 generate 兜底逐字兼容。测试 +4（react_retry 路由/同步/流式/预算耗尽），全量 1029 passed。
 
 - **【2026-09-05】feat(M4 阶段 2)：审核子图（第一个真子 Agent，D-M4-3）**

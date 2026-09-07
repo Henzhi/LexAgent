@@ -39,6 +39,16 @@ def _extract_article_range(content: str) -> str:
     return m.group(0) if m else ""
 
 
+def normalize_document_title(title: str) -> str:
+    """标题归一：去首尾空白 + 内部连续空白压缩为一个空格。
+
+    D-0907-1：入库去重按标题**精确匹配**，文件名尾部的空格（"XX法(2023修订) "）
+    会让同一部法律被判为两部各自入库——历史上因此产生 5 组冗余文档（768 chunks），
+    同一条款在召回结果里出现两份。标题入口必须在查重之前归一。
+    """
+    return " ".join((title or "").split())
+
+
 # 支持的文件类型
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
 MAX_FILE_SIZE_MB = 50
@@ -132,9 +142,10 @@ class IngestionPipeline:
                 raise ValueError(f"解析后文本过短（{len(cleaned)}字符），可能为空白或扫描件")
 
             # 3. 创建文档记录（透传效力状态）
+            doc_title = normalize_document_title(task.get("title") or file_name.replace(ext, ""))
             doc_id = self._store.ensure_document(
                 doc_type=task["doc_type"],
-                title=task.get("title") or file_name.replace(ext, ""),
+                title=doc_title,
                 source=task.get("source", ""),
                 effective_date=task.get("effective_date"),
                 status=task.get("doc_status", "active"),
@@ -146,7 +157,7 @@ class IngestionPipeline:
                 cleaned,
                 doc_id,
                 doc_type=task["doc_type"],
-                title=task.get("title") or file_name.replace(ext, ""),
+                title=doc_title,
             )
             task["progress"] = 60
 
@@ -317,6 +328,9 @@ class IngestionPipeline:
             0  -> 已存在且非强制（跳过）
             >0 -> 写入的文本块数量
         """
+        # D-0907-1：先归一标题再查重——「XX法(2023修订) 」这类尾部空格若不归一，
+        # 会被当成另一部法律重新入库（历史遗留 768 chunks 冗余副本）。
+        title = normalize_document_title(title)
         if not text or len(text) < 20:
             raise ValueError(f"文本过短（{len(text)} 字符）")
         cleaned = self._cleaner.clean(text)

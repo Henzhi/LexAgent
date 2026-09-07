@@ -124,6 +124,13 @@ docker compose up -d                        # pgvector / redis（本机已有旧
    - **只有「停止」按钮与登出才真取消**（abort + `/chat/cancel` + 清快照）；删除正在生成的会话同样立即停（答案已无处可落）。
    - **请求身份用 `myRequestId` 固化**：`consumeGeneration` 内一律用本请求 id 判断"我是否仍是当前请求"，不要读全局 `currentRequestId` 判断——切会话后新请求会覆盖它，旧流收尾会误清新请求状态 / 清不掉自己的 `activeStream`。
 
+14. **知识库文档状态与版本治理（D-0907-1~4，2026-09-07）**：`documents.status` 是**检索可见性的唯一开关**，取值 `active` / `superseded` / `duplicate`（失效版还写 `superseded_by` 指向保留版）。
+   - **检索路径必须带 `d.status = 'active'` 谓词**——`PgvectorStore.search()`、`fetch_all_active_chunks()`（BM25 源）、`article_router`、`law_centroids` 四处都已加，**新增任何检索路径必须同步加**，否则标记形同虚设（守护测试 `tests/test_doc_status_filter.py` 捕获真实 SQL 断言，漏过滤直接红）。
+   - **失效/重复一律打标，不物理删除**：法律条文误删不可恢复，打标可逆（照 `evaluation/data/documents_status_backup_*.json` 改回 active 即可），且不需要重建向量索引。
+   - **版本判定用「逐条正文比对」**（`evaluation/scripts/check_law_version_conflicts.py`，默认 dry-run）：判定前必须①按 `metadata->>'paragraph_index'` 还原原文顺序（chunk 的 `id` 是 uuid 无语义顺序，按它拼接会把条文拆碎制造伪差异）、②剥离【罪名】标题（不同爬虫来源的排版噪声）、③中文与阿拉伯条号归一。**禁用「长度 + 条文号相似度」启发式**——条数相同、长度接近、仅几条实质差异的场景必然误判（刑法曾因此被误判为重复入库）。
+   - **入库标题先归一再查重**：`normalize_document_title()`，防文件名尾空格让同一部法被当作两部重复入库。
+   - 体检报告 `docs/知识库版本新鲜度体检报告-2026-09-07.md`；当前库内 active 1012 / superseded 8 / duplicate 19。
+
 ## 代码规范
 
 - Python：类型注解（`from __future__ import annotations`）、模块级 docstring 说明"哪个需求/决策"、中文注释

@@ -74,9 +74,14 @@ class LawCentroids:
         counts: dict[str, int] = {}
         with db_connection() as conn:
             with conn.cursor() as cur:
+                # D-0907-1：必须过滤 documents.status——旧法版本与重复入库副本
+                # 若混进质心，会让该法名的质心被失效版本稀释（法名推断权重失真）。
                 cur.execute(
-                    "SELECT metadata->>'law_name', embedding FROM document_chunks "
-                    "WHERE chunk_type='article' AND metadata->>'law_name' IS NOT NULL"
+                    "SELECT dc.metadata->>'law_name', dc.embedding "
+                    "FROM document_chunks dc "
+                    "JOIN documents d ON dc.doc_id = d.id "
+                    "WHERE d.status = 'active' "
+                    "AND dc.chunk_type='article' AND dc.metadata->>'law_name' IS NOT NULL"
                 )
                 while True:
                     rows = cur.fetchmany(5000)

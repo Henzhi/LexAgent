@@ -1,0 +1,466 @@
+[
+  {
+    "id": "73e04cb6-8c8e-41fc-8d57-4b295540b0e3",
+    "title": "中华人民共和国公司法(2023修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "89259d78-f646-4d35-ab55-9f41f08d8ee5",
+    "title": "中华人民共和国刑法(2023修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "29745484-9cb0-4a8d-91b8-d111b485ddc5",
+    "title": "中华人民共和国刑法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "4bc618a2-90f2-4c2e-a9c6-8204450ada08",
+    "title": "中华人民共和国监察法(2024修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "6c308602-6aa9-4930-b9c0-47f2998085ed",
+    "title": "中华人民共和国立法法(2023修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "1d44981f-f63e-4314-8363-a3c1091f1b75",
+    "title": "中华人民共和国行政复议法(2023修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "328ee3ab-a3cf-406f-97b7-30d3be9c33bc",
+    "title": "中华人民共和国道路交通安全法(2021修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "892ad65d-c271-4a2c-b385-d57193b9c7ac",
+    "title": "中华人民共和国劳动法(2018修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "efb1c003-879e-466c-a779-37f231596a99",
+    "title": "中华人民共和国劳动法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "6ba4b55f-6fce-4704-8b0b-63bde19d8fe6",
+    "title": "中华人民共和国反不正当竞争法(2025修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "704af4b0-f3f2-4c39-b640-7e54ef9a8213",
+    "title": "中华人民共和国反不正当竞争法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "4b3311d0-47cd-4808-aea1-3947f27c071b",
+    "title": "中华人民共和国合伙企业法(2006修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "8874296a-fc7a-400a-9221-bd44226ccff0",
+    "title": "中华人民共和国合伙企业法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "e921e34c-8d3c-431b-b5ff-80d62fa6a12a",
+    "title": "中华人民共和国食品安全法(2021修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "90a19456-b40c-483d-adaf-b74b681ad70d",
+    "title": "中华人民共和国食品安全法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "1884208a-d40a-4beb-961e-0865979985da",
+    "title": "中华人民共和国商标法(2019修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "f7fd6e0a-e0ac-4568-9efe-d78d786d0650",
+    "title": "中华人民共和国商标法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "55cebd31-8f34-4c20-90d7-ebccd68457ae",
+    "title": "中华人民共和国国务院组织法(2024修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "9ca3663a-dbf5-4ebe-9d9b-95ccd4610131",
+    "title": "中华人民共和国国务院组织法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "43a3f158-80b7-4e92-9706-b917a998c3dd",
+    "title": "中华人民共和国专利法(2020修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "014e1534-4794-4969-893a-75148650a64b",
+    "title": "中华人民共和国专利法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "db31e81d-a3c5-4c01-b783-f7c06977acd1",
+    "title": "中华人民共和国宪法(2018修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "c2773b12-b044-4a4c-be63-5e1c0c9c3f67",
+    "title": "中华人民共和国宪法修正案(2018)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "dca70be2-4bbc-4d9a-9a47-95fd99e259e8",
+    "title": "中华人民共和国全国人民代表大会组织法(2021修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "9903c65a-1204-475a-a5b7-91614cb3a799",
+    "title": "中华人民共和国全国人民代表大会组织法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "c78491ac-0f6c-447a-b9ba-e77a3001a06f",
+    "title": "中华人民共和国公务员法(2018修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "10e5c84e-42f1-4263-a42a-69366d10a074",
+    "title": "中华人民共和国公务员法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "ab0eea1b-bdc2-43e2-8f0e-7215309c7a10",
+    "title": "中华人民共和国公司法(2023修订) ",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "ecef6b83-f286-49a3-8754-21c297749433",
+    "title": "中华人民共和国宪法修正案（2018年）",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": "2018-03-11"
+  },
+  {
+    "id": "d6169b45-2727-40ae-b915-35c54603b3b5",
+    "title": "中华人民共和国宪法（2018年修正文本）",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": "2018-03-11"
+  },
+  {
+    "id": "1da17f6f-82b1-45f1-8ba8-d97a5be5d8ca",
+    "title": "中华人民共和国宪法修正案（2004年）",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": "2004-03-14"
+  },
+  {
+    "id": "e0af99ad-fc8a-4ee7-b973-d7978a8ddbf7",
+    "title": "中华人民共和国宪法修正案（1999年）",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": "1999-03-15"
+  },
+  {
+    "id": "3ca1a074-2640-4bed-87bb-17da4b9b08cb",
+    "title": "中华人民共和国宪法修正案（1993年）",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": "1993-03-29"
+  },
+  {
+    "id": "358b280d-62e9-4c41-a7e9-f557864b6099",
+    "title": "中华人民共和国宪法修正案（1988年）",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": "1988-04-12"
+  },
+  {
+    "id": "5f7bdaa6-7756-427c-a2c7-f02308626729",
+    "title": "中华人民共和国宪法（1982年）",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": "1982-12-04"
+  },
+  {
+    "id": "1582268b-df42-4ad9-9942-513451f19dc0",
+    "title": "中华人民共和国治安管理处罚法(2025修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "c33d1780-84b5-48c3-8f23-178abcdc988c",
+    "title": "中华人民共和国治安管理处罚法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "1b05b0d9-928a-4f07-a0db-22b0834c06ec",
+    "title": "中华人民共和国著作权法(2020修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "ceb58d97-e4db-4d4d-bca8-996ce736f210",
+    "title": "中华人民共和国著作权法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "d6e99684-efc6-4c09-92a8-09f4c220159e",
+    "title": "中华人民共和国行政处罚法(2021修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "d7e35972-d9e1-48a0-ad12-1075fa71689f",
+    "title": "中华人民共和国行政处罚法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "51f592ee-66a5-40f5-a177-8fcbf696d7f3",
+    "title": "中华人民共和国行政复议法(2023修订) ",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "1bb8e459-3328-45cb-8ecc-cf1f9d27c4ef",
+    "title": "中华人民共和国行政复议法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "ce6de6d5-2d66-4384-ac7e-aec92c86b21a",
+    "title": "中华人民共和国行政许可法(2019修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "8a7f19d1-ced0-47ae-be78-9a5d7a459aa0",
+    "title": "中华人民共和国行政许可法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "7d0bf521-a274-4b4b-9107-f6306ba9ec3e",
+    "title": "中华人民共和国证券法(2019修订)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "8d327af5-023d-403c-959d-7b49e7c1d2a2",
+    "title": "中华人民共和国证券法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "8c4bc83a-70a0-47e2-8c0d-08fb3f3a6fde",
+    "title": "中华人民共和国道路交通安全法(2021修正) ",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "c390988e-2ddd-4998-97ef-2c586c256a5c",
+    "title": "中华人民共和国道路交通安全法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "5cb768ea-82fc-4fd4-bf98-5532248cfa62",
+    "title": "中华人民共和国监察法(2024修正) ",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "29202504-17ba-43db-9143-169d5b50e04a",
+    "title": "中华人民共和国监察法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "573c1119-f7b6-4d46-b30b-fc2a9231417f",
+    "title": "中华人民共和国社会保险法(2018修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "f7fe0ea5-6b04-4cd2-91c9-e453859a56d4",
+    "title": "中华人民共和国社会保险法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "7a5c6a5e-8e56-4304-bcc9-78885cc31ebc",
+    "title": "中华人民共和国票据法(2004修正)",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "dd945ac3-50ce-46b8-8f0d-ed01bd893d7f",
+    "title": "中华人民共和国票据法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "05634ac3-49f5-427c-856a-6d319061d597",
+    "title": "中华人民共和国立法法(2023修正) ",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "a50f50b3-990e-4d3e-84e6-259bd28d62d6",
+    "title": "中华人民共和国立法法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  },
+  {
+    "id": "7ad391f2-710b-47eb-9a0b-de7c249f58ed",
+    "title": "中华人民共和国公司法",
+    "status": "active",
+    "superseded_by": null,
+    "version": 1,
+    "effective_date": null
+  }
+]

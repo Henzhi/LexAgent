@@ -187,6 +187,7 @@ class LawAgentGraph:
     def _make_react_retry_prep(self) -> Callable:
         """react_retry 前置节点：把审核意见以 system 消息追加进 messages（add_messages 追加语义），
         agent 重入时据此改进回答。"""
+
         def prep(state: AgentState) -> dict:
             fb = state.get("validation_feedback", "") or ""
             return {"messages": [{"role": "system", "content": _RETRY_FEEDBACK_TMPL.format(fb=fb)}]}

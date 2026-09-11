@@ -154,3 +154,14 @@
 | D-0907-4 | **法名质心构建也必须过滤 status**，并新增守护测试断言三条检索路径（向量检索 / BM25 源 / 质心）都带 status 谓词 | 补漏：主检索路径早有过滤，`law_centroids._load_rows()` 是唯一漏网的 | 失效版本混入质心会稀释法名加权（法名推断是口语查询的主要召回手段）。守护测试捕获真实执行的 SQL 字符串断言，将来新增检索路径漏过滤会立刻转红——没有它，"漏一条路径标记就白做"会一次次重演 |
 
 **遗留（未做，待排期）**：5 份残缺副本（监察法仅入库 3 条、行政复议法 10 条、立法法 14 条、道交法 18 条、公司法 49 条）建议重跑 ingest 补齐而非直接废弃；磁盘 `LawData/` 源文件与库内容 title 不对应（治安管理处罚法典型）待一致性核查；答案是否显式标注引用版本（「引自《刑法》(2023修正)」）待产品确认。
+
+## KV Cache 落盘 spike 的立项边界（2026-09-11）
+
+> 背景：LexAgent 的本地降级路径零 KV 复用且无跨进程持久化，而其 ReAct 编排**一次复杂查询要发起 18~20 次 LLM 调用**，每次 prompt 前缀（system + 工具 schema + 累积历史）高度重叠。为此在仓库内新开独立 spike `kv-cache-resume/`，验证 llama.cpp slot save/restore 的**跨进程** KV 恢复与逐字续生成。规格见 `kv-cache-resume/SPEC.md`，执行单元见 `kv-cache-resume/tickets/`。
+
+| # | 决策 | 与既有决策的关系 | 原因 |
+| :--- | :--- | :--- | :--- |
+| D-0911-1 | **spike 物理置于 LexAgent 仓库内、代码路径与 `src/` 完全隔离**：产出全在 `kv-cache-resume/` 子目录（含独立 `pyproject.toml` / `tests/`），不改主链路、不动根 `pyproject.toml`；开发在 **`feat/kv-cache-resume`** 分支，验收完成后合回 `main` | 遵循既有约定「所有新代码只写在 LexAgent」（D-M1-7），但**不适用主链路 DoD**（不需要跑主仓 `tests/`）；`Law-RAG-Agent` 继续只读 | 实验代码不应污染主链路的回归门禁；分支承载使 `main` 随时保持可发布状态。同构关系见 SPEC §4.1——本 spike 复用的是 `StreamEventLog` 已验证的「单一真相源 + 单调游标 + 失效策略」模式，只把介质从 token 事件换成 KV 张量 |
+| D-0911-2 | **选型 llama.cpp slot save/restore；否决 vLLM + LMCache 与 Ollama** | 新增独立选型，**不改动** M1~M4 任何既有决策 | ① llama-server 的 `--slot-save-path` 暴露 `POST /slots/<id>?action=save\|restore`，不设该 flag 返回 501；② 官方把「自动落盘」的 feature request **#17107 关闭为 not planned**，设计取舍明确是「server 只给机制、policy 留给 client」——这决定了本项目的实质交付物是**策略层**；③ vLLM 需 Linux 且 `pause_generation`/`resume_generation` 是**全局**操作（为 Async RL 权重同步设计，非按请求恢复），新请求也不会自动续用 KV，且抢占会直接丢弃 KV blocks；④ Ollama 底层虽是 llama.cpp 但 `/api/chat`、`/api/generate` 均不暴露 slot 能力——这是必须脱离 `ChatOllama` 的直接原因 |
+| D-0911-3 | **Phase 2 接入 LexAgent 前必须先出架构决策（SPEC §11 Q4），决策前不动 `src/`**：候选 (a) 自包 LangChain `BaseChatModel` 直连 llama-server、(b) 把 llama-server 作为并列的新降级后端；两者各有改动面，决策票见 `tickets/T-14-phase2-decision-frozen.md`（已冻结） | 与 AGENTS.md 约定 2（降级判定 D-M1-3 与自动回切 D-0902-2）、约定 8（F14 预算埋点 D-M3-13）强相关 | ① 新后端**必须挂 `callbacks=budget_callbacks()`**，否则 F14 预算静默漏计（有 `test_callback_mounted_on_real_backends` 守护这条）；② D-0902-3 的教训是「不许把是否降级在构造期固化」，接入形态选错会连带返工；③ 项目已因 D-M3-13 走过一次「从自研 backend 转向 LangChain 生态」的迁移，非有明确理由不反向走 |
+

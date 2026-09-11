@@ -164,6 +164,7 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 - ❌ 不重构前端框架、不更换检索底层存储（PRD 非目标）
 - ❌ 工具/节点内不抛异常中断 ReAct 循环
 - ❌ 测试不依赖真实网络与真实 API Key
+- ❌ 不在 `kv-cache-resume/` 的 spike 里改动 `src/`（该子目录是独立实验，Phase 2 决策前不接主链路，见 `kv-cache-resume/tickets/T-14-phase2-decision-frozen.md`）
 
 ## 完成标准（Definition of Done）
 
@@ -188,3 +189,4 @@ docker compose up -d                        # pgvector / redis（本机已有旧
 | `docs/B2-法名推断spike报告-2026-08-30.md` | 法名向量最近邻选型报告：质心法 vs 描述文本法、Recall 数据、端到端接入设计（**B2 二阶段必读**） |
 | `docs/M3-F12-人工确认技术方案.md` | F12 spike 结论：前置确认方案、checkpointer 选型、两种确认粒度成本对比、风险清单（**F12 开发必读**） |
 | `docs/adr-*.md` | 历史检索配置 ADR |
+| `kv-cache-resume/` | **独立 spike**：llama.cpp slot save/restore 的 KV 落盘与跨进程续生成。与 `src/` 完全隔离（不改主链路、不动根 `pyproject.toml`），需求见其 `SPEC.md`、执行单元见其 `tickets/README.md`。开发在 `feat/kv-cache-resume` 分支 |

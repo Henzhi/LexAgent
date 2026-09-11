@@ -8,6 +8,8 @@
 
 ## [Unreleased] — M3 分场景确认（**已完成 2026-08-30**，M4 已立项待启动）
 
+- **【2026-09-11】chore(kv-cache-resume)：新 spike 立项拆票 + 独立分支（`feat/kv-cache-resume`，D-0911-1~3）**：把 `kv-cache-resume/SPEC.md`（llama.cpp slot save/restore 的本地 KV 落盘与跨进程续生成）拆成 **14 张可执行小票**（`kv-cache-resume/tickets/`），含依赖图、状态表、**18 条 REQ + 7 条 AC 的追溯矩阵**与推荐执行顺序。分三层：E0 机制验证（T-01~T-04，需 GPU，产出逐字一致性/提速倍数/体积拟合三个数）、**E1 策略层（T-05~T-13，本项目实质交付物，全程离线 mock 可测）**、E2 接入决策（T-14，冻结）。**隔离边界**：产出全在子目录内，不改 `src/`、不动根 `pyproject.toml`；AGENTS.md 补入导航条目与禁止事项；选型与接入边界留痕见 `DECISIONS.md`。**尚未动工**——下一步是 T-01（装 llama.cpp Windows CUDA release）或 T-05（策略层骨架，无需 GPU）。
+
 - **【2026-09-07】fix(知识库)：版本新鲜度治理——旧法版本与重复副本不再参与检索（D-0907-1~4）**：体检发现同一部法律的新旧版本与重复副本在库中共存且 `status` 恒为 `active`，检索会召回已废止条文（刑法无后缀版不含修正案十二：问「民企董事同业经营是否入刑」、单位行贿量刑均会答错）。
   - **判定脚本（新增，`evaluation/scripts/check_law_version_conflicts.py`）**：默认 dry-run，`--apply` 才写回且写前自动导出备份 JSON；按「逐条正文比对」分型（current / superseded / duplicate / partial / keep / ambiguous）。判定前按 `metadata->>'paragraph_index'` 还原原文顺序、剥离【罪名】标题、中文与阿拉伯条号归一——**初版按文件名判断得到的「24 组全冲突」结论被证伪**：实际仅 8 份真版本冲突 + 19 份重复/残缺入库 + 6 份修正案系列合法并存。
   - **写回结果（已执行）**：active 1039 → **1012**，新增 superseded 8 / duplicate 19，**可检索 chunks 53235 → 49357**；抽查刑法第 165 条现只命中 (2023修正) 版（含「其他公司、企业的董事、监事、高级管理人员」）。**不删任何行与 chunk**，回滚照备份 JSON 改回 active 即可，不需重建向量索引。

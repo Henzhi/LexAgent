@@ -1,0 +1,30 @@
+# KV 缓存本体与索引（体积大、可重建，绝不入库）
+kv/
+*.bin
+slotcache_*
+
+# 模型权重（GGUF）
+models/
+*.gguf
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 运行产物
+*.log
+logs/
+reports/
+
+# 环境与密钥
+.env
+.env.*
+!.env.example
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -21,13 +21,36 @@
 | :--- | :--- | :--- |
 | C1 | **目标 slot 是 `0`**（`-np 1` 时 `/slots` 只返回 1 个槽位）。slot id **不随请求变化** | 单步调用即可，无需「先占位」 |
 | C2 | **空闲 slot 可直接 restore**，不必先预热占用（全新进程内已验证） | `restore` 是单次 POST，不是两步。⚠️ 前置条件「`-c` 与写盘时一致」未验证，见 §3 末 |
-| C3 | `filename` **只接受纯文件名**；带子目录、`/`、`\`、`..` 一律 **400 `Invalid filename`** | Adapter 侧自己做文件名净化，别指望服务端 |
+| C3 | `filename` **只接受纯文件名**；带子目录、`/`、`\`、`..` 一律 **400 `Invalid filename`** | **Adapter 侧直接拒绝**（不净化），见下方 §0.1 |
 | C4 | 同名重复 save **覆盖**（返回 200，且文件 **mtime 已更新** —— 是真重写而非跳过） | 与 `REQ-E1` 的「同 key 覆盖写、`hits` 不清零」自然吻合 |
 | C5 | **不配 `--slot-save-path` → save/restore 都返回 501**，且报错消息自己就写了这个 flag 名 | REQ-E3 的「显式报错」几乎白送，Adapter 转述即可 |
 | C6 | **HTTP 客户端必须 `trust_env=False`** —— 否则沙箱代理会让请求 **200/404 交替**（见 §5） | 不处理这条，整个策略层会随机假失败 |
 | C7 | 请求体**缺 `filename` 会 500**（服务端不做 body 校验，直接抛异常） | Adapter 必须始终带 `filename` |
 | C8 | **越界 slot id 也返回 200**（`id_slot:9` 照样 `n_saved:20`） | 不要相信「slot id 错了会被拒」；slot id 由我们自己保证 |
 | C9 | restore 成功**无法从 `/slots` 观测**（`n_past` 等字段不出现） | T-09 的 REQ-W2 前缀校验不能靠 `/slots`，见 §6 |
+
+---
+
+## 0.1 与 C3 影响列的偏离：**拒绝，而不是净化**（T-06 落地时定）
+
+C3 的影响列原写「Adapter 侧自己做文件名净化」。T-06 实现时**改成直接拒绝**：
+
+```python
+is_valid_slot_filename("sub/a.bin")  # False → save() 在任何请求发出前抛 ValueError
+```
+
+理由（记录在 `kv_cache/engine.py` 的 `is_valid_slot_filename` docstring）：
+
+- 净化（剥掉路径分量、替换字符）会把**两个不同的键悄悄映射到同一个文件**。
+  两个不同的前缀共用一份 KV → 正是 `REQ-W2` 说的「用错的 KV 产出错的结果」，
+  而且**静默**：`restore` 会返回 200，只有输出对不上才会被发现。
+- 拒绝则是**响亮的失败**，调用方立刻知道自己拼了个非法 key。
+
+所以 T-06 的契约是：调用方保证 key 能映射成纯文件名（那是 T-07 的事）；
+Adapter 只做校验，不做修补。
+
+> 「不净化」不等于「不设防」：`save()` 在**发请求之前**就拒绝，不打无谓的 RTT，
+> 也不靠服务端那 400 兜底。单测 `test_save_rejects_before_sending_any_request` 断言 `recorder.count == 0`。
 
 ---
 
@@ -282,6 +305,39 @@ Adapter 不允许把调用方传进来的任意 id 直接转发。
 
 ---
 
+## 7.1 T-06 复核：用真实服务把契约跑一遍
+
+T-06 的单测全离线（`MockTransport`）——**离线测试只能证明「按我理解的契约实现了」，
+不能证明「我理解的契约是对的」**。所以落地后又拿真实实例复核了一次，
+用的是与 T-02 不同的那份配置（`n_ctx=2048`，T-02 是 4096），顺带做了交叉验证。
+
+| 复核项 | 实测 | 对上哪条结论 |
+| :--- | :--- | :--- |
+| `GET /health` | 200 `{"status":"ok"}` | — |
+| `GET /slots` | `[{"id":0,"n_ctx":2048,...}]` | C1（只 1 个槽位，id=0） |
+| `POST /slots/0?action=__kv_cache_capability_probe__` | **400 `Invalid action`** | 判别式成立：**配了 flag 时是 400 而不是 501**（§1） |
+| `capabilities().available` | `True`，`probe_status=400` | 探测**无副作用**：跑完 `kv/` 里没有出现 `probe.bin`（同目录只有随后那次 save 写出的 `t06_live_probe.bin`） |
+| `save("t06_live_probe.bin")` | 200，`n_saved=13`，`n_written=480348`，`save_ms=43.4`，端到端 49.5ms | C7（body 带 filename）；`kv/t06_live_probe.bin` 落盘大小 = **480348 字节**，与 `n_written` 逐字节相同 |
+| `restore("t06_live_probe.bin")` | 200，`n_restored=13`，`n_read=480348`，`restore_ms=39.0`，端到端 44.0ms | C2（空闲 slot 单步 restore） |
+
+**顺带的交叉验证（AC3 定律在第二份配置上仍成立）**
+
+T-04 在 4096 档量出的定律是 `bytes = 36880 × tokens + 908`。这次 13 token 的实测：
+
+```
+36880 × 13 + 908 = 480348   ←→   实测 n_written = 480348
+```
+
+**逐字节相等**，而这是一个不同 `-c`（2048）、不同进程、不同文件的实例 ——
+说明该定律不是拟合出来的巧合，而是结构性的（GGUF 里 `n_layer × n_kv_head × head_dim × 2 × 2` 定死）。
+
+> 端到端（49.5ms / 44.0ms）比服务端自报（43.4ms / 39.0ms）只多 ~5~6ms —— 本机回环 + `trust_env=False` 直连的合理开销，符合 T-04 的预算假设。
+
+复现：`KV_TEST_SERVER=http://127.0.0.1:8085 pytest -m integration tests/test_engine.py`
+（集成用例默认被 `addopts` 里的 `-m "not integration"` 挡掉，必须显式带上 `-m integration`）。
+
+---
+
 ## 8. 复现步骤
 
 ```bash
@@ -312,3 +368,4 @@ python scripts/slot_smoke.py restore-only --kv-dir kv --report reports/t02-resto
 | 2026-09-12 | 首版：Q1/Q2/Q3 三问实测 + 501 基线 + 代理陷阱 + 4 条附带坑 + 对 T-06 的 9 条契约结论 |
 | 2026-09-12 | 补做 §6 边界探针（`--probe-edge`）并**修正 §6.2 的错误推断**：越界 slot id 是原样回显而非夹取；§4/§6 结论加期望值断言与复现命令；§1.1 标注 timings 非契约 |
 | 2026-09-12 | §4 覆盖语义改用 **mtime 断言**实证（原「字节数一致」不足以区分覆盖与跳过）；§3 Q2 在**全新进程**上复现，并暴露未验证前置条件「保存/恢复时 `-c` 须一致」→ 移交 T-03（可能影响 T-07 的键维度） |
+| 2026-09-12 | **T-06 落地后的两处回改**：① 新增 §0.1 —— C3 影响列「Adapter 侧净化文件名」被实现层**改成直接拒绝**（净化会把不同 key 静默映射到同一文件，违反 REQ-W2），此处以代码为准并同步文档；② 新增 §7.1 —— 用真实 8085 实例（`n_ctx=2048`，非 T-02 那份配置）复核判别式与 save/restore 往返，并交叉验证 T-04 的 `bytes = 36880 × tokens + 908` **逐字节成立** |

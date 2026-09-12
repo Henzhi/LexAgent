@@ -15,7 +15,10 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# `-m "not integration"` 让「默认不跑」是**真的**：不设 KV_TEST_SERVER 时集成用例会 skip，
+# 但「不可能误跑」和「跑了刚好 skip」是两回事 —— 前者不依赖环境变量是否被设过。
+# 要跑就 `pytest -m integration`（命令行参数排在 addopts 之后，会覆盖它）。
+addopts = '-q -m "not integration"'
 markers = [
     "integration: 需要真实 llama-server 的用例，默认不跑（加 -m integration 才执行）",
 ]

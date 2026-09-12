@@ -88,7 +88,7 @@ graph TD
 | [T-03](./T-03-cross-process-exact-match.md) | 跨进程续生成 + 逐字比对 | E0 | T-02 | T-04、T-13\* | G1、REQ-O1、AC1 | ✅ |
 | [T-04](./T-04-perf-and-size.md) | restore 提速与 KV 体积量化 | E0 | T-03 | T-13\* | G2、AC2、AC3、§9.2 | ✅ |
 | [T-05](./T-05-skeleton-and-config.md) | 策略层骨架与 KV_* 配置 | E1 | — | T-06~T-13 | G3 | ✅ |
-| [T-06](./T-06-engine-adapter.md) | Engine Adapter（/slots 客户端） | E1 | T-05 | T-09、T-10 | REQ-E3、R6 | ⬜ |
+| [T-06](./T-06-engine-adapter.md) | Engine Adapter（/slots 客户端） | E1 | T-05 | T-09、T-10 | REQ-E3、R6 | ✅ |
 | [T-07](./T-07-prefix-key.md) | prefix key 计算与归一化 | E1 | T-05 | T-09 | REQ-U1/U2/W2、AC7、R1 | ⬜ |
 | [T-08](./T-08-index-store.md) | 索引与元数据存储（单写者） | E1 | T-05 | T-09、T-10、T-11 | REQ-U3、§4.3、§4.4 | ⬜ |
 | [T-09](./T-09-hit-and-restore.md) | 命中判定与 restore 全流程 | E1 | T-06、T-07、T-08 | T-12、T-13 | REQ-E2/E4/W1/W2、AC5 | ⬜ |
@@ -160,3 +160,4 @@ SPEC §7 Phase 3 是真正的收益点（让 ReAct 循环 18~20 次调用之间�
 | 2026-09-12 | **T-02 ✅**（slot API 冒烟 + 501 基线）—— 第 1 批完成，slot API 实测契约共 9 条（见 `docs/phase0-slot-api-findings.md`），下游 T-03 可开工、T-06 接口形态已定（单步 POST） |
 | 2026-09-12 | **T-03 ✅（AC1 通过）** —— 跨进程续生成 token 级逐字一致（K=256/511 两值，5 次独立运行结论相同）。附带结掉 T-02 移交的 `-c` 前提：**`-c` 不必一致**，故 **T-07 不加 `n_ctx` 维度**。E0 仅剩 T-04 |
 | 2026-09-12 | **T-04 ✅（AC2 + AC3 通过）** —— 4K 档 restore 提速 **9.10×**；体积精确线性 `bytes = 36880 × tokens + 908`（R²=1.000000）。四档无需缩档。**E0 全部完成**，转入 E1（T-05 已完成，下一步 T-06/T-07/T-08 三张基础票可并行） |
+| 2026-09-12 | **T-06 ✅** —— `/slots` 客户端落地（`kv_cache/engine.py`，全离线单测 50 例）+ 真实实例完整往返复核。**两处文档回改**：C3 的「净化文件名」在实现层改为**直接拒绝**（净化会把不同 key 静默映射到同一文件，违反 REQ-W2，findings 新增 §0.1）；`addopts` 补 `-m "not integration"` 让「集成用例默认不跑」名副其实。顺带**交叉验证** T-04 的 AC3 定律在另一份 `-c=2048` 配置上逐字节成立（`36880×13+908 = 480348`）。下一步：T-07 / T-08 仍可并行，T-09 / T-10 已解除 T-06 阻塞 |

@@ -105,7 +105,20 @@ class PrefixMismatch(KVCacheError):
     """
 
 
+class IndexCorrupted(KVCacheError):
+    """`index.json` 存在但无法解析（T-08 追加）。
+
+    抛点：`store.CacheIndex.load()`。
+
+    **为什么不偷偷当成空索引**：`index.json` 是最后的真相源。把它读成「什么都没有」，
+    等于把所有 KV 文件一次性变成孤儿，接着启动扫描就会把它们全删掉 ——
+    一次解析失败升级成一次删库。所以这里宁可显式报错、把坏文件挪到一边留现场，
+    再由 `scan_and_repair()` 从各条目的 `meta.json` **重建**索引。
+    """
+
+
 __all__ = [
+    "IndexCorrupted",
     "KVCacheError",
     "KVCacheConfigError",
     "PrefixMismatch",

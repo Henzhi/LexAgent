@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from .config import DEFAULT_ENV, KV_QUANT_CHOICES, PROJECT_ROOT, KVCacheConfig, load_config
 from .errors import (
+    IndexCorrupted,
     KVCacheConfigError,
     KVCacheError,
     PrefixMismatch,
@@ -39,22 +40,31 @@ from .models import (
     now_iso,
 )
 from .policy import KVCachePolicy
+from .prefix import KEY_HEX_LEN, PrefixKey, canonicalize, compute_key, detect_unstable, prefix_key_for_messages
+from .store import CacheIndex, IndexEntry, IndexStats, RepairReport
 
 __version__ = "0.1.0"
 
 __all__ = [
     "DEFAULT_ENV",
+    "KEY_HEX_LEN",
     "KV_QUANT_CHOICES",
     "PROJECT_ROOT",
+    "CacheIndex",
     "CacheMeta",
     "Decision",
     "DecisionKind",
+    "IndexCorrupted",
+    "IndexEntry",
+    "IndexStats",
     "KVCacheConfig",
     "KVCacheConfigError",
     "KVCacheError",
     "KVCachePolicy",
     "MissReason",
+    "PrefixKey",
     "PrefixMismatch",
+    "RepairReport",
     "RestoreFailed",
     "SaveFailed",
     "SlotApiError",
@@ -62,6 +72,10 @@ __all__ = [
     "TelemetryEvent",
     "TelemetryEventName",
     "__version__",
+    "canonicalize",
+    "compute_key",
+    "detect_unstable",
     "load_config",
     "now_iso",
+    "prefix_key_for_messages",
 ]

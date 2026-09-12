@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 | :--- | :--- |
-| 状态 | ⬜ 未开始 |
+| 状态 | ✅ 完成（2026-09-12） |
 | Epic | E1 · 策略层（SPEC Phase 1） |
 | 阻塞于 | T-05 |
 | 阻塞 | T-09、T-10、T-11 |
@@ -57,12 +57,69 @@
 
 ## 验收清单
 
-- [ ] 并发 20 个任务写同一 key：最终文件可解析、内容为最后一次写（REQ-U3）
-- [ ] `index.json` 在任意时刻可被读取（原子写生效，无半截 JSON 用例）
-- [ ] 三类孤儿在启动扫描时被清掉，且**清理计数可被遥测读到**
-- [ ] meta schema 与 SPEC §4.3 逐字段一致（有 schema 断言测试，不是靠人眼看）
-- [ ] 锁边界写进了 docstring：进程内有效、跨进程不保证
-- [ ] 时间戳带时区（`+08:00` 那种），不是裸 `datetime.isoformat()` 丢时区
+- [x] 并发 20 个任务写同一 key：最终文件可解析、内容自洽（REQ-U3）
+      —— 见下方「一处口径修正」：并发的「最后一次写」不可观测，改用**更强**的判定性断言
+- [x] `index.json` 在任意时刻可被读取（原子写生效，无半截 JSON 用例）
+      —— `test_failure_midway_leaves_no_tmp_and_keeps_old_content`（模拟 replace 前崩溃：
+      目标文件保持原样、无 tmp 残留）+ `test_failed_register_does_not_corrupt_index`
+- [x] 三类孤儿在启动扫描时被清掉，且**清理计数可被遥测读到**
+      —— `RepairReport` 带 `scanned_bins` / `scanned_metas` / `orphan_bins_removed` /
+      `orphan_metas_removed` / `index_entries_repaired` / `total_cleaned`，T-12 直接读
+- [x] meta schema 与 SPEC §4.3 逐字段一致（有 schema 断言测试，不是靠人眼看）
+      —— `test_meta_matches_spec_schema_field_by_field` 断言字段集合**恰好相等**（多一个也失败）
+- [x] 锁边界写进了 docstring：进程内有效、跨进程不保证
+      —— 模块 docstring 的「锁边界」小节 + `CacheIndex` 类 docstring；`test_lock_boundary_documented` 守住
+- [x] 时间戳带时区（`+08:00` 那种），不是裸 `datetime.isoformat()` 丢时区
+
+## 一处口径修正：并发的「内容为最后一次写」改为**可判定**的等价断言
+
+票面要求「并发 20 个任务写同一 key → 内容为最后一次写」。**这个断言在并发下不可判定**：
+哪个线程最后落地没有可观测的全序，写这条断言只会得到一条随机红的用例。
+
+所以拆成两条，合起来比原断言更强：
+
+1. **`hits` 必须正好等于 20**（`test_concurrent_touch_same_key_does_not_lose_counts`）。
+   `touch` 是「读 meta → 加一 → 写回」，锁失效就会**丢更新**、计数小于 20。
+   这是 per-key 锁的**判定性证据** —— 而「文件能解析」在丢更新时照样通过。
+2. **最终态内部自洽**：meta.json 必须**整体等于**某一次完整写入的结果（不能是拼接/撕裂的），
+   且 index 的 `bytes` / `last_used_at` 与之一致；`index.json` 仍是合法 JSON
+   （`test_concurrent_register_same_key_final_state_is_consistent`）。
+   20 个不同 key 并发写则断言 20 条一条不丢（全局锁的判定性证据）。
+
+`test_sequential_last_write_semantics` 单独钉住确定性场景：顺序写 5 次，
+最终 meta 与 index 都必须是第 5 次的值（逐字段相等）——
+否则「最后一次写胜出」这句话就完全没有测试在守。
+
+## 落地时与票面不符之处（已回改文档）
+
+1. **「不删 KV 文件本体」与「清掉有 bin 无 meta」在票面里互相矛盾**（前者在「不做」里，
+   后者在「做」里）。裁定：正常读写路径**不碰 bin**（落盘归引擎、删除归 T-11）；
+   **只有一致性修复会删 bin**，且孤儿 bin 属于不可用残留（无 meta → 不知模型/量化/token 数
+   → 无法校验 REQ-U2 → 按 REQ-W2「宁可重算」），不清理就永远占磁盘且永不可能命中。
+   已写入 `docs/phase1-design.md` §1.2 与 `store.py` 模块 docstring。
+   另给了 `dry_run=True` 只报告不动手。
+2. **新增错误类型 `IndexCorrupted`（改动了 T-05 的 `errors.py`）**：
+   `index.json` 解析失败时**绝不静默当成空索引** —— 那会把所有 KV 文件一次变成孤儿，
+   紧接着被启动扫描全删掉，**一次解析失败升级成一次删库**。改为：隔离坏文件留现场 + 显式报错，
+   再由 `scan_and_repair()` 从各条目的 `meta.json` 重建。
+3. **容量统计给两个口径**（`bytes_claimed` / `bytes_on_disk`）。AC6（目录占用 ≤ 上限）
+   必须用 `bytes_on_disk`，否则等于拿「我以为写了多少」去比上限。已写入设计文档 §1.3。
+4. **index 里不存绝对路径**：`meta_file` 只存纯文件名（存绝对路径会让整个缓存目录不可搬迁）。
+5. **key 做了强校验**（`^[0-9a-f]{16}$`）：key 会被拼进文件名，
+   `../x` 这种能直接穿越出缓存目录。`prefix.compute_key()` 天然满足形状，但存储层不假设调用方是它。
+
+## 实现要点（供 T-09 / T-10 / T-11 直接调用）
+
+| 方法 | 谁用 | 说明 |
+| :--- | :--- | :--- |
+| `register(meta)` | T-10 | 落盘第三步；**会校验 bin 已存在**，否则抛 `SaveFailed` |
+| `get(key)` / `read_meta(key)` | T-09 | 走 `meta.json`（权威），不走 index 缓存 |
+| `touch(key)` | T-09 | `hits + 1` + 刷新 `last_used_at`，持 per-key 锁故并发不丢计数 |
+| `drop_from_index(key)` / `forget(key)` | T-11 | 删除流程第一步 / 第二步（`forget` 删 meta，**不删 bin**） |
+| `entries()` | T-11 | 按 `last_used_at` **升序**（最久未用在前），每项只含 bytes/last_used_at，无需读文件 |
+| `stats()` | T-11 | `entries` / `bytes_claimed` / `bytes_on_disk` |
+| `scan_and_repair(dry_run=)` | 启动路径 | 幂等；`RepairReport` 供 T-12 遥测 |
+| `from_config(config)` | 接入侧 | 从 `KVCacheConfig` 构造 |
 
 ## 备注
 

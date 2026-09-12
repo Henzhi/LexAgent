@@ -84,7 +84,7 @@ graph TD
 | 票 | 标题 | Epic | 阻塞于 | 阻塞 | SPEC 依据 | 状态 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | [T-01](./T-01-runtime-and-model.md) | llama.cpp 运行时就绪与模型取用 | E0 | — | T-02 | §11 Q1/Q2/Q3、§9.1 | ✅ |
-| [T-02](./T-02-slot-api-smoke.md) | slot API 冒烟 + 501 基线 | E0 | T-01 | T-03、T-06\* | §3.1、REQ-E3、REQ-O3、R5/R6 | ⬜ |
+| [T-02](./T-02-slot-api-smoke.md) | slot API 冒烟 + 501 基线 | E0 | T-01 | T-03、T-06\* | §3.1、REQ-E3、REQ-O3、R5/R6 | ✅ |
 | [T-03](./T-03-cross-process-exact-match.md) | 跨进程续生成 + 逐字比对 | E0 | T-02 | T-04、T-13\* | G1、REQ-O1、AC1 | ⬜ |
 | [T-04](./T-04-perf-and-size.md) | restore 提速与 KV 体积量化 | E0 | T-03 | T-13\* | G2、AC2、AC3、§9.2 | ⬜ |
 | [T-05](./T-05-skeleton-and-config.md) | 策略层骨架与 KV_* 配置 | E1 | — | T-06~T-13 | G3 | ✅ |
@@ -156,3 +156,5 @@ SPEC §7 Phase 3 是真正的收益点（让 ReAct 循环 18~20 次调用之间�
 | 日期 | 变更 |
 | :--- | :--- |
 | 2026-09-11 | 由 SPEC v0.1 首次拆分：14 张票（13 活跃 + 1 冻结） |
+| 2026-09-12 | T-01 ✅（运行时就绪与模型取用）；T-05 ✅（策略层骨架与 `KV_*` 配置） |
+| 2026-09-12 | **T-02 ✅**（slot API 冒烟 + 501 基线）—— 第 1 批完成，slot API 实测契约共 9 条（见 `docs/phase0-slot-api-findings.md`），下游 T-03 可开工、T-06 接口形态已定（单步 POST） |

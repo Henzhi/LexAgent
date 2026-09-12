@@ -22,6 +22,7 @@ logs/
 # 注意：`kv/`、`*.bin`、`*.gguf` 仍然绝不入库（见文件顶部）。
 reports/*
 !reports/ac1-exact-match.json
+!reports/ac2-ac3-measurements.json
 !reports/*.md
 
 # 环境与密钥

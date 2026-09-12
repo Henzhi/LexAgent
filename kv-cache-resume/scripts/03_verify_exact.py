@@ -31,327 +31,22 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
-import socket
-import subprocess
 import sys
-import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import httpx
+from kvbench_common import (
+    LLAMA_BIN_DEFAULT,
+    MODEL_DEFAULT,
+    ServerHandle,
+    SlotClient,
+    compare_tokens,
+    process_lifecycle,
+    sha256_ints,
+    write_report,
+)
 
-LLAMA_BIN_DEFAULT = r"C:\Tools\llama.cpp\bin"
-MODEL_DEFAULT = r"C:\Tools\llama.cpp\models\qwen2.5-3b-instruct-q4_k_m.gguf"
 PROMPT_DEFAULT = "Write a detailed technical explanation of how a transformer language model works."
-
-
-# --------------------------------------------------------------------------------------
-# 工具
-# --------------------------------------------------------------------------------------
-
-
-def sha256_ints(values: list[int]) -> str:
-    """对整数序列取 sha256（用其十进制文本流，跨语言可复算）。"""
-    payload = ",".join(str(v) for v in values).encode("ascii")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def port_open(host: str, port: int, timeout: float = 0.4) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(timeout)
-        return sock.connect_ex((host, port)) == 0
-
-
-def wait_port_free(host: str, port: int, timeout: float = 30.0) -> bool:
-    """等端口真正释放 —— 否则重启会 bind 失败，被误判成「机制不成立」。"""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not port_open(host, port):
-            return True
-        time.sleep(0.2)
-    return not port_open(host, port)
-
-
-def wait_port_open(host: str, port: int, timeout: float = 180.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if port_open(host, port):
-            return True
-        time.sleep(0.3)
-    return False
-
-
-def wait_health(base_url: str, timeout: float = 240.0) -> bool:
-    """轮询 `/health` —— **不要用「端口可连」当就绪信号**。
-
-    llama-server 会**先绑定端口再加载模型**，实测端口可连时模型可能还没读完
-    （日志停在 `loading model ...`），此时单发 `/health` 直接失败。
-    """
-    deadline = time.monotonic() + timeout
-    with httpx.Client(timeout=5.0, trust_env=False) as client:
-        while time.monotonic() < deadline:
-            try:
-                if client.get(f"{base_url}/health").status_code == 200:
-                    return True
-            except httpx.HTTPError:
-                pass
-            time.sleep(0.3)
-    return False
-
-
-def tail_text(path: Path, lines: int = 15) -> str:
-    try:
-        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return "(日志不可读)"
-    return "\n".join("    " + line for line in content[-lines:])
-
-
-# --------------------------------------------------------------------------------------
-# 服务进程管理 —— 本票的关键：「真杀」，不是假装重启
-# --------------------------------------------------------------------------------------
-
-
-@dataclass
-class ProcessRecord:
-    """一个 llama-server 进程的完整生命周期，作为「确实杀了进程」的证据。"""
-
-    generation: int
-    pid: int | None
-    command: list[str]
-    started_at: float
-    ready_at: float | None = None
-    killed_at: float | None = None
-    returncode: int | None = None
-    log_path: str | None = None
-    kill_method: str | None = None
-    kill_note: str | None = None
-
-    @property
-    def lifetime_s(self) -> float | None:
-        if self.killed_at is None:
-            return None
-        return round(self.killed_at - self.started_at, 3)
-
-
-class ServerHandle:
-    """自己拉起 / 杀掉 llama-server（拿到 pid 与 returncode 才有说服力）。"""
-
-    def __init__(
-        self,
-        bin_dir: Path,
-        model: Path,
-        port: int,
-        ctx: int,
-        ngl: int,
-        slot_dir: Path | None,
-        log_dir: Path,
-    ) -> None:
-        self.bin_dir = bin_dir
-        self.model = model
-        self.port = port
-        self.ctx = ctx
-        self.ngl = ngl
-        self.slot_dir = slot_dir
-        self.log_dir = log_dir
-        self.proc: subprocess.Popen | None = None
-        self.record: ProcessRecord | None = None
-        self.records: list[ProcessRecord] = []
-        self._log_handle = None
-        self._generation = 0
-
-    def command(self) -> list[str]:
-        cmd = [
-            str(self.bin_dir / "llama-server.exe"),
-            "-m",
-            str(self.model),
-            "-ngl",
-            str(self.ngl),
-            "-c",
-            str(self.ctx),
-            "--port",
-            str(self.port),
-            "-np",
-            "1",
-        ]
-        if self.slot_dir is not None:
-            cmd += ["--slot-save-path", str(self.slot_dir)]
-        return cmd
-
-    def start(self, timeout: float = 240.0) -> ProcessRecord:
-        self._generation += 1
-        cmd = self.command()
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = self.log_dir / f"ac1-server-p{self.port}-gen{self._generation}.log"
-        # 必须切到 bin 目录，否则同目录的 ggml-cuda.dll / cudart64_12.dll 找不到
-        self._log_handle = log_path.open("wb")
-        started = time.time()
-        self.proc = subprocess.Popen(
-            cmd,
-            cwd=str(self.bin_dir),
-            stdout=self._log_handle,
-            stderr=subprocess.STDOUT,
-        )
-        record = ProcessRecord(
-            generation=self._generation,
-            pid=self.proc.pid,
-            command=cmd,
-            started_at=started,
-            log_path=str(log_path),
-        )
-        self.record = record
-        self.records.append(record)
-
-        if not wait_port_open("127.0.0.1", self.port, timeout):
-            self.stop()
-            raise RuntimeError(f"llama-server 端口 {self.port} 在 {timeout:.0f}s 内没监听，见 {log_path}")
-
-        base_url = f"http://127.0.0.1:{self.port}"
-        if not wait_health(base_url, timeout):
-            # 进程可能已经在加载期挂掉 —— 把 returncode 与日志尾部一起带出来，别让人猜
-            alive = self.proc.poll()
-            self.stop()
-            detail = f"进程提前退出，returncode={alive}" if alive is not None else "进程还活着但 /health 一直不通"
-            raise RuntimeError(f"llama-server 未能就绪（{detail}），日志尾部：\n{tail_text(log_path)}")
-        record.ready_at = time.time()
-        return record
-
-    def stop(self) -> ProcessRecord | None:
-        record = self.record
-        if self.proc is None or record is None:
-            return None
-        if self.proc.poll() is None:
-            self.proc.terminate()  # Windows: TerminateProcess —— 真杀
-            record.kill_method = "terminate"
-            try:
-                self.proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                record.kill_method = "kill(强制)"
-                self.proc.wait(timeout=15)
-        record.returncode = self.proc.returncode
-        record.killed_at = time.time()
-        record.kill_note = (
-            "Windows 下 terminate() 即 TerminateProcess（强制终止），"
-            "returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，"
-            "不是靠重启 HTTP 连接来假装。"
-        )
-        if self._log_handle is not None:
-            self._log_handle.close()
-            self._log_handle = None
-        freed = wait_port_free("127.0.0.1", self.port)
-        if not freed:
-            raise RuntimeError(f"端口 {self.port} 在 kill 后仍未释放 —— 重启不可信")
-        self.proc = None
-        self.record = None
-        return record
-
-
-# --------------------------------------------------------------------------------------
-# API 封装
-# --------------------------------------------------------------------------------------
-
-
-class SlotClient:
-    """瘦封装。`trust_env=False` 是硬要求（T-02 结论 C6）。"""
-
-    def __init__(self, base_url: str, timeout: float = 600.0) -> None:
-        self.base_url = base_url.rstrip("/")
-        self._client = httpx.Client(base_url=self.base_url, timeout=timeout, trust_env=False)
-
-    def close(self) -> None:
-        self._client.close()
-
-    def health(self) -> bool:
-        try:
-            return self._client.get("/health").status_code == 200
-        except httpx.HTTPError:
-            return False
-
-    def tokenize(self, content: str) -> list[int]:
-        return self._client.post("/tokenize", json={"content": content}).json()["tokens"]
-
-    def generate(
-        self,
-        prompt: str | list[int],
-        n_predict: int,
-        seed: int,
-        cache_prompt: bool = True,
-        slot_id: int = 0,
-    ) -> dict:
-        """`temperature=0` + 固定 `seed` —— 采样参数必须钉死。"""
-        body = {
-            "prompt": prompt,
-            "n_predict": n_predict,
-            "temperature": 0.0,
-            "seed": seed,
-            "id_slot": slot_id,
-            "cache_prompt": cache_prompt,
-            "return_tokens": True,
-            "stream": False,
-        }
-        response = self._client.post("/completion", json=body)
-        response.raise_for_status()
-        data = response.json()
-        timings = data.get("timings", {})
-        return {
-            "tokens": data["tokens"],
-            "content": data["content"],
-            "tokens_predicted": data["tokens_predicted"],
-            "tokens_evaluated": data["tokens_evaluated"],
-            "stop_type": data.get("stop_type"),
-            "cache_n": timings.get("cache_n"),
-            "prompt_ms": round(timings.get("prompt_ms", 0.0), 3),
-            "predicted_ms": round(timings.get("predicted_ms", 0.0), 3),
-            "predicted_per_second": round(timings.get("predicted_per_second", 0.0), 2),
-        }
-
-    def slot_action(self, action: str, filename: str, slot_id: int = 0) -> dict:
-        response = self._client.post(
-            f"/slots/{slot_id}",
-            params={"action": action},
-            json={"filename": filename},
-        )
-        result: dict = {"http_status": response.status_code, "ok": response.status_code == 200}
-        try:
-            result["body"] = response.json()
-        except ValueError:
-            result["body"] = response.text[:400]
-        return result
-
-
-# --------------------------------------------------------------------------------------
-# 比对
-# --------------------------------------------------------------------------------------
-
-
-def compare_tokens(expected: list[int], actual: list[int], context: int = 5) -> dict:
-    """逐 token 比对。不一致时给出首个分歧位置与两侧各 `context` 个 token 的上下文。"""
-    n = min(len(expected), len(actual))
-    first = next((i for i in range(n) if expected[i] != actual[i]), None)
-    result = {
-        "equal": first is None and len(expected) == len(actual),
-        "expected_len": len(expected),
-        "actual_len": len(actual),
-        "first_divergence": first,
-        "expected_sha256": sha256_ints(expected),
-        "actual_sha256": sha256_ints(actual),
-    }
-    if first is None:
-        result["common_prefix_len"] = n
-        result["common_prefix_sha256"] = sha256_ints(expected[:n])
-        if len(expected) != len(actual):
-            result["note"] = "前缀完全一致但长度不同"
-    else:
-        result["common_prefix_len"] = first
-        result["common_prefix_sha256"] = sha256_ints(expected[:first])
-        lo = max(0, first - context)
-        hi = min(len(expected), first + context + 1)
-        result["expected_window"] = {"from": lo, "to": hi - 1, "tokens": expected[lo:hi]}
-        result["actual_window"] = {"from": lo, "to": hi - 1, "tokens": actual[lo:hi]}
-    return result
 
 
 # --------------------------------------------------------------------------------------
@@ -503,16 +198,6 @@ def run_ctx_probe(
     return probe
 
 
-def process_lifecycle(records: list[ProcessRecord]) -> list[dict]:
-    """把进程记录转成可序列化 dict。`lifetime_s` 是 property，`asdict` 带不出来，要显式补。"""
-    out = []
-    for record in records:
-        item = asdict(record)
-        item["lifetime_s"] = record.lifetime_s
-        out.append(item)
-    return out
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="T-03 · 跨进程续生成逐字比对（AC1）")
     parser.add_argument("--llama-bin", default=LLAMA_BIN_DEFAULT)
@@ -652,8 +337,7 @@ def main(argv: list[str] | None = None) -> int:
         ]
 
     report_path = spike_root / args.report
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_report(report_path, report)
 
     print("\n=== 汇总 ===")
     if baseline:

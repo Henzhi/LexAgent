@@ -1,0 +1,1750 @@
+{
+  "ticket": "T-04",
+  "acs": [
+    "AC2",
+    "AC3"
+  ],
+  "params": {
+    "model": "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+    "llama_bin": "C:\\Tools\\llama.cpp\\bin",
+    "ctx": 16384,
+    "ngl": 99,
+    "lengths": [
+      1024,
+      2048,
+      4096,
+      8192
+    ],
+    "repeats": 3,
+    "seed": 42,
+    "temperature": 0.0,
+    "n_predict_per_measure": 1,
+    "seed_text": "The history of France is long and complex, spanning many centuries of change. ",
+    "slot_dir": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+  },
+  "gpu_idle": {
+    "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+    "total_mib": 6141,
+    "used_mib": 1162
+  },
+  "model_metadata": {
+    "general.architecture": "qwen2",
+    "general.type": "model",
+    "general.name": "Qwen2.5 3B Instruct",
+    "general.size_label": "3B",
+    "general.license.name": "qwen-research",
+    "general.base_model.0.name": "Qwen2.5 3B",
+    "qwen2.block_count": 36,
+    "qwen2.context_length": 32768,
+    "qwen2.embedding_length": 2048,
+    "qwen2.attention.head_count": 16,
+    "qwen2.attention.head_count_kv": 2,
+    "general.file_type": 15
+  },
+  "model_metadata_raw": {
+    "_gguf_version": 3,
+    "_tensor_count": 434,
+    "general.architecture": "qwen2",
+    "general.type": "model",
+    "general.name": "Qwen2.5 3B Instruct",
+    "general.size_label": "3B",
+    "general.license.name": "qwen-research",
+    "general.base_model.0.name": "Qwen2.5 3B",
+    "qwen2.block_count": 36,
+    "qwen2.context_length": 32768,
+    "qwen2.embedding_length": 2048,
+    "qwen2.attention.head_count": 16,
+    "qwen2.attention.head_count_kv": 2,
+    "general.file_type": 15
+  },
+  "kv_theory": {
+    "complete": true,
+    "architecture": "qwen2",
+    "n_layer": 36,
+    "n_kv_head": 2,
+    "head_k": 128,
+    "head_v": 128,
+    "elements_per_token": 18432,
+    "bytes_per_token_f16": 36864,
+    "formula": "36 层 × (2 kv_head × (128+128) 维) × 2 字节 = 36864 B/token"
+  },
+  "prompt_lengths": {
+    "1024": 1024,
+    "2048": 2048,
+    "4096": 4096,
+    "8192": 8192
+  },
+  "process_lifecycle": [
+    {
+      "generation": 1,
+      "pid": 17196,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198707.8908947,
+      "ready_at": 1789198715.1361768,
+      "killed_at": 1789198715.7524173,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen1.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.862
+    },
+    {
+      "generation": 2,
+      "pid": 1520,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198716.1702156,
+      "ready_at": 1789198722.8763423,
+      "killed_at": 1789198724.8955789,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen2.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 8.725
+    },
+    {
+      "generation": 3,
+      "pid": 15392,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198725.312507,
+      "ready_at": 1789198731.940544,
+      "killed_at": 1789198732.6688762,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen3.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.356
+    },
+    {
+      "generation": 4,
+      "pid": 3416,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198733.0788918,
+      "ready_at": 1789198740.2187717,
+      "killed_at": 1789198742.1655009,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen4.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 9.087
+    },
+    {
+      "generation": 5,
+      "pid": 9540,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198742.5829914,
+      "ready_at": 1789198749.5247896,
+      "killed_at": 1789198750.214049,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen5.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.631
+    },
+    {
+      "generation": 6,
+      "pid": 30588,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198750.626373,
+      "ready_at": 1789198757.604504,
+      "killed_at": 1789198759.7651145,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen6.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 9.139
+    },
+    {
+      "generation": 7,
+      "pid": 12668,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198760.1872914,
+      "ready_at": 1789198767.012615,
+      "killed_at": 1789198767.71391,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen7.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.527
+    },
+    {
+      "generation": 8,
+      "pid": 27480,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198768.1265438,
+      "ready_at": 1789198775.0120115,
+      "killed_at": 1789198777.7789688,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen8.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 9.652
+    },
+    {
+      "generation": 9,
+      "pid": 30544,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198778.194277,
+      "ready_at": 1789198785.119,
+      "killed_at": 1789198785.7883964,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen9.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.594
+    },
+    {
+      "generation": 10,
+      "pid": 29492,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198786.198006,
+      "ready_at": 1789198792.8035338,
+      "killed_at": 1789198795.6284766,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen10.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 9.43
+    },
+    {
+      "generation": 11,
+      "pid": 25848,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198796.0501995,
+      "ready_at": 1789198802.6950219,
+      "killed_at": 1789198803.5380619,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen11.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.488
+    },
+    {
+      "generation": 12,
+      "pid": 27712,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198803.9588096,
+      "ready_at": 1789198810.6025662,
+      "killed_at": 1789198813.3115888,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen12.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 9.353
+    },
+    {
+      "generation": 13,
+      "pid": 3524,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198813.7304673,
+      "ready_at": 1789198820.3380225,
+      "killed_at": 1789198820.9908047,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen13.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.26
+    },
+    {
+      "generation": 14,
+      "pid": 10296,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198821.3982518,
+      "ready_at": 1789198828.395596,
+      "killed_at": 1789198832.6607966,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen14.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 11.263
+    },
+    {
+      "generation": 15,
+      "pid": 21376,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198833.0780118,
+      "ready_at": 1789198840.1838307,
+      "killed_at": 1789198840.982263,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen15.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.904
+    },
+    {
+      "generation": 16,
+      "pid": 2368,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198841.3909464,
+      "ready_at": 1789198848.0018246,
+      "killed_at": 1789198852.165638,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen16.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 10.775
+    },
+    {
+      "generation": 17,
+      "pid": 23528,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198852.582164,
+      "ready_at": 1789198859.4430895,
+      "killed_at": 1789198860.3597918,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen17.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.778
+    },
+    {
+      "generation": 18,
+      "pid": 18168,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198860.7786427,
+      "ready_at": 1789198867.9292073,
+      "killed_at": 1789198872.1772456,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen18.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 11.399
+    },
+    {
+      "generation": 19,
+      "pid": 10440,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198872.5957608,
+      "ready_at": 1789198881.2230442,
+      "killed_at": 1789198882.1327853,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen19.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 9.537
+    },
+    {
+      "generation": 20,
+      "pid": 14884,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198882.5528986,
+      "ready_at": 1789198889.665817,
+      "killed_at": 1789198896.110959,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen20.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 13.558
+    },
+    {
+      "generation": 21,
+      "pid": 15596,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198896.5255938,
+      "ready_at": 1789198902.798273,
+      "killed_at": 1789198904.2394793,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen21.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.714
+    },
+    {
+      "generation": 22,
+      "pid": 29028,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198904.659601,
+      "ready_at": 1789198911.3938475,
+      "killed_at": 1789198918.356713,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen22.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 13.697
+    },
+    {
+      "generation": 23,
+      "pid": 21324,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198918.7796614,
+      "ready_at": 1789198926.2668731,
+      "killed_at": 1789198927.4624176,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen23.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 8.683
+    },
+    {
+      "generation": 24,
+      "pid": 20112,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198927.8767188,
+      "ready_at": 1789198934.543089,
+      "killed_at": 1789198940.7492306,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen24.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 12.873
+    },
+    {
+      "generation": 25,
+      "pid": 8152,
+      "command": [
+        "C:\\Tools\\llama.cpp\\bin\\llama-server.exe",
+        "-m",
+        "C:\\Tools\\llama.cpp\\models\\qwen2.5-3b-instruct-q4_k_m.gguf",
+        "-ngl",
+        "99",
+        "-c",
+        "16384",
+        "--port",
+        "8084",
+        "-np",
+        "1",
+        "--slot-save-path",
+        "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\kv"
+      ],
+      "started_at": 1789198941.1663785,
+      "ready_at": 1789198947.7227497,
+      "killed_at": 1789198948.7952154,
+      "returncode": 1,
+      "log_path": "C:\\Code\\py_code\\PythonProject\\LexAgent\\kv-cache-resume\\reports\\logs\\bench-p8084-gen25.log",
+      "kill_method": "terminate",
+      "kill_note": "Windows 下 terminate() 即 TerminateProcess（强制终止），returncode=1 表示「被强杀」而非「崩溃」—— 这正是本票要的：进程状态一并消失，不是靠重启 HTTP 连接来假装。",
+      "lifetime_s": 7.629
+    }
+  ],
+  "results": [
+    {
+      "length": 1024,
+      "filename": "bench-L1024.bin",
+      "samples": [
+        {
+          "repeat": 1,
+          "length_requested": 1024,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3767
+          },
+          "cold_prefill": {
+            "prompt_ms": 748.271,
+            "cache_n": 0,
+            "tokens_evaluated": 1024,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3773
+          },
+          "prompt_sha256": "9722642eeb20accf2211e1d736807cea01e537bc9b99fe157592f334f5d6f6f1",
+          "prompt_len": 1024,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L1024.bin",
+              "n_saved": 1024,
+              "n_written": 37766028,
+              "timings": {
+                "save_ms": 136.624
+              }
+            }
+          },
+          "n_saved": 1024,
+          "n_written": 37766028,
+          "bytes_per_token": 36880.88671875,
+          "killed_pid": 1520,
+          "killed_returncode": 1,
+          "restart_pid": 15392,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L1024.bin",
+              "n_restored": 1024,
+              "n_read": 37766028,
+              "timings": {
+                "restore_ms": 100.469
+              }
+            }
+          },
+          "restore_ms": 100.469,
+          "n_restored": 1024,
+          "n_read": 37766028,
+          "warm_prefill": {
+            "prompt_ms": 36.25,
+            "cache_n": 1023,
+            "tokens_evaluated": 1024
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 16.91
+        },
+        {
+          "repeat": 2,
+          "length_requested": 1024,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3768
+          },
+          "cold_prefill": {
+            "prompt_ms": 761.198,
+            "cache_n": 0,
+            "tokens_evaluated": 1024,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3774
+          },
+          "prompt_sha256": "9722642eeb20accf2211e1d736807cea01e537bc9b99fe157592f334f5d6f6f1",
+          "prompt_len": 1024,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L1024.bin",
+              "n_saved": 1024,
+              "n_written": 37766028,
+              "timings": {
+                "save_ms": 129.581
+              }
+            }
+          },
+          "n_saved": 1024,
+          "n_written": 37766028,
+          "bytes_per_token": 36880.88671875,
+          "killed_pid": 3416,
+          "killed_returncode": 1,
+          "restart_pid": 9540,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L1024.bin",
+              "n_restored": 1024,
+              "n_read": 37766028,
+              "timings": {
+                "restore_ms": 67.303
+              }
+            }
+          },
+          "restore_ms": 67.303,
+          "n_restored": 1024,
+          "n_read": 37766028,
+          "warm_prefill": {
+            "prompt_ms": 41.48,
+            "cache_n": 1023,
+            "tokens_evaluated": 1024
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 17.55
+        },
+        {
+          "repeat": 3,
+          "length_requested": 1024,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3766
+          },
+          "cold_prefill": {
+            "prompt_ms": 799.39,
+            "cache_n": 0,
+            "tokens_evaluated": 1024,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3773
+          },
+          "prompt_sha256": "9722642eeb20accf2211e1d736807cea01e537bc9b99fe157592f334f5d6f6f1",
+          "prompt_len": 1024,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L1024.bin",
+              "n_saved": 1024,
+              "n_written": 37766028,
+              "timings": {
+                "save_ms": 130.056
+              }
+            }
+          },
+          "n_saved": 1024,
+          "n_written": 37766028,
+          "bytes_per_token": 36880.88671875,
+          "killed_pid": 30588,
+          "killed_returncode": 1,
+          "restart_pid": 12668,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L1024.bin",
+              "n_restored": 1024,
+              "n_read": 37766028,
+              "timings": {
+                "restore_ms": 90.865
+              }
+            }
+          },
+          "restore_ms": 90.865,
+          "n_restored": 1024,
+          "n_read": 37766028,
+          "warm_prefill": {
+            "prompt_ms": 62.201,
+            "cache_n": 1023,
+            "tokens_evaluated": 1024
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 17.5
+        }
+      ],
+      "medians": {
+        "cold_prefill_ms_samples": [
+          748.271,
+          761.198,
+          799.39
+        ],
+        "restore_ms_samples": [
+          100.469,
+          67.303,
+          90.865
+        ],
+        "warm_prefill_ms_samples": [
+          36.25,
+          41.48,
+          62.201
+        ],
+        "cold_prefill_ms_median": 761.198,
+        "restore_ms_median": 90.865,
+        "warm_prefill_ms_median": 41.48,
+        "speedup_vs_cold_prefill": 8.38,
+        "speedup_warm_vs_cold": 18.35,
+        "all_checks_passed": true
+      },
+      "notes": []
+    },
+    {
+      "length": 2048,
+      "filename": "bench-L2048.bin",
+      "samples": [
+        {
+          "repeat": 1,
+          "length_requested": 2048,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3767
+          },
+          "cold_prefill": {
+            "prompt_ms": 1402.09,
+            "cache_n": 0,
+            "tokens_evaluated": 2048,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3789
+          },
+          "prompt_sha256": "21e147cc8be0e0618af7d2db77ab467b56fb3807f460647be2a69989e50f7860",
+          "prompt_len": 2048,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L2048.bin",
+              "n_saved": 2048,
+              "n_written": 75531148,
+              "timings": {
+                "save_ms": 246.575
+              }
+            }
+          },
+          "n_saved": 2048,
+          "n_written": 75531148,
+          "bytes_per_token": 36880.443359375,
+          "killed_pid": 27480,
+          "killed_returncode": 1,
+          "restart_pid": 30544,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L2048.bin",
+              "n_restored": 2048,
+              "n_read": 75531148,
+              "timings": {
+                "restore_ms": 127.635
+              }
+            }
+          },
+          "restore_ms": 127.635,
+          "n_restored": 2048,
+          "n_read": 75531148,
+          "warm_prefill": {
+            "prompt_ms": 42.937,
+            "cache_n": 2047,
+            "tokens_evaluated": 2048
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 18.07
+        },
+        {
+          "repeat": 2,
+          "length_requested": 2048,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3773
+          },
+          "cold_prefill": {
+            "prompt_ms": 1397.59,
+            "cache_n": 0,
+            "tokens_evaluated": 2048,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3780
+          },
+          "prompt_sha256": "21e147cc8be0e0618af7d2db77ab467b56fb3807f460647be2a69989e50f7860",
+          "prompt_len": 2048,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L2048.bin",
+              "n_saved": 2048,
+              "n_written": 75531148,
+              "timings": {
+                "save_ms": 232.541
+              }
+            }
+          },
+          "n_saved": 2048,
+          "n_written": 75531148,
+          "bytes_per_token": 36880.443359375,
+          "killed_pid": 29492,
+          "killed_returncode": 1,
+          "restart_pid": 25848,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L2048.bin",
+              "n_restored": 2048,
+              "n_read": 75531148,
+              "timings": {
+                "restore_ms": 158.84
+              }
+            }
+          },
+          "restore_ms": 158.84,
+          "n_restored": 2048,
+          "n_read": 75531148,
+          "warm_prefill": {
+            "prompt_ms": 69.09,
+            "cache_n": 2047,
+            "tokens_evaluated": 2048
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 17.76
+        },
+        {
+          "repeat": 3,
+          "length_requested": 2048,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3766
+          },
+          "cold_prefill": {
+            "prompt_ms": 1367.979,
+            "cache_n": 0,
+            "tokens_evaluated": 2048,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3773
+          },
+          "prompt_sha256": "21e147cc8be0e0618af7d2db77ab467b56fb3807f460647be2a69989e50f7860",
+          "prompt_len": 2048,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L2048.bin",
+              "n_saved": 2048,
+              "n_written": 75531148,
+              "timings": {
+                "save_ms": 246.892
+              }
+            }
+          },
+          "n_saved": 2048,
+          "n_written": 75531148,
+          "bytes_per_token": 36880.443359375,
+          "killed_pid": 27712,
+          "killed_returncode": 1,
+          "restart_pid": 3524,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L2048.bin",
+              "n_restored": 2048,
+              "n_read": 75531148,
+              "timings": {
+                "restore_ms": 92.504
+              }
+            }
+          },
+          "restore_ms": 92.504,
+          "n_restored": 2048,
+          "n_read": 75531148,
+          "warm_prefill": {
+            "prompt_ms": 39.848,
+            "cache_n": 2047,
+            "tokens_evaluated": 2048
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 17.44
+        }
+      ],
+      "medians": {
+        "cold_prefill_ms_samples": [
+          1402.09,
+          1397.59,
+          1367.979
+        ],
+        "restore_ms_samples": [
+          127.635,
+          158.84,
+          92.504
+        ],
+        "warm_prefill_ms_samples": [
+          42.937,
+          69.09,
+          39.848
+        ],
+        "cold_prefill_ms_median": 1397.59,
+        "restore_ms_median": 127.635,
+        "warm_prefill_ms_median": 42.937,
+        "speedup_vs_cold_prefill": 10.95,
+        "speedup_warm_vs_cold": 32.55,
+        "all_checks_passed": true
+      },
+      "notes": []
+    },
+    {
+      "length": 4096,
+      "filename": "bench-L4096.bin",
+      "samples": [
+        {
+          "repeat": 1,
+          "length_requested": 4096,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3766
+          },
+          "cold_prefill": {
+            "prompt_ms": 2609.872,
+            "cache_n": 0,
+            "tokens_evaluated": 4096,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3773
+          },
+          "prompt_sha256": "97b7140e3f39e63aa08a39afba4eb3a1f728a4468ced38b68143174c4f5836da",
+          "prompt_len": 4096,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L4096.bin",
+              "n_saved": 4096,
+              "n_written": 151061388,
+              "timings": {
+                "save_ms": 413.909
+              }
+            }
+          },
+          "n_saved": 4096,
+          "n_written": 151061388,
+          "bytes_per_token": 36880.2216796875,
+          "killed_pid": 10296,
+          "killed_returncode": 1,
+          "restart_pid": 21376,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L4096.bin",
+              "n_restored": 4096,
+              "n_read": 151061388,
+              "timings": {
+                "restore_ms": 198.999
+              }
+            }
+          },
+          "restore_ms": 198.999,
+          "n_restored": 4096,
+          "n_read": 151061388,
+          "warm_prefill": {
+            "prompt_ms": 39.72,
+            "cache_n": 4095,
+            "tokens_evaluated": 4096
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 19.99
+        },
+        {
+          "repeat": 2,
+          "length_requested": 4096,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3767
+          },
+          "cold_prefill": {
+            "prompt_ms": 2503.618,
+            "cache_n": 0,
+            "tokens_evaluated": 4096,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3773
+          },
+          "prompt_sha256": "97b7140e3f39e63aa08a39afba4eb3a1f728a4468ced38b68143174c4f5836da",
+          "prompt_len": 4096,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L4096.bin",
+              "n_saved": 4096,
+              "n_written": 151061388,
+              "timings": {
+                "save_ms": 528.544
+              }
+            }
+          },
+          "n_saved": 4096,
+          "n_written": 151061388,
+          "bytes_per_token": 36880.2216796875,
+          "killed_pid": 2368,
+          "killed_returncode": 1,
+          "restart_pid": 23528,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L4096.bin",
+              "n_restored": 4096,
+              "n_read": 151061388,
+              "timings": {
+                "restore_ms": 280.519
+              }
+            }
+          },
+          "restore_ms": 280.519,
+          "n_restored": 4096,
+          "n_read": 151061388,
+          "warm_prefill": {
+            "prompt_ms": 50.606,
+            "cache_n": 4095,
+            "tokens_evaluated": 4096
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 19.39
+        },
+        {
+          "repeat": 3,
+          "length_requested": 4096,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3745
+          },
+          "cold_prefill": {
+            "prompt_ms": 2552.114,
+            "cache_n": 0,
+            "tokens_evaluated": 4096,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3751
+          },
+          "prompt_sha256": "97b7140e3f39e63aa08a39afba4eb3a1f728a4468ced38b68143174c4f5836da",
+          "prompt_len": 4096,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L4096.bin",
+              "n_saved": 4096,
+              "n_written": 151061388,
+              "timings": {
+                "save_ms": 465.474
+              }
+            }
+          },
+          "n_saved": 4096,
+          "n_written": 151061388,
+          "bytes_per_token": 36880.2216796875,
+          "killed_pid": 18168,
+          "killed_returncode": 1,
+          "restart_pid": 10440,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L4096.bin",
+              "n_restored": 4096,
+              "n_read": 151061388,
+              "timings": {
+                "restore_ms": 286.635
+              }
+            }
+          },
+          "restore_ms": 286.635,
+          "n_restored": 4096,
+          "n_read": 151061388,
+          "warm_prefill": {
+            "prompt_ms": 52.585,
+            "cache_n": 4095,
+            "tokens_evaluated": 4096
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 21.77
+        }
+      ],
+      "medians": {
+        "cold_prefill_ms_samples": [
+          2609.872,
+          2503.618,
+          2552.114
+        ],
+        "restore_ms_samples": [
+          198.999,
+          280.519,
+          286.635
+        ],
+        "warm_prefill_ms_samples": [
+          39.72,
+          50.606,
+          52.585
+        ],
+        "cold_prefill_ms_median": 2552.114,
+        "restore_ms_median": 280.519,
+        "warm_prefill_ms_median": 50.606,
+        "speedup_vs_cold_prefill": 9.1,
+        "speedup_warm_vs_cold": 50.43,
+        "all_checks_passed": true
+      },
+      "notes": []
+    },
+    {
+      "length": 8192,
+      "filename": "bench-L8192.bin",
+      "samples": [
+        {
+          "repeat": 1,
+          "length_requested": 8192,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3745
+          },
+          "cold_prefill": {
+            "prompt_ms": 4446.684,
+            "cache_n": 0,
+            "tokens_evaluated": 8192,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3750
+          },
+          "prompt_sha256": "01df76a76e51d52ef441221687e479bbfd24811b5a137ce6e098194559519960",
+          "prompt_len": 8192,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L8192.bin",
+              "n_saved": 8192,
+              "n_written": 302121868,
+              "timings": {
+                "save_ms": 844.815
+              }
+            }
+          },
+          "n_saved": 8192,
+          "n_written": 302121868,
+          "bytes_per_token": 36880.11083984375,
+          "killed_pid": 14884,
+          "killed_returncode": 1,
+          "restart_pid": 15596,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L8192.bin",
+              "n_restored": 8192,
+              "n_read": 302121868,
+              "timings": {
+                "restore_ms": 685.708
+              }
+            }
+          },
+          "restore_ms": 685.708,
+          "n_restored": 8192,
+          "n_read": 302121868,
+          "warm_prefill": {
+            "prompt_ms": 117.86,
+            "cache_n": 8191,
+            "tokens_evaluated": 8192
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 22.11
+        },
+        {
+          "repeat": 2,
+          "length_requested": 8192,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3745
+          },
+          "cold_prefill": {
+            "prompt_ms": 4569.09,
+            "cache_n": 0,
+            "tokens_evaluated": 8192,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3751
+          },
+          "prompt_sha256": "01df76a76e51d52ef441221687e479bbfd24811b5a137ce6e098194559519960",
+          "prompt_len": 8192,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L8192.bin",
+              "n_saved": 8192,
+              "n_written": 302121868,
+              "timings": {
+                "save_ms": 943.411
+              }
+            }
+          },
+          "n_saved": 8192,
+          "n_written": 302121868,
+          "bytes_per_token": 36880.11083984375,
+          "killed_pid": 29028,
+          "killed_returncode": 1,
+          "restart_pid": 21324,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L8192.bin",
+              "n_restored": 8192,
+              "n_read": 302121868,
+              "timings": {
+                "restore_ms": 542.105
+              }
+            }
+          },
+          "restore_ms": 542.105,
+          "n_restored": 8192,
+          "n_read": 302121868,
+          "warm_prefill": {
+            "prompt_ms": 58.803,
+            "cache_n": 8191,
+            "tokens_evaluated": 8192
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 23.22
+        },
+        {
+          "repeat": 3,
+          "length_requested": 8192,
+          "gpu_after_load": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3745
+          },
+          "cold_prefill": {
+            "prompt_ms": 4305.921,
+            "cache_n": 0,
+            "tokens_evaluated": 8192,
+            "predicted_ms": 0.001
+          },
+          "gpu_after_prefill": {
+            "name": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "total_mib": 6141,
+            "used_mib": 3751
+          },
+          "prompt_sha256": "01df76a76e51d52ef441221687e479bbfd24811b5a137ce6e098194559519960",
+          "prompt_len": 8192,
+          "save": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L8192.bin",
+              "n_saved": 8192,
+              "n_written": 302121868,
+              "timings": {
+                "save_ms": 906.242
+              }
+            }
+          },
+          "n_saved": 8192,
+          "n_written": 302121868,
+          "bytes_per_token": 36880.11083984375,
+          "killed_pid": 20112,
+          "killed_returncode": 1,
+          "restart_pid": 8152,
+          "restore": {
+            "http_status": 200,
+            "ok": true,
+            "body": {
+              "id_slot": 0,
+              "filename": "bench-L8192.bin",
+              "n_restored": 8192,
+              "n_read": 302121868,
+              "timings": {
+                "restore_ms": 535.677
+              }
+            }
+          },
+          "restore_ms": 535.677,
+          "n_restored": 8192,
+          "n_read": 302121868,
+          "warm_prefill": {
+            "prompt_ms": 48.119,
+            "cache_n": 8191,
+            "tokens_evaluated": 8192
+          },
+          "checks_passed": true,
+          "check_failures": [],
+          "wall_seconds": 21.33
+        }
+      ],
+      "medians": {
+        "cold_prefill_ms_samples": [
+          4446.684,
+          4569.09,
+          4305.921
+        ],
+        "restore_ms_samples": [
+          685.708,
+          542.105,
+          535.677
+        ],
+        "warm_prefill_ms_samples": [
+          117.86,
+          58.803,
+          48.119
+        ],
+        "cold_prefill_ms_median": 4446.684,
+        "restore_ms_median": 542.105,
+        "warm_prefill_ms_median": 58.803,
+        "speedup_vs_cold_prefill": 8.2,
+        "speedup_warm_vs_cold": 75.62,
+        "all_checks_passed": true
+      },
+      "notes": []
+    }
+  ],
+  "error": null,
+  "ac3_fit": {
+    "ok": true,
+    "n": 4,
+    "slope": 36880.0,
+    "intercept": 908.0,
+    "r2": 1.0,
+    "max_rel_error_pct": 0.0,
+    "residuals": [
+      {
+        "x": 1024.0,
+        "y": 37766028.0,
+        "predicted": 37766028.0,
+        "abs_error": 0.0,
+        "rel_error_pct": 0.0
+      },
+      {
+        "x": 2048.0,
+        "y": 75531148.0,
+        "predicted": 75531148.0,
+        "abs_error": 0.0,
+        "rel_error_pct": 0.0
+      },
+      {
+        "x": 4096.0,
+        "y": 151061388.0,
+        "predicted": 151061388.0,
+        "abs_error": 0.0,
+        "rel_error_pct": 0.0
+      },
+      {
+        "x": 8192.0,
+        "y": 302121868.0,
+        "predicted": 302121868.0,
+        "abs_error": 0.0,
+        "rel_error_pct": 0.0
+      }
+    ],
+    "formula": "bytes = 36880.000 × tokens + 908.0"
+  },
+  "ac2_rows": [
+    {
+      "length": 1024,
+      "cold_prefill_ms_median": 761.198,
+      "restore_ms_median": 90.865,
+      "speedup": 8.38,
+      "warm_prefill_ms_median": 41.48,
+      "speedup_warm_vs_cold": 18.35
+    },
+    {
+      "length": 2048,
+      "cold_prefill_ms_median": 1397.59,
+      "restore_ms_median": 127.635,
+      "speedup": 10.95,
+      "warm_prefill_ms_median": 42.937,
+      "speedup_warm_vs_cold": 32.55
+    },
+    {
+      "length": 4096,
+      "cold_prefill_ms_median": 2552.114,
+      "restore_ms_median": 280.519,
+      "speedup": 9.1,
+      "warm_prefill_ms_median": 50.606,
+      "speedup_warm_vs_cold": 50.43
+    },
+    {
+      "length": 8192,
+      "cold_prefill_ms_median": 4446.684,
+      "restore_ms_median": 542.105,
+      "speedup": 8.2,
+      "warm_prefill_ms_median": 58.803,
+      "speedup_warm_vs_cold": 75.62
+    }
+  ],
+  "conclusion": {
+    "ac2_target_length": 4096,
+    "ac2_speedup": 9.1,
+    "ac2_threshold": 5.0,
+    "ac2_pass": true,
+    "ac3_r2": 1.0,
+    "ac3_max_rel_error_pct": 0.0,
+    "ac3_r2_threshold": 0.95,
+    "ac3_error_threshold_pct": 20.0,
+    "ac3_pass": true,
+    "bytes_per_token": {
+      "measured_bytes_per_token": 36880.3,
+      "theory_bytes_per_token": 36864,
+      "abs_diff": 16.3,
+      "rel_diff_pct": 0.044
+    },
+    "measured_bytes_per_token_median": 36880.3,
+    "all_sample_checks_passed": true,
+    "error": null
+  }
+}

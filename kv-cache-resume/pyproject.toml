@@ -1,0 +1,27 @@
+[project]
+name = "kv-cache-resume"
+version = "0.1.0"
+description = "用 llama.cpp slot save/restore 实现本地 KV 缓存落盘与跨进程续生成（策略层）"
+requires-python = ">=3.12"
+# 依赖最小化（T-05 范围）：只允许 httpx / pytest / ruff
+dependencies = ["httpx>=0.28.1"]
+
+[dependency-groups]
+dev = ["pytest>=9.1.1", "ruff>=0.15.21"]
+
+# 本目录是 LexAgent 仓库内的独立 spike（SPEC §2.2），不构建分发包，也不进根 workspace
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "integration: 需要真实 llama-server 的用例，默认不跑（加 -m integration 才执行）",
+]
+
+[tool.ruff]
+line-length = 120  # 与 LexAgent 根 pyproject.toml 一致，避免两侧风格漂移
+
+[tool.ruff.lint]
+ignore = ["E402", "E702"]

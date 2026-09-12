@@ -54,12 +54,23 @@
 
 ## 验收清单
 
-- [ ] `python -c "from kv_cache import KVCachePolicy"` 成功（骨架可导入）
-- [ ] `KV_*` 环境变量覆盖有单测，且**非法值报错清晰**（不静默吞掉）
-- [ ] 每个错误类型有 docstring 说明**什么情况下抛**，与 REQ-E3/W1/W3 的对应关系写清
-- [ ] `docs/phase1-design.md` 的状态机图覆盖全部出口分支（hit / miss / uncached / 失败回退），无「等等」之类未定义节点
-- [ ] ruff check + format 通过
-- [ ] `ENV.md` 补上「本目录 Python 环境怎么跑」一段
+- [x] `python -c "from kv_cache import KVCachePolicy"` 成功（骨架可导入）
+- [x] `KV_*` 环境变量覆盖有单测，且**非法值报错清晰**（不静默吞掉）
+- [x] 每个错误类型有 docstring 说明**什么情况下抛**，与 REQ-E3/W1/W3 的对应关系写清
+- [x] `docs/phase1-design.md` 的状态机图覆盖全部出口分支（hit / miss / uncached / 失败回退），无「等等」之类未定义节点
+- [x] ruff check + format 通过
+- [x] `ENV.md` 补上「本目录 Python 环境怎么跑」一段
+
+## 实施记录（2026-09-12）
+
+| 项 | 结论 |
+| :--- | :--- |
+| Python 环境 | **复用根 `.venv`**（httpx 0.28.1 / pytest 9.1.1 / ruff 齐全），不新建 venv；未动根 `pyproject.toml` |
+| 状态机出口 | 细化到 **10 个出口**（原票只要求覆盖 4 类），见 `docs/phase1-design.md` §2.1 |
+| 配置项 | 票列 9 个 + **追加 `KV_CAPABILITY_TTL_S`**（T-06 能力探测缓存窗口，R6 需要），已在 design §3 备案 |
+| 错误类型 | 票列 5 个 + 追加基类 `KVCacheError` 与 `KVCacheConfigError`（非法配置需独立类型才能「报错不静默」） |
+| 测试 | `pytest kv-cache-resume/tests -q` → **89 passed** |
+| 未做（留给后续票） | `lookup` / `persist` / `enforce_limits` 三个方法按票要求刻意 `raise NotImplementedError`，报错信息指向承接票号 |
 
 ## 备注
 

@@ -87,7 +87,7 @@ graph TD
 | [T-02](./T-02-slot-api-smoke.md) | slot API 冒烟 + 501 基线 | E0 | T-01 | T-03、T-06\* | §3.1、REQ-E3、REQ-O3、R5/R6 | ⬜ |
 | [T-03](./T-03-cross-process-exact-match.md) | 跨进程续生成 + 逐字比对 | E0 | T-02 | T-04、T-13\* | G1、REQ-O1、AC1 | ⬜ |
 | [T-04](./T-04-perf-and-size.md) | restore 提速与 KV 体积量化 | E0 | T-03 | T-13\* | G2、AC2、AC3、§9.2 | ⬜ |
-| [T-05](./T-05-skeleton-and-config.md) | 策略层骨架与 KV_* 配置 | E1 | — | T-06~T-13 | G3 | ⬜ |
+| [T-05](./T-05-skeleton-and-config.md) | 策略层骨架与 KV_* 配置 | E1 | — | T-06~T-13 | G3 | ✅ |
 | [T-06](./T-06-engine-adapter.md) | Engine Adapter（/slots 客户端） | E1 | T-05 | T-09、T-10 | REQ-E3、R6 | ⬜ |
 | [T-07](./T-07-prefix-key.md) | prefix key 计算与归一化 | E1 | T-05 | T-09 | REQ-U1/U2/W2、AC7、R1 | ⬜ |
 | [T-08](./T-08-index-store.md) | 索引与元数据存储（单写者） | E1 | T-05 | T-09、T-10、T-11 | REQ-U3、§4.3、§4.4 | ⬜ |

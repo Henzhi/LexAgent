@@ -2,7 +2,7 @@
 
 | 项 | 值 |
 | :--- | :--- |
-| 状态 | ⬜ 未开始 |
+| 状态 | ✅ 完成（2026-09-12） |
 | Epic | E0 · 机制验证（SPEC Phase 0） |
 | 阻塞于 | 无 —— 可立即开始 |
 | 阻塞 | T-02 |
@@ -42,10 +42,36 @@
 
 ## 验收清单
 
-- [ ] `llama-server --version` 有输出，且含 CUDA 后端信息（不是 CPU-only build）
-- [ ] 模型文件落地，`llama-cli -m <model> -p "1+1=" -n 8` 能正常吐出 token
-- [ ] `ENV.md` 记录了 build 号、模型 sha256、显存实测值
-- [ ] `00_env_check.ps1` 一次跑通，输出全是 ✅
+- [x] `llama-server --version` 有输出，且含 CUDA 后端信息（不是 CPU-only build）
+- [x] 模型文件落地，`llama-cli -m <model> -p "1+1=" -n 8` 能正常吐出 token
+- [x] `ENV.md` 记录了 build 号、模型 sha256、显存实测值
+- [x] `00_env_check.ps1` 一次跑通，输出全是 ✅
+
+## 实施记录（2026-09-12）
+
+| 项 | 结论 |
+| :--- | :--- |
+| llama.cpp | **build 10809** / `0.4.0-dev` / commit `5266f24da`，Clang 20.1.8，Windows x86_64 |
+| 资产选择 | CUDA **12.4**（非 13.3）：本机驱动 592.82，12.4 是稳妥匹配档 |
+| 安装位置 | `C:\Tools\llama.cpp\bin`（仓库外，不入库）；**不需要管理员权限** |
+| 模型 | qwen2.5:3b Q4_K_M，1.80 GiB，sha256 `5ee4f07cdb…` |
+| **Q3 答案** | **Ollama blob 就是裸 GGUF，可直接用**（manifest digest == 实算 sha256，魔数 `GGUF`），省掉一次 1.9GB 下载 |
+| 取用方式 | NTFS **硬链接**到 `models\qwen2.5-3b-instruct-q4_k_m.gguf`，零额外占用 |
+| 显存 | 总量 6141 MiB；空闲占用实测 **~1.05 GB**（SPEC §9.1 记的 350 MiB 已过时，Ollama 常驻占着） |
+| 生成速率 | 31.7 ~ 37.1 t/s（Q4_K_M，`-ngl 99`） |
+
+### 三个与票面写法的偏差（实测纠正）
+
+1. **`llama-cli` 的调用方式**：票面写的 `llama-cli -m <model> -p "1+1=" -n 8` 在 build 10809 下会进入
+   **会话模式并等待输入**（不会自己退出）。必须加 `-st`（`--single-turn`）。
+   注意 `--no-conversation` 在这个版本**不存在**（会报 `invalid argument`）。
+2. **自检脚本验收**：票面要求「输出全是 ✅」。首版脚本因 `Test-Path $x -and $y` 的 PS 解析陷阱
+   崩掉一整节却仍报「全部检查通过」—— 属于**假全绿**，已修（详见 `ENV.md` §5）。
+3. **生成断言**：不能断言「输出恰好是 `1 + 1 = 2`」。同一命令不同次运行会给出
+   `1 + 1 = 2` / `1 + 1 equals 2.` 等不同文本（采样波动）。已改为断言「产出了 token」
+   （`Generation: N t/s`）并额外加 `--temp 0 --seed 42` 降低波动。
+
+> 这三条都是「票面写法 vs 实测行为」不一致，按 `tickets/README.md` 的约定**以实测为准**并回写本记录。
 
 ## 备注
 

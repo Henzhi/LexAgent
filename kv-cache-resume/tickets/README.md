@@ -83,7 +83,7 @@ graph TD
 
 | 票 | 标题 | Epic | 阻塞于 | 阻塞 | SPEC 依据 | 状态 |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| [T-01](./T-01-runtime-and-model.md) | llama.cpp 运行时就绪与模型取用 | E0 | — | T-02 | §11 Q1/Q2/Q3、§9.1 | ⬜ |
+| [T-01](./T-01-runtime-and-model.md) | llama.cpp 运行时就绪与模型取用 | E0 | — | T-02 | §11 Q1/Q2/Q3、§9.1 | ✅ |
 | [T-02](./T-02-slot-api-smoke.md) | slot API 冒烟 + 501 基线 | E0 | T-01 | T-03、T-06\* | §3.1、REQ-E3、REQ-O3、R5/R6 | ⬜ |
 | [T-03](./T-03-cross-process-exact-match.md) | 跨进程续生成 + 逐字比对 | E0 | T-02 | T-04、T-13\* | G1、REQ-O1、AC1 | ⬜ |
 | [T-04](./T-04-perf-and-size.md) | restore 提速与 KV 体积量化 | E0 | T-03 | T-13\* | G2、AC2、AC3、§9.2 | ⬜ |

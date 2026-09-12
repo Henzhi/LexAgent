@@ -16,7 +16,13 @@ venv/
 # 运行产物
 *.log
 logs/
-reports/
+
+# 报告原始数据：默认不入库（现场大、可重跑），但 **AC 验收证据例外** ——
+# AC1/AC2/AC3 的结论必须能被 reviewer 直接复查，不能只留一句「脚本跑过了」。
+# 注意：`kv/`、`*.bin`、`*.gguf` 仍然绝不入库（见文件顶部）。
+reports/*
+!reports/ac1-exact-match.json
+!reports/*.md
 
 # 环境与密钥
 .env
